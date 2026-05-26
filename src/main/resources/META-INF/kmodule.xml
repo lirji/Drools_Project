@@ -16,4 +16,8 @@
         <ksession name="discountSession"/>
     </kbase>
 
+    <kbase name="cartKBase" packages="rules.cart">
+        <ksession name="cartSession"/>
+    </kbase>
+
 </kmodule>

@@ -95,7 +95,7 @@ curl -X POST 'http://localhost:8081/discount/calculate' \
 ## 学习时的关键观察点
 
 1. **`salience` 改优先级会改最终金额** — 试着把 VIP 规则的 salience 改成 1，把满减改成 100，看金额变化 (基数从 VIP 折后变成原价折)
-2. **`update($o)` 不写会怎样** — 注释掉 `order-discount.drl` 里的 `update($o)`，看依赖 finalAmount 的规则会不会被忽略 (本例规则都看 totalAmount 所以可能感觉不出，第 3 步会专门玩这个)
+2. **试着加 `update($o)` 看死循环** — 在任意一条折扣规则 `then` 块里加一行 `update($o);`，重启请求一次 VIP 用户，会发现请求挂住 (server 进入无限循环)。这是 Drools 新手最常踩的坑：`update()` 会重新评估所有依赖该 fact 的规则，而本例规则的 LHS 条件 (vipLevel/totalAmount) 不会因为修改 finalAmount 而失配，所以一直重复触发。DRL 注释里详细解释了 `no-loop` / `lock-on-active` 两种正确防护方式
 3. **新增规则不用动 Java** — 在 `rules/discount/` 下加新 `.drl` 文件，重启即生效
 4. **KieSession 不是线程安全** — 看 `DiscountService` 为什么每次请求都 `newKieSession` + `dispose`
 

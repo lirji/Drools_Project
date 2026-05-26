@@ -1,0 +1,122 @@
+// Step 3 规则: accumulate 按品类聚合 + modify 触发跨规则级联。
+//
+// ───────────────────────────── 关于 accumulate ─────────────────────────────
+//
+// 语法骨架:
+//
+//   $result: Number(...) from accumulate(
+//       $item: OrderItem(过滤条件, $bind: 字段) from $sourceCollection,
+//       sum($bind)   // 或 count, max, min, average, collectList($bind), ...
+//   )
+//
+// 关键点:
+//   - `from $sourceCollection` 让 accumulate 不是扫整个 working memory，
+//     而是扫 Java 端的某个 Collection (这里是 $cart.items)。
+//     好处: 几个 cart 同时存在时不会相互"窜户"。
+//     代价: items list 内部变化 (insert / remove) 不被 working memory 感知，
+//         需要 Java 侧改完显式 update(cart) 或重新 insert，否则规则结果用的是
+//         上一轮的快照。生产场景里更常见的做法是把 OrderItem 也 insert 成
+//         独立 fact (而不是放在 cart.items 里)，让 RETE 网络自动管理。
+//   - $result 类型是 Number (不是 int/long/double)，所以条件写 intValue >= 5
+//     或 doubleValue >= 1000，不要直接写 $result >= 5。
+//
+// ───────────────────────────── 关于 modify ─────────────────────────────
+//
+// 语法:
+//
+//   modify($fact) {
+//       setX(...),
+//       setY(...)
+//   }
+//
+// 跟 update($fact) 的差别:
+//   - update 是 "$fact 整个对象可能都变了，所有依赖它的规则都重新评估"
+//   - modify 是 "我只动了 setX / setY 对应的属性，引擎可以只激活依赖这些
+//     属性的规则" → Phreak 引擎能更精准地剪枝传播，少做无用功
+//
+// 但 modify **不防死循环**。如果改的属性是你自己 LHS 用的，你还是会被自己
+// 重新激活。要防这种情况，要么改完后 LHS 自然不再满足 (比如 status=false →
+// 改成 true, LHS 检 status==false 就不再匹配)，要么加 `no-loop true`。
+package rules.cart
+
+import com.lrj.drools.domain.Cart
+import com.lrj.drools.domain.OrderItem
+
+// ============================================================
+//   accumulate 示例 1: 图书品类按"件数"聚合，满 5 本立减 20
+// ============================================================
+rule "Book bundle - 5 books off 20"
+    salience 50
+    when
+        $cart: Cart()
+        // accumulate 返回一个 Number，过滤条件 intValue >= 5
+        Number(intValue >= 5) from accumulate(
+            $item: OrderItem(category == "BOOK", $q: quantity) from $cart.getItems(),
+            sum($q)
+        )
+    then
+        $cart.applyFixedDiscount(20, "图书满 5 本减 20");
+end
+
+// ============================================================
+//   accumulate 示例 2: 电子产品按"金额"聚合，总额满 1000 减 100
+// ============================================================
+rule "Electronics bulk - 1000 off 100"
+    salience 50
+    when
+        $cart: Cart()
+        Number(doubleValue >= 1000) from accumulate(
+            $item: OrderItem(category == "ELECTRONICS", $sub: subtotal()) from $cart.getItems(),
+            sum($sub)
+        )
+    then
+        $cart.applyFixedDiscount(100, "电子类满 1000 减 100");
+end
+
+// ============================================================
+//   accumulate 示例 3: 用 count 而不是 sum，演示函数切换
+//   场景: 购物车里有 ≥ 3 个不同的电子产品 SKU，送一句友好提示 (side-effect)
+// ============================================================
+rule "Electronics variety greeting"
+    salience 1
+    when
+        $cart: Cart()
+        Number(intValue >= 3) from accumulate(
+            $item: OrderItem(category == "ELECTRONICS") from $cart.getItems(),
+            count($item)
+        )
+    then
+        System.out.println("[Greeting] 购物车 " + $cart.getCartId() + " 有 3+ 种电子产品，欢迎来薅羊毛");
+end
+
+// ============================================================
+//   modify 示例: 大客户动态升金卡
+//
+//   规则 A (Promote): 原价超 5000 且还不是金卡 → modify 把 goldStatus 改 true
+//   规则 B (Gold extra): goldStatus == true → 额外 9 折
+//
+//   注意:
+//   - Promote 自带终止条件 (goldStatus == false 改成 true 后 LHS 不再满足)，
+//     不需要 no-loop
+//   - Gold extra 改的是 finalAmount, 没有规则的 LHS 看 finalAmount, 所以也
+//     不会循环；如果 Gold extra 改 goldStatus, 才需要 no-loop 防自己循环
+// ============================================================
+rule "Promote to gold cart"
+    salience 90   // 比 Gold extra 高，确保升级先于折扣生效
+    when
+        $cart: Cart( totalAmount > 5000, goldStatus == false )
+    then
+        modify($cart) {
+            setGoldStatus(true)
+        }
+        // 这里**不需要**显式 update — modify 块结束时 Drools 自动告知引擎
+        // "goldStatus 这个属性变了"，依赖它的规则 (Gold extra) 会被重新评估
+end
+
+rule "Gold cart extra - 10% off"
+    salience 10
+    when
+        $cart: Cart( goldStatus == true )
+    then
+        $cart.applyRatioDiscount(0.9, "金卡客户额外 9 折");
+end
