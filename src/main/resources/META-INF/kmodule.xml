@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  kmodule.xml: Drools 的"模块描述符"，告诉 KIE 在 classpath 里怎么组装 KieBase / KieSession。
+
+  - kbase: 一组规则的集合，name 唯一；packages 指 classpath 下的目录 (rules/* → 加载 src/main/resources/rules/ 下所有 *.drl)
+  - ksession: 从 kbase 派生出来的运行时会话；name 唯一，是代码里 kieContainer.newKieSession("xxx") 拿的那个名字
+  - 一个 kmodule.xml 里可以挂多个 kbase；不同 kbase 可以挂不同 packages，做规则隔离
+-->
+<kmodule xmlns="http://www.drools.org/xsd/kmodule">
+
+    <kbase name="helloKBase" packages="rules.hello">
+        <ksession name="helloSession"/>
+    </kbase>
+
+    <kbase name="discountKBase" packages="rules.discount">
+        <ksession name="discountSession"/>
+    </kbase>
+
+</kmodule>

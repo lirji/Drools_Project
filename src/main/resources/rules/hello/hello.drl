@@ -1,0 +1,35 @@
+// Drools Hello World — 演示最核心的三件事:
+//   1. when (LHS / pattern):    描述事实需要满足的条件
+//   2. then (RHS / consequence): 条件满足时执行的 Java
+//   3. $var: Customer(...)       绑定变量，then 里能引用
+package rules.hello
+
+import com.lrj.drools.domain.Customer
+
+rule "Adult check"
+    when
+        // 模式匹配: working memory 里只要存在一个 Customer 且 age >= 18，就触发
+        // $c 是变量绑定 (DRL 习惯加 $ 前缀，区分 Java 局部变量)
+        $c: Customer( age >= 18 )
+    then
+        System.out.println("[Adult check] " + $c.name() + " (" + $c.age() + ") 是成年人");
+end
+
+rule "Senior discount eligible"
+    when
+        $c: Customer( age >= 60 )
+    then
+        System.out.println("[Senior] " + $c.name() + " 可享老年优惠");
+end
+
+rule "Welcome new user"
+    when
+        // 多条件: 默认是 AND，逗号分隔
+        $c: Customer( yearsSinceRegistration == 0, vipLevel == 0 )
+    then
+        System.out.println("[Welcome] 欢迎新用户 " + $c.name());
+end
+
+// 提醒: 这里所有规则都是"独立"的，多条同时满足会全部触发 (Drools 的核心特性 —
+// 你不需要写一个大 if-else 决定走哪个分支，引擎帮你做)。
+// 触发顺序默认不保证，要排序用 salience (越大越先) 或 agenda-group。

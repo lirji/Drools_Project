@@ -1,0 +1,11 @@
+server:
+  port: 8081  # 跟 LangChain4j 项目 (默认 8080) 错开，方便同时跑
+
+spring:
+  application:
+    name: drools-demo
+
+logging:
+  level:
+    com.lrj.drools: DEBUG
+    org.drools: INFO

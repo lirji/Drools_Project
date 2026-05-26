@@ -1,0 +1,80 @@
+// 订单折扣规则 — 演示多规则协作、salience 优先级、跨事实关联匹配、update() 重新评估。
+//
+// 业务场景: 给一个订单 (Order) + 用户 (Customer)，按下面规则计算折扣，可叠加:
+//   - VIP 1/2/3 级: 9.5 / 9 / 8.5 折
+//   - 原价满 500: 减 50
+//   - 老用户 (注册 ≥ 3 年): 额外 95 折
+//   - 大额订单 (原价 > 2000): 额外送一句友好提示 (演示纯 side-effect 规则)
+package rules.discount
+
+import com.lrj.drools.domain.Customer
+import com.lrj.drools.domain.Order
+
+// ---------- VIP 折扣 ----------
+// salience 越大越先执行 (默认 0)。VIP 折扣优先，因为它是基于"商品原价"的，
+// 后面的"满减"如果先执行会把基数算小。
+rule "VIP level 3 - 8.5 fold"
+    salience 100
+    when
+        $c: Customer( vipLevel == 3 )
+        // customer == $c 是 join: 只有当 Order 关联的 customer 正是上面匹配到的 $c 时才命中
+        // (本 demo 一次只会插一个 Customer 一个 Order，所以 join 显得多余，
+        //  但在多 Order/多 Customer 同时入会话的场景里它是关键)
+        $o: Order( customer == $c )
+    then
+        $o.applyRatioDiscount(0.85, "VIP 3 级 8.5 折");
+        update($o);   // 重要: 通知引擎 $o 变了，否则依赖 finalAmount 的规则不会被重新评估
+end
+
+rule "VIP level 2 - 9 fold"
+    salience 100
+    when
+        $c: Customer( vipLevel == 2 )
+        $o: Order( customer == $c )
+    then
+        $o.applyRatioDiscount(0.9, "VIP 2 级 9 折");
+        update($o);
+end
+
+rule "VIP level 1 - 9.5 fold"
+    salience 100
+    when
+        $c: Customer( vipLevel == 1 )
+        $o: Order( customer == $c )
+    then
+        $o.applyRatioDiscount(0.95, "VIP 1 级 9.5 折");
+        update($o);
+end
+
+// ---------- 满减 ----------
+rule "Bulk amount discount"
+    salience 50
+    when
+        // 注意这里看的是 totalAmount (原价)，不是 finalAmount —
+        // 防止跟 VIP 折扣相互抵消导致到不到门槛
+        $o: Order( totalAmount >= 500 )
+    then
+        $o.applyFixedDiscount(50, "原价满 500 减 50");
+        update($o);
+end
+
+// ---------- 老用户额外折扣 ----------
+rule "Loyal customer extra"
+    salience 10
+    when
+        $c: Customer( yearsSinceRegistration >= 3 )
+        $o: Order( customer == $c )
+    then
+        $o.applyRatioDiscount(0.95, "老用户额外 95 折");
+        update($o);
+end
+
+// ---------- 大单提示 (纯 side-effect 规则) ----------
+rule "Big order greeting"
+    salience 1
+    when
+        $o: Order( totalAmount > 2000 )
+    then
+        System.out.println("[BigOrder] 大客户订单 " + $o.getOrderId() + " 原价 " + $o.getTotalAmount());
+        // 这条不改 fact，所以不需要 update()
+end
