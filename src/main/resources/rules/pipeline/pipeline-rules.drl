@@ -1,0 +1,122 @@
+// Step 5 规则: agenda-group 把规则按阶段分组, 用 setFocus / auto-focus 控制执行顺序。
+//
+// ───────────────────── 为什么需要 agenda-group ─────────────────────
+//
+// salience 是"细粒度排序": 控制 agenda 队列里谁先谁后, 但所有规则都挤在一个队列里,
+// salience 数字一多就难维护 (改一条得想"它该是 95 还是 105")。
+//
+// agenda-group 是"宏观分阶段": 把规则切成几个独立的 agenda 队列, 每个队列内部还能
+// 用 salience 排序。这样一个购物车业务可以清晰地分成:
+//
+//   validate (校验)  →  discount (折扣)  →  risk (风控/推荐)  →  notify (审计)
+//
+// 阶段内的规则不需要操心其他阶段的事, 阶段之间的顺序由 Java 侧的 setFocus 链显式控制
+// (或者 DRL 里 auto-focus 自动驱动)。
+//
+// ───────────────────── agenda 栈 (反直觉点) ─────────────────────
+//
+// Drools 的 agenda 不是 FIFO 队列, 是 LIFO 栈。setFocus 把一个 group 压栈顶,
+// fireAllRules 从栈顶弹一个 group, 把它的 activation 都跑完, 再弹下一个。
+//
+// 所以想要 validate → discount → risk 的执行顺序, Java 侧 setFocus 顺序要**反着写**:
+//
+//   session.getAgenda().getAgendaGroup("risk").setFocus();      // 最后跑
+//   session.getAgenda().getAgendaGroup("discount").setFocus();  // 中间跑
+//   session.getAgenda().getAgendaGroup("validate").setFocus();  // 最先跑 (栈顶)
+//   session.fireAllRules();
+//
+// PipelineService 里就是这么写的。这是 Drools 新手第二常踩的坑 (第一是 update 死循环)。
+//
+// ───────────────────── auto-focus ─────────────────────
+//
+// 规则标 `auto-focus true` 表示: "我被激活时自动把我所在的 group 压到 agenda 栈顶"。
+// 等价于规则触发瞬间自动调一次 setFocus, 不需要 Java 显式驱动。
+//
+// 适用场景: "兜底/警报/审计"这种 cross-cutting 规则, 你不想强制 Java 流程记得每个
+// 都 setFocus, 让规则自己挂上去。本文件 "Big spender audit" 就是这种用法。
+//
+// ───────────────────── lock-on-active ─────────────────────
+//
+// `lock-on-active true` 跟 agenda-group 是搭档:
+//   - no-loop true: 只防"自己 consequence 重新激活自己 (同一个 activation tuple)"
+//   - lock-on-active true: 当该 group 拿到焦点期间, **任何**让这条规则重新匹配的
+//     操作 (其他规则 update / modify / insert) 都不会让它再次触发
+//
+// 适用场景: 一阶段内某条规则只允许跑一次 (例如"打个总开关"), 不管该阶段内其他规则
+// 怎么折腾 fact 都不重复执行。本文件 "Apply VIP discount once" 演示。
+package rules.pipeline
+
+import com.lrj.drools.domain.Cart
+import com.lrj.drools.domain.OrderItem
+import com.lrj.drools.domain.Promotion
+
+// ============================================================
+//  阶段 1: validate — 输入校验
+// ============================================================
+
+rule "Reject empty cart"
+    agenda-group "validate"
+    when
+        $cart: Cart()
+        not OrderItem() from $cart.getItems()
+    then
+        System.out.println("[validate] 拒单: 空购物车 " + $cart.getCartId());
+        $cart.addRecommendation("[REJECTED] 购物车为空, 流水线终止");
+        // 实战里这里会 retract($cart) 让后续阶段全部 short-circuit; demo 只打标
+end
+
+// ============================================================
+//  阶段 2: discount — 折扣 (lock-on-active 演示)
+// ============================================================
+
+rule "Apply VIP discount once"
+    agenda-group "discount"
+    salience 100
+    lock-on-active true       // 该阶段内只触发一次, 即使后续规则 update($cart) 也不重激活
+    when
+        $cart: Cart( customer.vipLevel >= 1 )
+    then
+        double ratio = 1.0 - 0.05 * $cart.getCustomer().vipLevel();
+        $cart.applyRatioDiscount(ratio, "[discount] VIP " + $cart.getCustomer().vipLevel() + " 折扣");
+end
+
+rule "Bulk discount in pipeline"
+    agenda-group "discount"
+    salience 50
+    when
+        $cart: Cart( totalAmount >= 500 )
+    then
+        $cart.applyFixedDiscount(50, "[discount] 原价满 500 减 50");
+end
+
+// ============================================================
+//  阶段 3: risk — 风控推荐 (复用 Step 4 思路, 但走 agenda-group)
+// ============================================================
+
+rule "Insurance reco in pipeline"
+    agenda-group "risk"
+    when
+        $cart: Cart()
+        exists OrderItem(category == "ELECTRONICS") from $cart.getItems()
+        not    OrderItem(category == "INSURANCE")   from $cart.getItems()
+    then
+        $cart.addRecommendation("[risk] 建议加购意外险");
+end
+
+// ============================================================
+//  阶段 4: notify — auto-focus 演示, 不需要 Java 侧 setFocus
+//
+//  跑一次大额订单的 case, 控制台会看到 "[notify]" 最后打印, 证明 auto-focus
+//  确实在 validate/discount/risk 三阶段跑完后才被激活的 group 拿到焦点。
+// ============================================================
+
+rule "Big spender audit"
+    agenda-group "notify"
+    auto-focus true
+    when
+        $cart: Cart( totalAmount > 5000 )
+    then
+        System.out.println("[notify] 大额订单审计: " + $cart.getCartId()
+                + " 原价=" + $cart.getTotalAmount()
+                + " 折后=" + $cart.getFinalAmount());
+end

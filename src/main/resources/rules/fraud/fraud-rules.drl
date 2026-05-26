@@ -1,0 +1,67 @@
+// Step 8 规则: CEP (Complex Event Processing) 风控示例。
+//
+// ───────────────────────── 事件 vs 普通 fact ─────────────────────────
+//
+// 普通 fact (Cart / Order) 是"快照型"的状态, 一直在 working memory 里直到 retract。
+// 事件 (OrderEvent) 是"动作型"的时间点, 有自己的时间戳, 进 working memory 后:
+//   - 可以参与滑窗规则 (only 最近 5 分钟里发生的事件)
+//   - 满足 @expires 后会被引擎自动 retract
+//
+// 要把一个 Java 类标成事件, 两种方式:
+//   1) Java 类上加 @org.kie.api.definition.type.Role(Role.Type.EVENT)
+//   2) DRL 里 `declare ClassName @role(event) @timestamp(field) end`
+//
+// 本 demo 用方式 2 — 不污染 Java 类, 元数据集中在规则文件里。
+//
+// ───────────────────────── stream mode + pseudo clock ─────────────────────────
+//
+// kmodule.xml 里 fraudKBase 标了 eventProcessingMode="stream":
+//   - 启用事件时间线, 引擎按 @timestamp 字段而不是 insert 顺序排时间
+//   - 启用 over window:time(...) / over window:length(...)
+//   - 启用事件 @expires 自动过期
+//
+// fraudSession 标了 clockType="pseudo":
+//   - 时钟不走机器时间, 由 Java 侧 SessionPseudoClock.advanceTime(...) 推进
+//   - 测试场景能精确控制 "now", 重现历史事件序列
+//   - 生产改 realtime
+package rules.fraud
+
+import com.lrj.drools.domain.OrderEvent
+import com.lrj.drools.domain.BurstAlert
+
+// OrderEvent 是事件: 用 @timestamp 字段排时间, 进入 working memory 10 分钟后自动过期。
+// 10 分钟 > 规则滑窗 5 分钟, 留余量给规则评估; 时间窗越大内存占用越高 (β memory 增长)。
+declare OrderEvent
+    @role(event)
+    @timestamp(timestamp)
+    @expires(10m)
+end
+
+// ============================================================
+//   Burst detection: 同一 customer 5 分钟滑窗内 ≥ 3 次下单 → 告警
+//
+//   LHS 解析:
+//   1) $event: OrderEvent($cust: customerName)
+//      抓最新一个事件, 绑定 customerName 给后续 join。每来一个新事件都会触发
+//      重新评估 (这是 stream mode 的标准行为)
+//   2) accumulate ... over window:time(5m)
+//      只统计"现在往前推 5 分钟"内的同 customer 事件; 窗口随 (pseudo) 时钟滑动
+//   3) not BurstAlert(customerName == $cust)
+//      自终止: 已经为该 customer 告警过就不再告警, 避免每个 burst 内每个事件都
+//      触发一次告警
+//
+//   触发后 insert BurstAlert, 上面的 `not` 立刻失配 → 本次 burst 只告一次。
+// ============================================================
+rule "Burst: 3+ orders from same customer in 5 min"
+    when
+        $event: OrderEvent($cust: customerName)
+        $count: Number(intValue >= 3) from accumulate(
+            OrderEvent(customerName == $cust) over window:time(5m),
+            count(1)
+        )
+        not BurstAlert(customerName == $cust)
+    then
+        BurstAlert alert = new BurstAlert($cust, $count.intValue(), $event.timestamp());
+        insert(alert);
+        System.out.println("[fraud] burst detected: " + alert);
+end

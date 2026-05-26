@@ -23,6 +23,10 @@ public class Cart {
     private double finalAmount;                 // 折后价
     private boolean goldStatus = false;         // 大客户动态升级标志，规则改
     private final List<String> discountReasons = new ArrayList<>();
+    // Step 4 引入: 风控/推荐规则把"建议加购 / 赠品 / 新人券"之类的文案塞这里。
+    // 跟 discountReasons 区分: discountReasons 是"已应用的折扣账本"，
+    // recommendations 是"还没成交的推荐位"。
+    private final List<String> recommendations = new ArrayList<>();
 
     public Cart(String cartId, Customer customer, List<OrderItem> items) {
         this.cartId = cartId;
@@ -54,4 +58,9 @@ public class Cart {
     public boolean isGoldStatus() { return goldStatus; }
     public void setGoldStatus(boolean goldStatus) { this.goldStatus = goldStatus; }
     public List<String> getDiscountReasons() { return discountReasons; }
+    public List<String> getRecommendations() { return recommendations; }
+
+    public void addRecommendation(String message) {
+        this.recommendations.add(message);
+    }
 }

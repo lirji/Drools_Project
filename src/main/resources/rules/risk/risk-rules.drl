@@ -1,0 +1,126 @@
+// Step 4 规则: not / exists 演示。
+//
+// 本文件演示三种否定/存在判断:
+//
+//   1) `not Pattern from collection`     — Java 集合上的"缺这种东西"
+//   2) `exists Pattern from collection`  — Java 集合上的"至少有一个"，跟普通 pattern
+//                                          的区别是: 普通 pattern 命中 N 个会产生 N 个
+//                                          activation, exists 只产生 1 个
+//   3) `not Pattern`                     — working memory 上的"缺这种 fact"，配合规则
+//                                          自己 insert 出来的 fact 做"自终止"
+//
+// ───────────────────── not 的 RETE 实现简述 ─────────────────────
+//
+// `not` 不是简单的 "查一下没有就过"。RETE 把 `not` 编译成一个特殊的 Beta 节点:
+//   - 左输入: 上游通过的 token
+//   - 右输入: 满足 `not` 内部 pattern 的 fact 集合
+//   - 输出规则: 右侧空 → 左侧 token 通过; 右侧只要有一个 fact → 左侧 token 被屏蔽
+//
+// 这意味着:
+//   - **一旦右侧多了一个匹配的 fact, 已经入 agenda 的 activation 会被撤销 (retract)**
+//   - 反过来, 右侧消失一个 fact, 之前被屏蔽的 token 会重新通过 → 产生新 activation
+//
+// 这就是 `not` 的"反向触发"特性: 不光新 fact 出现会激活规则, fact 消失也会。
+//
+// ───────────────────── exists vs 普通 pattern ─────────────────────
+//
+// 普通 pattern `$item: OrderItem(category == "BOOK")`:
+//   - 购物车里有 3 本书 → 产生 3 个 activation (3 个 $item 绑定不同)
+//   - 规则会跑 3 次
+//
+// `exists OrderItem(category == "BOOK")`:
+//   - 购物车里有 3 本书 → 产生 1 个 activation (exists 不绑定具体 fact)
+//   - 规则只跑 1 次, 不论多少本
+//
+// 适用场景: 想触发"赠品/通知"这种"有就行, 数量无关"的规则用 exists; 想对每个
+// fact 单独操作 (比如逐条计费) 用普通 pattern。
+package rules.risk
+
+import com.lrj.drools.domain.Cart
+import com.lrj.drools.domain.OrderItem
+import com.lrj.drools.domain.Promotion
+
+// ============================================================
+//   规则 1: exists + not 组合 — 缺保险则推荐
+//   条件: 购物车含电子产品 (exists), 且未含保险 (not)
+//   语义: 检测到风险敞口 → 加一个 INSURANCE_RECO Promotion
+// ============================================================
+rule "Recommend insurance for electronics"
+    salience 50
+    when
+        $cart: Cart()
+        exists OrderItem(category == "ELECTRONICS") from $cart.getItems()
+        not    OrderItem(category == "INSURANCE")   from $cart.getItems()
+    then
+        insert(new Promotion("INSURANCE_RECO", "建议加购意外险（电子产品订单专享）"));
+end
+
+// ============================================================
+//   规则 2: exists 去重 — 买任意一本书都送书签
+//   对照: 如果改成 `$item: OrderItem(category == "BOOK") from $cart.getItems()`,
+//   3 本书会产生 3 个 activation, 这条规则会跑 3 次 → 加 3 条推荐文案。
+//   用 exists 锁死成"只触发 1 次"。
+// ============================================================
+rule "Free bookmark for any book"
+    salience 50
+    when
+        $cart: Cart()
+        exists OrderItem(category == "BOOK") from $cart.getItems()
+    then
+        insert(new Promotion("GIFT_BOOKMARK", "赠送精美书签 1 枚（不论几本）"));
+end
+
+// ============================================================
+//   规则 3: not 在 working memory + insert 自终止
+//
+//   场景: 新注册用户 (yearsSinceRegistration == 0) 没领过新人券 → 发券
+//
+//   关键点:
+//   - LHS 第二行 `not Promotion(type == "FIRST_BUYER_COUPON")` 检的是 working
+//     memory, 不是 cart.items
+//   - then 块 insert(new Promotion("FIRST_BUYER_COUPON", ...))
+//   - insert 后, `not` 那行 LHS 立刻失配 → 这条规则不会再触发自己
+//
+//   这是 Drools 里**最优雅的终止模式**: 用"insert 一个标记 fact + not 检测它"
+//   替代 `no-loop true`。比 no-loop 强的地方:
+//     - no-loop 只防"自己触发自己", 不防其他规则的 update/insert 重新激活自己
+//     - 标记 fact 是 working-memory 级的状态, 任何规则都受影响
+//     - 删 (retract) 那个 Promotion 还能重新打开这条规则 (做"重置")
+// ============================================================
+rule "First-time buyer coupon"
+    salience 40
+    when
+        $cart: Cart( customer.yearsSinceRegistration == 0 )
+        not Promotion( type == "FIRST_BUYER_COUPON" )
+    then
+        insert(new Promotion("FIRST_BUYER_COUPON", "新人首单立减 20 元"));
+end
+
+// ============================================================
+//   规则 4: harvest — 把 working memory 里所有 Promotion 收进 cart.recommendations
+//
+//   设计意图:
+//   - 上面 3 条规则都用 `insert(new Promotion(...))` 而不是直接调
+//     $cart.addRecommendation(...), 是为了让"产生推荐"和"展示推荐"解耦:
+//     未来要做"同类推荐去重" / "优先级排序" / "数量上限" 只需要改这条规则,
+//     不用改业务规则
+//   - 这条规则对每个 Promotion fact 触发一次, 跟上面 2 / 3 的 exists 单触
+//     成对比
+//
+//   为什么不会循环:
+//   - 触发后 cart 被改 (addRecommendation), 但没 update($cart), 所以
+//     依赖 cart 字段的规则不会重新评估
+//   - $p 这个 Promotion 已经匹配过这条规则的 (rule, fact) tuple,
+//     Drools 不会让同一组合再次触发
+// ============================================================
+rule "Materialize promotions onto cart"
+    salience 1
+    when
+        $cart: Cart()
+        $p: Promotion()
+    then
+        // 注意: Promotion 是 Java record, RHS 里要用 record accessor `message()`,
+        // 不是 `getMessage()`。Drools 8.x 的 LHS 会自动兼容 record accessor (写 `message`
+        // 它也认), 但 RHS 是直接编译成 Java 代码, 没有这个糖, 必须按 record 真实方法名写。
+        $cart.addRecommendation($p.message());
+end
