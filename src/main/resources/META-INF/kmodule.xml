@@ -14,6 +14,10 @@
 
     <kbase name="discountKBase" packages="rules.discount">
         <ksession name="discountSession"/>
+        <!-- Step 11: 同一组规则挂第二个 ksession, type="stateless" 让 KieContainer
+             派生出 StatelessKieSession。同样的 DRL, 不同的 session 模型, 用来对比
+             stateful 跟 stateless 的 API / 状态管理 / 复用性差别。 -->
+        <ksession name="discountStatelessSession" type="stateless"/>
     </kbase>
 
     <kbase name="cartKBase" packages="rules.cart">
@@ -44,6 +48,31 @@
          生产环境改成 realtime, 用机器时钟即可。 -->
     <kbase name="fraudKBase" packages="rules.fraud" eventProcessingMode="stream">
         <ksession name="fraudSession" clockType="pseudo"/>
+    </kbase>
+
+    <!-- Step 10: KieSession 持久化。规则集本身没特别配置, 跟普通 kbase 一样;
+         Marshaller 在 LoyaltyService 里按需 marshall/unmarshall 整个 session 状态。 -->
+    <kbase name="loyaltyKBase" packages="rules.loyalty">
+        <ksession name="loyaltySession"/>
+    </kbase>
+
+    <!-- Step 12: TMS 对照组。同样的业务规则各写一份, 一份用 insertLogical,
+         一份用普通 insert, 让 demo 在同一次请求里跑两遍展示差异。
+         隔离成两个 kbase 是为了避免"两份规则跑在同一 working memory 里互相污染"。 -->
+    <kbase name="tmsLogicalKBase" packages="rules.tms.logical">
+        <ksession name="tmsLogicalSession"/>
+    </kbase>
+    <kbase name="tmsRegularKBase" packages="rules.tms.regular">
+        <ksession name="tmsRegularSession"/>
+    </kbase>
+
+    <!-- Step 13: 后向链 + query。query 在 Drools 里是声明式查询模式,
+         可以 (1) Java 侧通过 session.getQueryResults 拉取结果, 也可以
+         (2) 规则 LHS 里用 ?queryName(...) 反向触发递归推理。
+         经典 isContainedIn 例子: 给一组 Location(thing, container), 查询 A 是否
+         (递归地) 在 B 里面。 -->
+    <kbase name="backwardKBase" packages="rules.backward">
+        <ksession name="backwardSession"/>
     </kbase>
 
 </kmodule>

@@ -17,8 +17,12 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - **Step 7 / 决策表**：`POST /decision/calculate` → `rules/decision/vip-discount.xls`，业务方用 Excel/Numbers 直接维护 VIP 折扣档位；XLS 由 `src/test/java/.../VipDiscountSheetGenerator` 一键生成
 - **Step 8 / CEP 滑窗风控**：`POST /fraud/check` → `rules/fraud/fraud-rules.drl`，演示 `@role(event)` / `@timestamp` / `over window:time(5m)` / pseudo clock 推进事件时间线
 - **Step 9 / 规则热加载**：`POST /hot/upsert` + `POST /hot/run/{name}` → `service/HotReloadService.java`，把 DRL 字符串运行时编译成 KieBase 缓存进 `ConcurrentHashMap`，同名 upsert 替换；编译错误返回 400 + 行号
+- **Step 10 / KieSession 持久化**：`POST /loyalty/start` + `POST /loyalty/{id}/purchase` + `GET /loyalty/{id}` → `service/LoyaltyService.java`，用 `Marshaller` 把整个 working memory + agenda state 序列化成 byte[]，经 Spring Data JPA 存到 H2 file (`./data/drools-demo.mv.db`)。同一 sessionId 跨请求、跨重启接着上次状态继续累积积分 + 链式升级 (BRONZE → SILVER → GOLD)
+- **Step 11 / StatelessKieSession 对比**：`POST /stateless/calculate` + `POST /stateless/batch` → `service/StatelessDiscountService.java`，复用 Step 2 的 `discountKBase` 但派生 `type="stateless"` 的 ksession；同输入结果跟 stateful 完全等价。教学重点：API 极简 (无 `dispose()`)、实例可复用 (线程安全)、execute(Iterable) 一次插入多 fact、批处理零隔离成本
+- **Step 12 / TMS (Truth Maintenance System)**：`POST /tms/compare` → `service/TmsService.java` + `rules/tms/logical/` + `rules/tms/regular/`。同一组 LHS 各写两份 DRL，一份用 `insertLogical` 一份用 `insert`，单次请求里在两个 kbase 各跑两阶段 fire（先 value=95 触发告警 → modify 改成 50 再 fire）。结果对比：logical 的衍生 Alert 被引擎自动 retract，regular 的依然留在 working memory。展示"前提-结论"因果链由引擎维护
+- **Step 13 / 后向链 + query**：`POST /backward/contains` → `service/BackwardChainingService.java` + `rules/backward/backward-chaining.drl`。前面 Step 1-12 全是前向链 (data-driven push)；这一步用经典 `isContainedIn(x, y)` 递归 query 演示反向 (goal-driven pull) 推理。给定 Location(thing, container) 直接关系，引擎反向证明"Office 是否在 Continent 里"，递归走 Office→House→City→Country→Continent 四跳
 
-后续（LLM 联动 / KieScanner+KJAR 全套）按需扩展，**没需求时不要提前加**。这是学习项目，不要引入持久化、观测性、复杂部署相关的东西，除非 owner 明确要做某个 Step。
+后续（LLM 联动 / KieScanner+KJAR 全套）按需扩展，**没需求时不要提前加**。Step 10 已加 JPA + H2 但仅服务于持久化 demo，不要把它扩成"全项目状态都进数据库"。
 
 ## 技术栈与版本背景
 
@@ -57,7 +61,8 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - `service/` — KieSession 生命周期。**每次请求 `newKieSession` + `fireAllRules` + `dispose`**，KieSession 线程不安全，不要为了"省"复用
 - `config/DroolsConfig.java` — `KieContainer` 注成单例 Bean（编译规则贵，启动时一次性扫 classpath 的 `META-INF/kmodule.xml`）
 - `resources/rules/<kbase>/*.drl` — DRL 文件，**目录名必须和 `kmodule.xml` 里 `<kbase packages="...">` 对齐**
-- `resources/META-INF/kmodule.xml` — 声明 `helloKBase` / `discountKBase` / `cartKBase` / `riskKBase` / `pipelineKBase` / `decisionKBase` / `fraudKBase` 七个 kbase + 对应 ksession 名（`fraudKBase` 用 stream mode + pseudo clock）
+- `resources/META-INF/kmodule.xml` — 声明 `helloKBase` / `discountKBase` / `cartKBase` / `riskKBase` / `pipelineKBase` / `decisionKBase` / `fraudKBase` / `loyaltyKBase` / `tmsLogicalKBase` / `tmsRegularKBase` / `backwardKBase` 等 kbase + 对应 ksession 名（`fraudKBase` 用 stream mode + pseudo clock；Step 12 的两个 kbase 隔离避免 logical / regular 衍生 fact 互相污染）
+- `persistence/` — Step 10 引入。`SessionSnapshot` (JPA entity, sessionId 做主键, `byte[] data` 存 marshall 出来的 KieSession) + `SessionSnapshotRepository` (Spring Data)。H2 file 在 `./data/drools-demo.mv.db`，repo 根 `.gitignore` 已豁免
 - `config/DroolsConfig.java` — Drools 8.44.2 的 `getKieClasspathContainer()` **不识别 spreadsheet 决策表**（启动报 "No files found"），所以这里改成程序化 `KieFileSystem` 构建：扫 `.drl` 自动加 + `.xls` 显式标 `ResourceType.DTABLE`
 
 ## 扩展点
@@ -86,6 +91,27 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - Step 9 热加载用 `KieHelper` (内部 API, 包名带 `internal`)，胜在一行编译完 DRL → KieBase。生产更稳的是 `KieFileSystem + KieBuilder`（`DroolsConfig.kieContainer()` 用了那条路径），但学习场景 KieHelper 足够
 - Step 9：老 KieSession **不会被** registry 里的 KieBase 替换影响——session 关联到创建时的 KieBase 引用，dispose 前一直用老的。这是热加载安全的关键，进行中的请求不会被打断
 - Step 9 跟 KieScanner 生产路径的关系：KieScanner = "KJAR + Maven repo + 定时轮询版本号 + 自动 upsert"。本 demo 把"上传 + upsert"暴露成 HTTP，定时轮询自己加一层 `@Scheduled` 就成了 KieScanner 等价物
+- Step 10：`MarshallerFactory` 在 Drools 8 移到 **`org.kie.internal.marshalling`**（不是 `org.kie.api.marshalling`），从 Drools 7 升级或照旧教程抄都会踩这坑。`Marshaller` 接口本身还在 `kie-api` 里
+- Step 10：必须显式加 `drools-serialization-protobuf`，否则 `MarshallerFactory.newMarshaller(kb)` 拿不到实现（Drools 8 把 protobuf 序列化拆成独立模块）
+- Step 10：所有进 working memory 的 fact 类**必须 `implements Serializable`**，Drools 默认用 Java 原生序列化把 fact 整体塞进 byte[]。record 不自动实现 Serializable，要手动声明（`public record PurchaseEvent(...) implements Serializable {}`）
+- Step 10：`marshaller.unmarshall(InputStream)` 返回**新的** KieSession 实例，不是把状态注入回原 session。每次请求都是"load byte[] → 新 session → fire → save byte[] → dispose"四步走
+- Step 10：marshall 时 agenda 上还没执行的 activation 也会被序列化进去，下次 unmarshall 后 fireAllRules 会接着跑剩下的。这是"中断恢复"语义的核心
+- Step 10：改了 DRL 后老快照可能反序列化失败（规则签名变 / fact 类字段变）。学习场景手动清 `./data/` 目录即可；生产要做"快照版本号 + DRL 变更迁移脚本"，超出本 demo 范围
+- Step 10：跟 Drools 官方 `drools-persistence-jpa` 的差异：那个走 JTA + SessionInfo/WorkItemInfo 多张表 + 自动 commit；本 demo 一张 `session_snapshot` 单表 + 手动 marshall 边界。教学概念一致（序列化整段 session 状态），工程复杂度差一个数量级。Spring Boot 3 配 JTA (Bitronix/Atomikos) 没官方 starter，落地路径选简化版
+- Step 11：`StatelessKieSession` 是 Drools 提供的"一次性"会话封装。`execute(Iterable)` = newSession + insertAll + fireAllRules + dispose 四步合一；用错（漏 dispose）的概率为 0
+- Step 11：**StatelessKieSession 线程安全**，可以注成 Spring 单例反复用；KieSession (stateful) 不能跨请求复用，每次都得 newKieSession。本 demo 把 stateless 当字段持有，符合官方推荐用法
+- Step 11：同一 KBase 可以同时挂 stateful + stateless ksession (kmodule.xml 里两条 `<ksession>` 不同 name + 不同 type)，业务规则零改动复用；选哪个看调用形态——RPC 单笔 / 批处理就 stateless，长寿命累积 / CEP / agenda 编排就 stateful
+- Step 11：stateless 不能做什么：① 没有 fire 之间的干预点 (没法 setFocus 后再 fire)、② 不支持 stream mode + pseudo clock 跨调用重放、③ 没有 `getObjects()` 给你拿结果——结果靠传入 mutable fact 引用 (规则改完直接读 Java 对象)
+- Step 11：跟 Step 10 持久化的关系：stateless 天生没有持久化需求 (没有跨调用状态)；marshall/unmarshall 那一套只对 stateful 有意义
+- Step 12：`insertLogical(fact)` vs `insert(fact)` —— logical 把衍生 fact 跟"导出它的 LHS 匹配"绑定，匹配失配引擎自动 retract；普通 insert 跟前提解耦，要手动 retract 才能撤销。**这是 Drools 真正的 TMS 实现**，不是简单语法糖
+- Step 12：要让 TMS 撤销发生，前提 fact 字段必须可变 (modify / update 才能"让 LHS 失配")。`Sensor` 故意做成 mutable POJO 而不是 record，跟 Step 10 `LoyaltyState` 同理
+- Step 12 跟 Step 4 的对照：Step 4 `insert(Promotion) + not Promotion` 防的是"再次触发同一规则"，没有撤销语义 (Promotion 不会因为购物车变了消失); Step 12 `insertLogical(Alert)` 才是真撤销。两种模式按业务诉求选——一次性"发券"型用 Step 4，"状态告警"型用 Step 12
+- Step 12：logical 和 regular 用两个 kbase 隔离是有意为之，避免"两份规则跑在同一 working memory 里 Alert 互相污染"。教学场景同请求并跑做对比；生产里只会选一种
+- Step 13：query 是声明式查询模式，跟规则的核心区别是 **不参与 agenda 也不需要 fireAllRules**。`session.getQueryResults("name", args...)` 是同步 pull 调用，引擎当场启动后向链证明
+- Step 13：位置模式 `Location(x, y;)` 末尾的分号是关键语法标记，告诉解析器这是位置参数解构。**fact 类字段必须 `@Position(N)` 注解**, 否则报 "Unable to find @Positional field 0 for class Location"。record 组件上加 `@Position` 也能识别 (走 FIELD target)
+- Step 13：递归 query 的标准结构是 `base case or (链一步 and 递归调用)`。基础情形先匹配直接 fact, 失败时引擎尝试递归情形, 引入中间变量 z (不在 query 参数表里, 是 query body 内的"自由变量"绑定)
+- Step 13：DRL 里也可以用 `?queryName(args;)` 在规则 LHS 触发后向链做"pull-driven 规则"。本 demo 走 Java API 路径 (getQueryResults) 因为更直观, 不需要额外的 driver fact
+- Step 13：query 的"输出变量"模式 (列出所有满足条件的绑定) 要用 `org.drools.core.runtime.rule.impl.Variable.v` 占位 unbound arg, 但这是 internal API; 本 demo 改成"枚举候选 + 逐个 boolean 后向链证明", 既避开 internal API 也让 query 复用价值更直白
 
 ## REST 接口
 
@@ -102,6 +128,13 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 | POST | `/hot/upsert`           | Step 9：推 DRL 字符串运行时编译并缓存到 registry；同名替换；编译错误 400 |
 | POST | `/hot/run/{name}`       | Step 9：用 registry 里 name 对应的 KieBase 跑 cart |
 | GET  | `/hot/list`             | Step 9：列出当前已注册的规则名 |
+| POST | `/loyalty/start`        | Step 10：新建会话, 注入空 LoyaltyState, marshall 落盘 |
+| POST | `/loyalty/{id}/purchase`| Step 10：恢复会话, 插入 PurchaseEvent, fire 触发积分+升级, 再 marshall 落盘 |
+| GET  | `/loyalty/{id}`         | Step 10：只读 peek 当前会话状态 (不 fire, 不写回) |
+| POST | `/stateless/calculate`  | Step 11：跟 `/discount/calculate` 同入参同输出, 走 StatelessKieSession |
+| POST | `/stateless/batch`      | Step 11：一次提交 N 个 Order, stateless 单实例反复 execute, 单笔间完全隔离 |
+| POST | `/tms/compare`          | Step 12：同 Sensor 在 logical / regular 两个 kbase 各跑两阶段 fire, 返回前后两次 Alert 快照, 看 TMS 自动撤销 |
+| POST | `/backward/contains`    | Step 13：注入一组 Location 直接关系 + 一组查询, 用 `isContainedIn` 递归 query 反向证明每条查询是否成立 |
 
 ## 配套文档
 

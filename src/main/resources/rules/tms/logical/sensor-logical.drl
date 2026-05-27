@@ -1,0 +1,43 @@
+// Step 12: Truth Maintenance System (TMS) — 用 insertLogical 让衍生 fact 跟前提绑定。
+//
+// 核心语义:
+//   - `insertLogical(new Alert(...))` 告诉引擎: 这个 Alert 是因为"上面 LHS 匹配成立"
+//     才被推导出来的, 它的生命周期跟那次匹配绑死
+//   - 一旦 LHS 不再匹配 (本例: $s.value 掉到阈值以下), 引擎自动 retract 这个 Alert
+//   - 不需要写"value 正常时撤销 Alert"那条反向规则, TMS 帮你做了
+//
+// 跟 sensor-regular.drl 的对照:
+//   - regular 那份用 `insert(new Alert(...))`, 前提失配后 Alert 依然在 working memory,
+//     要再写一条"value 正常 → retract Alert"规则才能撤销 (心智负担 + 规则数量翻倍)
+//
+// 跟 Step 4 标记 fact 的对照:
+//   - Step 4: insert(Promotion) + not Promotion → 用"再插一个标记 fact"防止重入
+//     适合"一次性发券"这种没有撤销语义的场景
+//   - Step 12: insertLogical(Alert) → 用"前提-结论"因果链让 Alert 自动随前提进退
+//     适合"状态告警"这种前提变了结论也要变的场景
+package rules.tms.logical
+
+import com.lrj.drools.domain.Sensor
+import com.lrj.drools.domain.Alert
+
+rule "High temperature alert (logical)"
+when
+    $s: Sensor(value > 70)
+then
+    // ★ 这里是关键: insertLogical 而不是 insert
+    // 引擎记下"这个 Alert 依赖 $s 在 value > 70 时的匹配"
+    // 之后 $s.value 被改成 50, 这条 LHS 失配, Alert 自动消失 — 不需要任何反向规则
+    insertLogical(new Alert($s.getName(), "HIGH",
+            "传感器 " + $s.getName() + " 读数 " + $s.getValue() + " 超过阈值 70"));
+end
+
+rule "Critical temperature alert (logical)"
+when
+    $s: Sensor(value > 90)
+then
+    // 同样 logical: value 从 95 掉到 80 时, CRITICAL 会消失, HIGH 还在 — 因为
+    // HIGH 的前提 (value > 70) 还成立, CRITICAL 的前提 (value > 90) 已失配
+    // TMS 按"前提-结论"链精确管理每个衍生 fact 的生命周期
+    insertLogical(new Alert($s.getName(), "CRITICAL",
+            "传感器 " + $s.getName() + " 读数 " + $s.getValue() + " 进入危险区 (>90)"));
+end

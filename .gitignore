@@ -97,3 +97,8 @@ jacoco.exec
 # Generated Files
 # =========================
 generated/
+
+# =========================
+# Step 10: H2 file-based KieSession 持久化目录
+# =========================
+data/

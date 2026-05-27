@@ -1,0 +1,63 @@
+package rules.loyalty;
+
+import com.lrj.drools.domain.LoyaltyState;
+import com.lrj.drools.domain.PurchaseEvent;
+
+/*
+ * Step 10: 持久化场景的规则集。
+ *
+ * 教学要点:
+ *   - LoyaltyState 是会跨多次 fireAllRules 持续存在的"长寿命 fact",
+ *     一旦 insert 进 session 就不再 retract; 每次升级靠 modify 触发链式重评。
+ *   - PurchaseEvent 是"短寿命 fact", 处理完一律 retract — 否则下次 unmarshall
+ *     恢复后 working memory 里残留旧事件, 一 fire 又算一遍, 积分重复累加。
+ *   - bronze → silver → gold 严格串行: 哪怕一次买够 1000 元也得三连跳, 因为每条
+ *     规则的 LHS 要求"上一级 tier", modify($s) { setTier(...) } 让下一级规则
+ *     在同一次 fireAllRules 内被重新评估激活。
+ *
+ * 跟 Step 4 标记 fact 的对比: 那个用 insert(new Promotion) + not Promotion 防重入;
+ * 这里用 "tier 字段从 NONE → BRONZE → SILVER → GOLD 单调推进" 让 LHS 自然不再满足,
+ * 不需要额外标记 fact, 也不需要 no-loop。哪种合适看场景 — 有顺序约束的状态机用本路径。
+ */
+
+rule "earn-points"
+    no-loop true
+when
+    $e: PurchaseEvent($amount: amount)
+    $s: LoyaltyState()
+then
+    // 简单换算: 1 元 = 1 点, 实数取整。amount 是 double, 强转 long 截断小数。
+    long earned = (long) $amount;
+    modify($s) {
+        setTotalPoints($s.getTotalPoints() + earned),
+        setLastEarned((int) earned)
+    }
+    retract($e);
+end
+
+rule "unlock-bronze"
+    salience 10
+when
+    $s: LoyaltyState(totalPoints >= 100, tier == "NONE")
+then
+    $s.getUnlockedBadges().add("BRONZE");
+    modify($s) { setTier("BRONZE") }
+end
+
+rule "unlock-silver"
+    salience 10
+when
+    $s: LoyaltyState(totalPoints >= 500, tier == "BRONZE")
+then
+    $s.getUnlockedBadges().add("SILVER");
+    modify($s) { setTier("SILVER") }
+end
+
+rule "unlock-gold"
+    salience 10
+when
+    $s: LoyaltyState(totalPoints >= 1000, tier == "SILVER")
+then
+    $s.getUnlockedBadges().add("GOLD");
+    modify($s) { setTier("GOLD") }
+end

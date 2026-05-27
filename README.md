@@ -346,11 +346,195 @@ curl http://localhost:8081/hot/list
 4. **跟 KieScanner 的关系** — KieScanner 是"KJAR + Maven repo + 定时轮询版本号 + 自动调 upsert"。本 demo 把"上传 + upsert"暴露成 HTTP；加个 `@Scheduled` 轮询数据库就是 KieScanner 等价物
 5. **`KieHelper` 是 internal API** — 包名带 `org.kie.internal.utils`，稳定性弱于公共 API。生产更稳的是 `KieFileSystem + KieBuilder`（`DroolsConfig.kieContainer()` 走的就是这条路径）
 
+## Step 10: KieSession 持久化 (Marshaller + JPA)
+
+把 working memory + agenda state 序列化成 byte[], 经 Spring Data JPA 存 H2 file (`./data/drools-demo.mv.db`)。同一 sessionId 跨请求、跨重启接着上次的状态继续累积。
+
+**场景**: 用户积分会员。`PurchaseEvent` 进来攒分, 累计到阈值解锁徽章; `LoyaltyState` 一直留在 working memory, 等级从 NONE 单调推进到 BRONZE → SILVER → GOLD。
+
+```bash
+# 1. 起新会话 alice (积分 0, NONE)
+curl -X POST 'http://localhost:8081/loyalty/start' -H 'Content-Type: application/json' \
+  -d '{"sessionId":"alice"}'
+# → {"totalPoints":0,"tier":"NONE","unlockedBadges":[],"lastEarned":0}
+
+# 2. 买 50 块 (够不上 BRONZE 100 分门槛)
+curl -X POST 'http://localhost:8081/loyalty/alice/purchase' -H 'Content-Type: application/json' \
+  -d '{"amount":50}'
+# → {"totalPoints":50,"tier":"NONE",...}
+
+# 3. 再买 60 块 → 累计 110 分, 解锁 BRONZE
+curl -X POST 'http://localhost:8081/loyalty/alice/purchase' -H 'Content-Type: application/json' \
+  -d '{"amount":60}'
+# → {"totalPoints":110,"tier":"BRONZE","unlockedBadges":["BRONZE"],...}
+
+# 4. 一笔大单 1000 块 → 1110 分, BRONZE→SILVER→GOLD 单次 fire 内链式触发
+curl -X POST 'http://localhost:8081/loyalty/alice/purchase' -H 'Content-Type: application/json' \
+  -d '{"amount":1000}'
+# → {"totalPoints":1110,"tier":"GOLD","unlockedBadges":["BRONZE","SILVER","GOLD"],...}
+
+# 5. 只读 peek (不 fire, 不写回)
+curl 'http://localhost:8081/loyalty/alice'
+
+# 6. 杀掉 app, 重启, 再 peek → 状态还在 (跨重启验证)
+#    ./mvnw spring-boot:run
+curl 'http://localhost:8081/loyalty/alice'
+
+# 7. 未知 session
+curl -o /dev/null -w '%{http_code}\n' 'http://localhost:8081/loyalty/ghost'        # → 404
+curl -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:8081/loyalty/ghost/purchase' \
+  -H 'Content-Type: application/json' -d '{"amount":10}'                            # → 400
+```
+
+**学习观察点 (Step 10)**:
+
+1. **整段 working memory 一次性序列化** — `Marshaller.marshall(out, session)` 把 fact + agenda + activation 全压成 byte[]; `unmarshall(in)` 构造一个**新**的 KieSession 把状态填进去。不是"会话恢复活了过来", 是"在新 session 里重放状态"
+2. **fact 类必须 `implements Serializable`** — record 不自动实现, `PurchaseEvent` / `LoyaltyState` 都显式声明。漏了的话 marshall 抛 `NotSerializableException`
+3. **`MarshallerFactory` 在 internal 包** — Drools 8 路径是 `org.kie.internal.marshalling.MarshallerFactory` (不是 `org.kie.api.marshalling`), 还要加 `drools-serialization-protobuf` 依赖才有实现
+4. **链式升级跨 fire 边界仍工作** — 单次购买 1000 元就同时解锁 BRONZE/SILVER/GOLD: `modify($s)` 让下一级规则的 LHS 重新评估, 整条链在一次 `fireAllRules` 内跑完。下次购买的 fire 开始时, tier 已经是 GOLD, 升级规则自然全部不再匹配
+5. **跨重启状态留存** — H2 用 `jdbc:h2:file:./data/drools-demo`, 物理文件 `./data/drools-demo.mv.db` 留着 byte[]。停 app → 重启 → `GET /loyalty/alice` 还是 GOLD, 因为 unmarshall 拿到的是关停前一次 marshall 的字节
+6. **跟 Drools 官方 `drools-persistence-jpa` 的差异** — 官方走 JTA + 多张表 + 自动事务边界, 复杂; 本 demo 一张 `session_snapshot` 单表 + 手动 marshall 边界 + Spring `@Transactional`。教学概念一致, 工程复杂度差一个数量级
+7. **改 DRL 后老快照可能 unmarshall 失败** — 规则签名或 fact 字段变了, 旧 byte[] 反序列化对不上号。学习场景手动 `rm -rf ./data/` 清掉; 生产要做"快照版本号 + 迁移脚本", 超出本 demo 范围
+
+## Step 11: StatelessKieSession 对比
+
+复用 Step 2 的 `discountKBase` (同一组规则), 但派生 `type="stateless"` 的 ksession。同输入 stateful / stateless 业务结果完全等价; 教学要点在两边 **API 形态** 和 **状态管理** 的差异。
+
+| 维度 | KieSession (stateful) | StatelessKieSession |
+| --- | --- | --- |
+| API 形态 | `newKieSession → insert × N → fireAllRules → dispose` (try/finally) | `execute(Iterable)` 一行 |
+| 实例复用 | 不可跨请求复用 (非线程安全, 每请求新建) | 线程安全, **注成 Spring 单例反复用** |
+| 跨调用记忆 | working memory 持续存在, 可跟 Marshaller (Step 10) 持久化 | 完全无状态, 两次 execute 互不知情 |
+| 干预 agenda | 可 `setFocus` / `fireUntilHalt`, 分阶段 fire (Step 5 流水线) | 不行——`execute` 一次走完 fire |
+| CEP stream | 支持 (Step 8) | 不支持, 没有时间线累积 |
+| 适用场景 | 长寿命会话 / agenda 编排 / 跨调用累积 / CEP | RPC 单笔 / 批处理 / 任何"喂数据 → 拿结果"的无状态评估 |
+
+```bash
+# A. stateful (Step 2 老接口)
+curl -X POST 'http://localhost:8081/discount/calculate' -H 'Content-Type: application/json' \
+  -d '{"orderId":"o1","customer":{"name":"Alice","vipLevel":2,"age":35,"yearsSinceRegistration":5},
+       "items":[{"name":"x","quantity":1,"unitPrice":1000,"category":"X"}]}'
+# → finalAmount: 807.5, 3 条 discountReasons
+
+# B. stateless (Step 11, 同输入应输出完全一致)
+curl -X POST 'http://localhost:8081/stateless/calculate' -H 'Content-Type: application/json' \
+  -d '{"orderId":"o1","customer":{"name":"Alice","vipLevel":2,"age":35,"yearsSinceRegistration":5},
+       "items":[{"name":"x","quantity":1,"unitPrice":1000,"category":"X"}]}'
+# → finalAmount: 807.5, 同样 3 条 discountReasons (跟 A 一模一样)
+
+# C. stateless 批处理: 3 单独立计算, 互不串户
+curl -X POST 'http://localhost:8081/stateless/batch' -H 'Content-Type: application/json' \
+  -d '{"orders":[
+        {"orderId":"b1","customer":{"name":"Alice","vipLevel":3,"age":35,"yearsSinceRegistration":1},
+         "items":[{"name":"x","quantity":1,"unitPrice":600,"category":"X"}]},
+        {"orderId":"b2","customer":{"name":"Bob","vipLevel":0,"age":40,"yearsSinceRegistration":5},
+         "items":[{"name":"y","quantity":1,"unitPrice":300,"category":"Y"}]},
+        {"orderId":"b3","customer":{"name":"Cathy","vipLevel":1,"age":28,"yearsSinceRegistration":0},
+         "items":[{"name":"z","quantity":1,"unitPrice":2500,"category":"Z"}]}
+      ]}'
+# → [b1 finalAmount=460 (VIP3+满减), b2=285 (老用户), b3=2325 (VIP1+满减)]
+```
+
+**学习观察点 (Step 11)**:
+
+1. **同 KBase 挂两种 ksession** — `kmodule.xml` 里 `discountKBase` 下并列两条 `<ksession>`: `discountSession` (默认 stateful) + `discountStatelessSession` (`type="stateless"`)。规则零改动两边都能跑, 选用哪个由调用方决定
+2. **API 简洁度差距悬殊** — stateless `execute(List.of(c, o))` 一行搞定; stateful 要 newKieSession + try/finally + dispose, 漏 dispose 会泄漏 RETE 节点。**stateless 永远不会漏 dispose, 因为根本没暴露 dispose 给你调**
+3. **实例复用是真的** — `StatelessDiscountService` 把 `StatelessKieSession` 注成 final 字段, 整个应用生命周期一个实例反复 `execute`。线程安全靠的是"每次 execute 内部新建一个干净的 stateful session 跑完即弃"
+4. **结果获取靠 mutable fact 引用** — stateless 没有 `getObjects()` 给你扫 working memory (内部 session 已 dispose 拿不到), 所以传进去的 `Order` 必须是 mutable, 规则 `applyRatioDiscount` 改的是同一个 Java 对象, execute 返回后直接读它
+5. **批处理零隔离成本** — `for (Order o : orders) stateless.execute(...)`, 第 N 单的 working memory 跟第 N-1 单完全独立, 不需要任何"清空"操作。stateful 想做到这个等价要每次 newKieSession + dispose, 写起来啰嗦得多
+6. **何时**不能**用 stateless** — ① Step 5 那种 `setFocus("validate") → setFocus("discount")` 分阶段触发的编排; ② Step 8 CEP 的 stream mode + pseudo clock 重放; ③ Step 10 那种"会话持续存在跨请求累积"的场景。本质都是"fire 之间需要干预" — stateless 一次 execute 走完不给你这个口子
+7. **跟 Step 10 持久化的关系** — stateless 天生不需要 marshall: 没有跨调用状态可保。Step 10 的 Marshaller / Spring Data JPA 那套只对 stateful 长寿命会话有意义
+
+## Step 12: TMS (Truth Maintenance System)
+
+`POST /tms/compare` 用一组 `Sensor` 在两个对照 kbase 各跑两阶段 fire，专门看 `insertLogical` 跟普通 `insert` 在"前提失配后是否撤销衍生 fact"上的差别。
+
+阶段 1: Sensor.value = hotValue (默认 95) → fire → 触发 HIGH + CRITICAL 两条规则，衍生出 2 个 Alert。
+阶段 2: modify Sensor.value = coolValue (默认 50) → 再 fire → 两条规则的 LHS (`value > 70` / `value > 90`) 全部失配。
+
+```bash
+curl -s -X POST 'http://localhost:8081/tms/compare' -H 'Content-Type: application/json' \
+  -d '{"sensorName":"boiler-a","hotValue":95,"coolValue":50}' | python3 -m json.tool
+```
+
+期望响应 (关键字段):
+
+```json
+{
+  "logical": {
+    "phase1Alerts": [<HIGH>, <CRITICAL>],
+    "phase2Alerts": []                       // ← TMS 引擎自动 retract 两个 Alert
+  },
+  "regular": {
+    "phase1Alerts": [<HIGH>, <CRITICAL>],
+    "phase2Alerts": [<HIGH>, <CRITICAL>]     // ← 普通 insert 跟前提解耦, Alert 还在
+  }
+}
+```
+
+**学习观察点 (Step 12)**:
+
+1. **`insertLogical` 把"前提-结论"因果链交给引擎维护** — 业务规则只需要声明"什么情况下应当有 Alert", 撤销由 TMS 负责。普通 `insert` 要业务自己写一条"value 正常 → retract Alert"反向规则
+2. **失配的精确性** — 把 coolValue 改成 80 (仍 > 70 但 < 90)，再调一遍，会看到 logical.phase2Alerts 只剩 HIGH, CRITICAL 被撤销。TMS 按"每个衍生 fact 各自的前提链"独立管理生命周期
+3. **跟 Step 4 标记 fact 的语义差** — Step 4 `insert(Promotion) + not Promotion` 只是"防重入"; Step 12 `insertLogical(Alert)` 是"随前提进退"。两者完全不同, 按业务诉求选
+4. **fact 字段必须可变 TMS 才有意义** — `Sensor` 是 mutable POJO; record 不可变, 没法 modify, 也就没有"前提变化"可言。这是 domain 设计跟规则语义绑定的典型例子
+5. **两个 kbase 隔离的工程含义** — 单 kbase 同时跑 logical + regular 两条规则会让 Alert 互相污染 (logical 撤销了, regular 还在, 谁是谁?), 教学场景隔离是必须的; 生产里只会选一种
+
+## Step 13: 后向链 + query
+
+`POST /backward/contains` 给一组 Location 直接关系 + 一组查询，用递归 query `isContainedIn` 反向证明每条查询是否成立。
+
+跟前面所有步骤的本质差异：**前向链 (Step 1-12) 是数据驱动 push** — 数据进 working memory，RETE 增量算出所有结论；**后向链 (Step 13) 是查询驱动 pull** — 给定目标，引擎反向递归找前提。后向链调用 `getQueryResults` 时不需要 `fireAllRules`，跟 agenda 解耦。
+
+```bash
+# 嵌套层级: Office → House → City → Country → Continent
+curl -s -X POST 'http://localhost:8081/backward/contains' -H 'Content-Type: application/json' \
+  -d '{
+    "locations": [
+      {"thing":"Office","container":"House"},
+      {"thing":"House","container":"City"},
+      {"thing":"City","container":"Country"},
+      {"thing":"Country","container":"Continent"}
+    ],
+    "queries": [
+      {"thing":"Office","container":"Country"},
+      {"thing":"Office","container":"Continent"},
+      {"thing":"House","container":"Office"},
+      {"thing":"City","container":"House"}
+    ]
+  }' | python3 -m json.tool
+```
+
+期望响应:
+
+```json
+{
+  "answers": [
+    {"thing":"Office","container":"Country","contained": true},      // 3 跳证明
+    {"thing":"Office","container":"Continent","contained": true},    // 4 跳证明
+    {"thing":"House","container":"Office","contained": false},       // 方向反了
+    {"thing":"City","container":"House","contained": false}          // 方向反了
+  ],
+  "ancestorsLookup": [
+    {"thing":"Office","ancestors":["House","City","Country","Continent"]},
+    ...
+  ]
+}
+```
+
+**学习观察点 (Step 13)**:
+
+1. **递归 query 的结构** — `query isContainedIn(x, y) Location(x, y;) or (Location(z, y;) and isContainedIn(x, z;)) end`。基础情形 (直接事实) `or` 递归情形 (链一步 + 递归调用)。引导 z 是 query body 内自动绑定的中间变量, 不出现在参数表
+2. **`@Position` 不能漏** — `Location(x, y;)` 末尾分号是位置模式标记, fact 类字段必须有 `@Position(N)` 注解。漏了报 "Unable to find @Positional field 0 for class Location"。record 组件上加 `@Position(0)` / `@Position(1)` 即可
+3. **后向链不消耗 agenda** — 调 `session.getQueryResults("isContainedIn", "Office", "Country")` 直接拉证明结果, 不需要 `fireAllRules`。这是 push (前向) vs pull (后向) 的硬差别
+4. **同一规则集可以前向 + 后向混用** — DRL 里既可以写 `rule ... when ... then ... end` 走前向链, 也可以写 `query ... end` 给后向链用; 规则 LHS 里还能用 `?queryName(...)` 把后向链嵌进前向链推理。本 demo 只走 Java API 演示, 保持简洁
+5. **"输出绑定"模式没在本 demo 用** — Drools 支持把 query 参数当 unbound output (用 `Variable.v` 占位) 自动列出所有满足条件的绑定, 但那条 API 在 internal 包。本 demo 改成"枚举候选容器 + 逐个 boolean 后向链证明", 演示 query 是可复用的"证明子程序"
+6. **跟前向链的传递闭包对比** — 用前向链算"间接包含"要写一条规则把 (A,B), (B,C) join 成 (A,C) 并 insert 新 Location, 还要处理 N 层递归的物化爆炸; 后向链按需展开, 不物化中间结果 (代价是每次查询都要重算)。N 跟"事实-查询比例"是选边的依据
+
 ## 下一步预告
 
 - LLM × Drools: LLM 生成 DRL → `POST /hot/upsert` 即时校验 + 上线; 或用 Drools 做 LLM 输出的硬约束验证 (本 Step 9 已铺好基础设施)
-- StatelessKieSession 跟 KieSession 对比 (无 working memory 缓存, 一次 execute(list))
-- 持久化 + 事务: JPA persistence of KieSession state for long-running flows
 - 完整 KieScanner + KJAR: 把"上传 → upsert" 换成 Maven repo 轮询
+- 加 BatchExecutionCommand: stateless 也能拿命名结果 / 调用 query, 不局限于 mutable fact
 
 需要时再喊我。

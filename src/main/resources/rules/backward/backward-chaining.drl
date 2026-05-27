@@ -1,0 +1,73 @@
+// Step 13: 后向链 (backward chaining) + query 演示。
+//
+// 前面 Step 1-12 全部是**前向链** (data-driven / forward chaining):
+//   1. 数据进 working memory
+//   2. RETE 网络增量传播
+//   3. LHS 命中产生 activation
+//   4. fireAllRules 把 agenda 上的 activation 跑完
+// 思路是"有数据 → 推结论"。
+//
+// 后向链反过来 (goal-driven / backward chaining):
+//   1. 给定一个目标 (query 调用)
+//   2. 引擎反向问"要让这个目标成立, 需要哪些前提"
+//   3. 这些前提若也对应一个 query, 继续往下问 — 形成递归证明树
+//   4. 叶子节点匹配到 working memory 里的实际 fact 即返回 true
+// 思路是"要这个结论 → 反查前提"。
+//
+// ───── isContainedIn: 经典的递归 query ─────
+//
+// 给定一组直接关系 Location(thing, container), 比如:
+//   Office  -> House
+//   House   -> City
+//   City    -> Country
+//
+// 问"Office 是否在 Country 里?" — working memory 里**没有** Location("Office", "Country")
+// 这条直接事实, 用前向链得自己写规则把传递闭包算出来 (像 Step 4 的链式 insert)。
+// 后向链直接定义"传递性"本身, 引擎递归证明:
+//
+//   isContainedIn(Office, Country) ?
+//     → 基础情形: Location(Office, Country;)         ✗ working memory 没有
+//     → 递归情形: 存在 z, Location(z, Country;) ∧ isContainedIn(Office, z;)
+//         尝试 z=City: Location(City, Country;)      ✓
+//           递归: isContainedIn(Office, City) ?
+//             → 递归情形: 存在 z', Location(z', City;) ∧ isContainedIn(Office, z';)
+//                 尝试 z'=House: Location(House, City;) ✓
+//                   递归: isContainedIn(Office, House) ?
+//                     → 基础情形: Location(Office, House;) ✓ done
+//
+// 整条证明链 = 后向推理树的一次成功遍历。
+
+package rules.backward
+
+import com.lrj.drools.domain.Location
+
+// ───── 位置参数 (positional pattern) 语法说明 ─────
+//
+// `Location(x, y;)` 末尾的分号声明"这是位置参数解构, 按 record/class 字段定义顺序绑定"。
+// Location record 定义是 (String thing, String container), 所以:
+//   - 第 1 位 x  ↔ thing
+//   - 第 2 位 y  ↔ container
+//
+// 等价的命名形式 `Location(thing == x, container == y)` 也对, 但 query 教学场景里
+// 位置语法更紧凑, 也是 Drools 文档里 query 章节的标准写法。
+
+query isContainedIn(String x, String y)
+    // 基础情形 (base case): x 直接在 y 里
+    Location(x, y;)
+    or
+    // 递归情形 (recursive case): 存在某个中间容器 z, x 在 z 里 (递归), 且 z 直接在 y 里
+    (   Location(z, y;)
+        and
+        isContainedIn(x, z;)
+    )
+end
+
+// ───── 另一个 query: 找出 x 所在的所有 (递归) 容器 ─────
+//
+// 跟 isContainedIn 不同: isContainedIn 是 (x, y) 都给定 → boolean;
+// findContainers 只给 x, y 当输出绑定 (在 query 调用时用 ?查询参数 mode 表示要"列出来")。
+// Drools 8.x 的 query 参数默认是 input, 但 Java 侧调用时可以传 Variable.v 让某个位置变 output。
+
+query findContainers(String x, String y)
+    isContainedIn(x, y;)
+end

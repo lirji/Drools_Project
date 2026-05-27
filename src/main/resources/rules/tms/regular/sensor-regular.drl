@@ -1,0 +1,39 @@
+// Step 12: TMS 对照组 — 普通 insert 让衍生 fact 跟前提解耦。
+//
+// 跟 sensor-logical.drl 唯一的区别: 用 `insert` 而不是 `insertLogical`。
+// 业务意图一致 (传感器超 70 报 HIGH, 超 90 报 CRITICAL), 但生命周期管理完全不同:
+//
+//   - 第一次 fire (value=95): 两个 Alert 都被 insert 进 working memory
+//   - modify($s) { setValue(50) } 后再 fire:
+//       * logical 版本: 两个 Alert 自动消失 (TMS 撤销)
+//       * regular 版本 (本文件): 两个 Alert 还在 — 引擎不知道它们和"value > N"有因果关系
+//
+// 想达到 logical 同样的效果, 必须手写"反向规则":
+//   rule "Clear high alert when temperature normal"
+//   when $s: Sensor(value <= 70)
+//        $a: Alert(sensorName == $s.getName(), level == "HIGH")
+//   then retract($a); end
+//
+// N 条正向规则 → 至少 N 条反向规则, 还要小心规则间状态一致性。这就是 TMS 的工程价值:
+// 把"撤销"这件事下沉到引擎, 业务规则只声明"什么时候应当有这个结论"。
+package rules.tms.regular
+
+import com.lrj.drools.domain.Sensor
+import com.lrj.drools.domain.Alert
+
+rule "High temperature alert (regular)"
+when
+    $s: Sensor(value > 70)
+then
+    // ★ 普通 insert: Alert 跟"那次 LHS 匹配"完全解耦, 进了 working memory 就是独立 fact
+    insert(new Alert($s.getName(), "HIGH",
+            "传感器 " + $s.getName() + " 读数 " + $s.getValue() + " 超过阈值 70"));
+end
+
+rule "Critical temperature alert (regular)"
+when
+    $s: Sensor(value > 90)
+then
+    insert(new Alert($s.getName(), "CRITICAL",
+            "传感器 " + $s.getName() + " 读数 " + $s.getValue() + " 进入危险区 (>90)"));
+end
