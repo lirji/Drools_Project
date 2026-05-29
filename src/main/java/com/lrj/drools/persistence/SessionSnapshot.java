@@ -3,8 +3,9 @@ package com.lrj.drools.persistence;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 
@@ -20,7 +21,9 @@ import java.time.Instant;
  *   - 本表只用 Spring Data 一个 entity, 自己手动 marshall, 没有 JTA 依赖; 缺点是
  *     缺少"事务边界内自动持久化"的便利, 但对单 endpoint 的场景够用。
  *
- * data 用 LONGVARBINARY (H2) / BLOB (其它库) 存 byte[]; 小会话几 KB, 大会话可能 MB 级。
+ * data 存 byte[]; 小会话几 KB, 大会话可能 MB 级。用 @JdbcTypeCode(LONGVARBINARY) 而不是
+ * @Lob: MySQL 下 @Lob byte[] 默认建成 64KB 的 blob, 大会话会被截断; LONGVARBINARY 映射成
+ * MySQL longblob / H2 大对象, 两个 profile 都够装。
  */
 @Entity
 @Table(name = "session_snapshot")
@@ -30,7 +33,7 @@ public class SessionSnapshot {
     @Column(name = "session_id", length = 64, nullable = false)
     private String sessionId;
 
-    @Lob
+    @JdbcTypeCode(SqlTypes.LONGVARBINARY)
     @Column(name = "data", nullable = false)
     private byte[] data;
 

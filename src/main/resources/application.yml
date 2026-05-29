@@ -5,22 +5,18 @@ spring:
   application:
     name: drools-demo
 
-  # Step 10: KieSession 序列化后存进 H2 file 模式 (./data 目录),
-  # 重启后 byte[] 还在, unmarshall 后接着上次的 working memory 跑。
-  # 改成 jdbc:h2:mem:... 就退化成进程内, 重启清空 — 拿来调试不污染磁盘也行。
-  datasource:
-    url: jdbc:h2:file:./data/drools-demo;DB_CLOSE_ON_EXIT=FALSE
-    username: sa
-    password:
-    driver-class-name: org.h2.Driver
+  # 默认连 MySQL (mysql profile)。clone 下来没装 MySQL 时, 用 H2 file 跑:
+  #   ./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
+  #   java -jar target/*.jar --spring.profiles.active=h2
+  # 数据源细节按 profile 分到 application-mysql.yml / application-h2.yml。
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:mysql}
+
   jpa:
     hibernate:
       ddl-auto: update      # 学习场景: 实体一改字段自动迁移; 生产不要用
     open-in-view: false
     show-sql: false
-  h2:
-    console:
-      enabled: true         # 浏览器 http://localhost:8081/h2-console 看表; jdbc-url 跟上面一致
 
 # Step 15: Actuator + Prometheus 指标暴露。
 #   GET /actuator/prometheus  → Prometheus 抓取端点 (文本格式)

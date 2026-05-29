@@ -1,0 +1,12 @@
+# H2 file 数据源 (备用 profile, 用 -Dspring-boot.run.profiles=h2 启用)。
+# 原来的默认配置, 状态落 ./data/drools-demo.mv.db, 重启不丢, 不需要外部 MySQL。
+# 改成 jdbc:h2:mem:... 就退化成进程内, 重启清空 — 调试不污染磁盘也行。
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/drools-demo;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true         # 浏览器 http://localhost:8081/h2-console 看表; jdbc-url 跟上面一致

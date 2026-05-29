@@ -4,6 +4,8 @@ Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 
 > 想先看 Drools 到底能干什么、各能力在哪一步演示？看 **[docs/drools-capabilities.md](docs/drools-capabilities.md)**（能力地图 + 选型决策树）。
 > 想理解引擎底层匹配原理？看 **[docs/rete-intuition.md](docs/rete-intuition.md)**。
+> 纠结用 Drools 还是轻量表达式引擎（Aviator）？看 **[docs/drools-vs-aviator.md](docs/drools-vs-aviator.md)**（选型对照）+ 可运行的 **[examples/aviator/AviatorDemo.java](examples/aviator/AviatorDemo.java)**（Aviator 独立示例，含跟 Step 2 折扣同题对照）。
+> Drools 是不是只配营销活动平台用？看 **[docs/drools-use-cases.md](docs/drools-use-cases.md)**（应用场景与定位，澄清"营销专用"误区 + 什么时候不该上 Drools）。
 
 ## 技术栈
 
@@ -35,8 +37,58 @@ src/main/
 
 ```bash
 cd /Users/liruijun/personal/LLM/drools-demo
-mvn spring-boot:run
+
+# 默认连 MySQL (mysql profile)。连接参数用环境变量覆盖, 不写死:
+DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo \
+DB_USERNAME=root DB_PASSWORD=yourpass \
+  ./mvnw spring-boot:run
+
+# 没装 MySQL? 切 H2 file 跑 (状态落 ./data/, 不依赖外部库):
+./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
 ```
+
+> **数据库**: Step 10 (会话持久化) 和 Step 18 (活动规则) 都用 JPA 落库。默认 profile 是 **MySQL**;
+> URL 带 `createDatabaseIfNotExist=true`, 库不存在会自动建。连接细节见 `application-mysql.yml`,
+> 全部支持环境变量覆盖 (`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`)。
+> 不想装 MySQL 就加 `-Dspring-boot.run.profiles=h2` 退回 H2 file 模式。
+
+## 数据库配置 (MySQL / H2)
+
+只有 **Step 10**（会话持久化）和 **Step 18**（活动规则）需要数据库；其余 Step 纯内存，不连库也能跑。
+
+### 两个 profile
+
+| profile | 用途 | 数据落哪 | 配置文件 |
+| --- | --- | --- | --- |
+| `mysql` (默认) | 正式用法 | 外部 MySQL 的 `drools_demo` 库 | `application-mysql.yml` |
+| `h2` | 无 MySQL 时备用 | `./data/drools-demo.mv.db` (file, 重启不丢) | `application-h2.yml` |
+
+`application.yml` 是公共配置 + `spring.profiles.active: ${SPRING_PROFILES_ACTIVE:mysql}`，所以默认走 MySQL，`SPRING_PROFILES_ACTIVE=h2` 或 `-Dspring-boot.run.profiles=h2` 切回 H2。
+
+### MySQL 连接 (全走环境变量, 仓库不留明文密码)
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DB_HOST` | `localhost` | |
+| `DB_PORT` | `3306` | |
+| `DB_NAME` | `drools_demo` | URL 带 `createDatabaseIfNotExist=true`, 库不存在自动建 |
+| `DB_USERNAME` | `root` | |
+| `DB_PASSWORD` | `root` | |
+
+URL 还带了 `characterEncoding=UTF-8`（中文规则名 / reason 不乱码）+ `serverTimezone=Asia/Shanghai`（`Instant` 字段时区）。要改时区或 SSL 直接编辑 `application-mysql.yml`。
+
+### 大字段为什么不用 `@Lob`
+
+`SessionSnapshot.data`（Step 10 的 session `byte[]`）和 `CampaignEntity.eligibilityDrl`（Step 18 的 DRL 文本）用的是 `@JdbcTypeCode(LONGVARBINARY/LONGVARCHAR)` 而非 `@Lob`：MySQL 下 `@Lob` 默认建成 64KB 的 `blob`/`text`，大会话或长 DRL 会被**截断**；显式声明长类型映射成 `longblob`/`longtext`（H2 下也是大对象），两个 profile 都够装。H2 时代用 `@Lob` 不暴露这个坑，换 MySQL 才踩到。
+
+### 常见报错排查
+
+- `Communications link failure` / `Connection refused` → MySQL 没起，或 `DB_HOST`/`DB_PORT` 不对
+- `Access denied for user` → `DB_USERNAME`/`DB_PASSWORD` 不对
+- `Unknown database 'drools_demo'` → 一般不会遇到（URL 自动建库）；若 MySQL 账号没有建库权限会报这个，手动 `CREATE DATABASE drools_demo;` 即可
+- 中文 name / reason 显示成 `???` → 检查 MySQL 服务端 `character_set_server`，建议建库时指定 `CREATE DATABASE drools_demo CHARACTER SET utf8mb4;`
+
+> `ddl-auto: update`（学习场景）会按实体自动建表 / 加列；生产不要用，应走 Flyway/Liquibase 等迁移工具。
 
 ## Step 1: Hello World
 
@@ -718,6 +770,52 @@ curl -s -X POST http://localhost:8081/dmn/price -H 'Content-Type: application/js
 4. **结构化输入** — `Customer` 在 DMN 里是带 schema 的 `tCustomer` (name/vipLevel/age), 不是裸 fact。Java 侧灌 `Map`, FEEL 里 `Customer.vipLevel` 按 key 取值
 5. **context key 要一字不差** — `DMNContext.set("Order Amount", ...)` 的 key 必须跟 `.dmn` 里 inputData 的 name 完全一致, **含空格**。写成 `"OrderAmount"` 那个输入就是 null
 6. **.dmn 要显式标 ResourceType** — 跟 `.xls` 一样, Drools 8.44 不自动识别 `.dmn`, `DroolsConfig` 里扫 `.dmn` 标 `ResourceType.DMN` 编进 `dmnKBase`。模型语法错在**启动时**就暴露 (KieBuilder.buildAll 编译, 不是 lazy)
+
+## Step 18: 营销活动资格判定 (一个真实业务场景)
+
+**第一个把多步拼成完整业务流的 Step**, 不引入新机制, 演示"怎么组合"。场景: 运营创建营销活动时**绑定一段资格规则**, 用户申请参加时判定够不够格——"满足规则的才能参加这个活动"。
+
+三步合体:
+- **创建活动绑规则** = **Step 9** (`KieHelper` 把 DRL 字符串运行时编译成 KieBase)
+- **规则持久化** = **Step 10** 的思路 (JPA + H2, 但存的是 DRL 源文本, 不是 marshall 的 session)
+- **够格判定** = **Step 4** 的白名单标记 fact (默认不够格, 规则命中才 `insert(Eligibility(true, reason))`)
+
+为什么这个场景非 Drools 不可: 活动天天新建、每个活动一套门槛、运营要自己改且不能等发版——规则必须"即数据"动态编译, 不能写死在代码里。
+
+```bash
+# 1. 创建活动 + 绑定资格规则 (DRL 由运营提供, import 用全限定类名)
+curl -s -X POST http://localhost:8081/campaign/create -H 'Content-Type: application/json' -d '{
+  "campaignId": "newuser-2026",
+  "name": "新人专享活动",
+  "eligibilityDrl": "package campaign.newuser;\nimport com.lrj.drools.domain.UserProfile;\nimport com.lrj.drools.domain.Eligibility;\n\nrule \"新人专享: 注册<30天 且 未消费过\"\nwhen\n    UserProfile(registrationDays < 30, totalSpent == 0)\nthen\n    insert(new Eligibility(true, \"新用户且未消费过\"));\nend\n\nrule \"一线城市新人加码\"\nwhen\n    UserProfile(registrationDays < 30, city in (\"北京\",\"上海\",\"广州\",\"深圳\"))\nthen\n    insert(new Eligibility(true, \"一线城市新人\"));\nend"
+}'
+# → {"campaignId":"newuser-2026","name":"新人专享活动","status":"ACTIVE"}
+
+# 2. 够格用户: 注册10天 + 未消费 + 上海 → 两条规则都命中
+curl -s -X POST http://localhost:8081/campaign/newuser-2026/check -H 'Content-Type: application/json' \
+  -d '{"userId":"u1","age":25,"vipLevel":0,"registrationDays":10,"totalSpent":0,"city":"上海"}'
+# → {"campaignId":"newuser-2026","userId":"u1","eligible":true,
+#    "reasons":["新用户且未消费过","一线城市新人"],"firedCount":2}
+
+# 3. 不够格: 老用户 + 已消费 + 非一线 → 一条没中
+curl -s -X POST http://localhost:8081/campaign/newuser-2026/check -H 'Content-Type: application/json' \
+  -d '{"userId":"u2","age":40,"vipLevel":2,"registrationDays":400,"totalSpent":5000,"city":"杭州"}'
+# → {"campaignId":"newuser-2026","userId":"u2","eligible":false,"reasons":[],"firedCount":0}
+
+# 4. 编译失败的 DRL → 400 + 行号 (绝不落库)
+# 5. 看活动列表 (含 status + 是否已编译进内存缓存)
+curl -s http://localhost:8081/campaign/list
+# 6. 结束活动 → 之后 check 返回 409
+curl -s -X POST http://localhost:8081/campaign/newuser-2026/end
+```
+
+**学习观察点 (Step 18)**:
+
+1. **白名单式判定** — working memory 默认没有 `Eligibility`, 规则只在满足条件时 insert; fire 完 service 用 `session.getObjects(o -> o instanceof Eligibility)` 收集, 有 `eligible==true` 才算够格。安全默认是"漏写规则 → 没人够格", 不是"放所有人进来"
+2. **多活动天然隔离** — 一个 `campaignId` 一个独立 KieBase (内存 `ConcurrentHashMap` 缓存), 各跑各的 working memory, 不像 Step 12 要担心衍生 fact 互相污染, 也不用 agenda-group 划分
+3. **重启不丢活动 (rehydrate)** — 这是"Step 9 + 持久化"比纯 Step 9 多的能力。DRL 文本存 H2 `campaign` 表; 重启后内存缓存空 (list 里 `cached:false`), 第一次 check 触发 `computeIfAbsent` 从 DB 捞 DRL 重新编译 (`cached` 翻 `true`)。编译贵所以缓存, DB 是真相源所以重启不丢
+4. **DRL 即数据** — 运营写的规则不进 `resources/rules/` 也不进 `kmodule.xml`, 走 KieHelper 编译, 加活动不用改配置、不用重启。编译失败返回 400 + 行号, 跑不起来的规则绝不落库
+5. **跟 Step 16 的取舍** — 同样是"规则动态上线", Step 16 (KJAR + Maven repo) 适合"规则作为正式制品、多实例一致、版本治理"; Step 18 这种 "DRL 存业务库 + 应用内编译" 更轻, 适合"活动/规则就是业务数据"的高频小规则场景
 
 ## 下一步预告
 

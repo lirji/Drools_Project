@@ -27,23 +27,30 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 - **Step 17 / DMN (Decision Model and Notation)**：`POST /dmn/price` → `service/DmnService.java` + `rules/dmn/vip-pricing.dmn`。**第一个非 DRL 体系的 Step**：DMN 是 OMG 跨厂商标准（`.dmn` XML + FEEL 表达式 + 决策需求图 DRG），跟前面 Step 1-16 全部基于 DRL 的引擎是两套独立东西。模型 `VipPricing` 演示：结构化输入（`tCustomer` 带 schema）→ `Discount Rate`（DMN **原生**决策表，hitPolicy UNIQUE，对照 Step 7 的 Excel→DRL 决策表）→ `Final Price`（FEEL 字面表达式，依赖 Discount Rate 形成**决策链**）+ `Membership Tier`（FEEL if/else）。DMN 不走 KieSession/fireAllRules，而是 `DMNRuntime.evaluateAll(model, context)` 按 DRG 拓扑求值
 
-后续（LLM 联动）按需扩展，**没需求时不要提前加**。Step 16 的 `kie-ci` 是个重依赖（拉进 maven-core / aether 一票传递依赖），且 `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`，这是 demo 自己的 GAV、每次 deploy 覆盖，清理直接 `rm -rf ~/.m2/repository/com/lrj/rules`。Step 10 已加 JPA + H2 但仅服务于持久化 demo，不要把它扩成"全项目状态都进数据库"。
+- **Step 18 / 营销活动资格判定**：`POST /campaign/create` + `POST /campaign/{id}/check` + `POST /campaign/{id}/end` + `GET /campaign/list` → `service/CampaignService.java` + `domain/UserProfile.java` + `domain/Eligibility.java` + `persistence/CampaignEntity.java`。**第一个把多步拼成"实际业务场景"的 Step**：运营创建活动时**绑定一段资格规则 (DRL)**，用户申请参加时判定够不够格。三个 Step 的合体——① 创建活动复用 **Step 9** 的 `KieHelper` 运行时编译 DRL（编译失败返回 400 + 行号，绝不把跑不起来的规则落库）；② 规则**源文本**持久化到 `campaign` 表（复用 **Step 10** 的 JPA 思路，但存的是 DRL 文本而非 marshall 的 session byte[]；DB 默认 MySQL，可切 H2 profile）；③ 资格判定走 **Step 4** 的"白名单标记 fact"套路——默认不够格，规则只在满足条件时 `insert(new Eligibility(true, reason))`，fire 完看 working memory 有没有 `Eligibility(eligible==true)`。两级存储：内存 `ConcurrentHashMap<campaignId, KieBase>` 当热路径缓存 + DB 存规则文本；应用重启后内存空了，check 时 `computeIfAbsent` 从 DB 捞 DRL 重新编译（rehydrate），所以活动不随重启丢失——这正是"Step 9 + 持久化"比纯 Step 9 多出来的能力。多活动靠"一个 campaignId 一个独立 KieBase"天然隔离，不像 Step 12 要担心衍生 fact 互相污染
+
+后续（LLM 联动）按需扩展，**没需求时不要提前加**。Step 16 的 `kie-ci` 是个重依赖（拉进 maven-core / aether 一票传递依赖），且 `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`，这是 demo 自己的 GAV、每次 deploy 覆盖，清理直接 `rm -rf ~/.m2/repository/com/lrj/rules`。Step 10 / Step 18 已加 JPA 但仅服务于持久化 demo，不要把它扩成"全项目状态都进数据库"。
 
 ## 技术栈与版本背景
 
 - Java 21 / Spring Boot 3.3.5 / Drools 8.44.2.Final / Maven (wrapper)
 - **为什么选 8.44.2.Final**：Drools 9.x 仍偏 incubator；8.44.2 是社区验证过的 Spring Boot 3.3 + Java 21 稳定组合。Drools 10 (Apache KIE 改名后的新线) 文档/教程跟不上，本项目不追
+- **数据库**：默认 **MySQL**（`mysql` profile，`mysql-connector-j` 驱动），备用 **H2 file**（`h2` profile）。Step 10 / Step 18 的 JPA 持久化用它。两个驱动 pom 都留，靠 `spring.profiles.active` 切换，连接参数全走环境变量（见下）
 
 ## 常用命令
 
 ```bash
-./mvnw spring-boot:run        # 起 web 服务 (默认 8081)
+# 默认 MySQL profile，连接走环境变量覆盖（不写死真实值）
+DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=yourpass \
+  ./mvnw spring-boot:run               # 起 web 服务 (默认 8081)
+./mvnw spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file 模式
 ./mvnw test                   # 跑测试 (目前只有 spring-boot-starter-test，没业务测试)
 ./mvnw clean package          # 打 jar
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
 ```
 
 **端口 8081** 跟主项目 LangChain4j (8080) 错开，方便两个 demo 同时跑。改端口看 `application.yml`。
+**数据库 profile**：`application.yml` 是公共配置 + `spring.profiles.active: mysql` 默认；数据源细节分到 `application-mysql.yml`（带 `createDatabaseIfNotExist=true`，库不存在自动建）/ `application-h2.yml`。连接参数 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` 都能用环境变量覆盖。
 
 ## 已踩过的坑（务必先读，再动 pom / DRL）
 
@@ -58,6 +65,8 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 4. **DRL 是运行时解析**，`mvn compile` 过了不代表规则没语法错。改完 DRL 必须至少启动一次或跑一次冒烟请求
 5. **Customer / OrderItem 是 Java record，DRL 里 `Customer( age >= 18 )` 能正常用** — Drools 8.x 的 LHS 会自动尝试 record accessor (`age()`)，不是只有 `getAge()`。这条算确认信息，不是坑
 6. **RHS 没有 record accessor 糖** — LHS `Customer(age >= 18)` 引擎自己适配 record，但 RHS 是直接编译成 Java 代码，没有适配层。所以 `$p.getMessage()` 对 record `Promotion` 会编译失败，必须写 `$p.message()`。改完 DRL 重启时**第一次请求**才会触发 KieBase 重新编译并报错（DRL 是 lazy compile），冒烟一次比读启动日志可靠
+7. **MySQL 下 `@Lob` 大字段会被截断** — `@Lob byte[]`（Step 10 的 session 快照）在 MySQL 默认建成 64KB 的 `blob`、`@Lob String`（Step 18 的 DRL 文本）建成 64KB `text`，大会话 / 长 DRL 会超限。本项目改用 `@JdbcTypeCode(SqlTypes.LONGVARBINARY)` / `@JdbcTypeCode(SqlTypes.LONGVARCHAR)`，映射成 MySQL `longblob` / `longtext`，H2 下也是大对象，两个 profile 都够装。H2 时代用 `@Lob` 不暴露这个坑（H2 的 LOB 默认就够大），换 MySQL 才踩到
+8. **MySQL 中文乱码 / 时区** — `application-mysql.yml` 的 URL 必须带 `characterEncoding=UTF-8`（DRL / reason 里有中文）+ `serverTimezone`（`Instant` 字段），否则中文乱码 / 时间偏移。`createDatabaseIfNotExist=true` 让库不存在时自动建，学习省事；生产应预建库 + 收紧账号权限
 
 ## 代码结构（按职责，不是按目录）
 
@@ -71,7 +80,7 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - `metrics/` — Step 15 引入。`MeteredRuleListener` 跟 `audit/RuleAuditListener` 实现同一套 listener 接口、同样按请求挂一个实例，区别只在输出去向：audit 攒进 `List<AuditEvent>` 随请求返回，metrics 累加进全局 `MeterRegistry` 经 `/actuator/prometheus` 抓取。`fireAllRules` 整段耗时是个 `Timer`，包在 service 外层（listener 拿不到 fire 边界）
 - `service/ScannerService.java` — Step 16 引入。**不走** `config/DroolsConfig` 那个 classpath KieContainer，而是自己维护一个绑 ReleaseId 的 `KieContainer` + `KieScanner`（懒创建于首次 deploy）。KJAR 程序化构建（`KieModuleModel` 生成独立 kmodule，跟主项目 `META-INF/kmodule.xml` 完全隔离）。`generation` 计数器标记当前 live 的内容代次，run 时返回，肉眼可见热替换发生
 - `service/DmnService.java` — Step 17 引入。**第二套引擎**：不是 KieSession，而是 `DMNRuntime`（构造时 `KieRuntimeFactory.of(kieContainer.getKieBase("dmnKBase")).get(DMNRuntime.class)` 拿一次缓存当字段，线程安全可复用，跟 Step 11 的 StatelessKieSession 持有方式同理）。`DMNModel` 也一次性解析缓存。`.dmn` 文件放 `rules/dmn/`，由 `DroolsConfig` 扫 `.dmn` 标 `ResourceType.DMN` 编进 `dmnKBase`
-- `persistence/` — Step 10 引入。`SessionSnapshot` (JPA entity, sessionId 做主键, `byte[] data` 存 marshall 出来的 KieSession) + `SessionSnapshotRepository` (Spring Data)。H2 file 在 `./data/drools-demo.mv.db`，repo 根 `.gitignore` 已豁免
+- `persistence/` — Step 10 引入。`SessionSnapshot` (JPA entity, sessionId 做主键, `byte[] data` 存 marshall 出来的 KieSession) + `SessionSnapshotRepository` (Spring Data)。默认连 MySQL（`mysql` profile），H2 file（`h2` profile）在 `./data/drools-demo.mv.db`，repo 根 `.gitignore` 已豁免。Step 18 又加了 `CampaignEntity` (campaignId 主键, `eligibilityDrl` 存 DRL 源文本) + `CampaignRepository`，同一个库不同表——一个存 session 运行时状态、一个存规则定义文本。两个 entity 的大字段都用 `@JdbcTypeCode`（不是 `@Lob`），见坑 7
 - `config/DroolsConfig.java` — Drools 8.44.2 的 `getKieClasspathContainer()` **不识别 spreadsheet 决策表**（启动报 "No files found"），所以这里改成程序化 `KieFileSystem` 构建：扫 `.drl` 自动加 + `.xls` 显式标 `ResourceType.DTABLE`
 
 ## 扩展点
@@ -145,6 +154,12 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - Step 17：`DMNContext.set(key, value)` 的 **key 必须跟 .dmn 里 inputData 的 name 一字不差**, 包括空格 —— `"Order Amount"` 带空格也要原样传, 写成 `"OrderAmount"` 会导致那个输入为 null。`getModel(namespace, name)` 的两个参数也要跟 `<definitions namespace=... name=...>` 完全一致, 否则返回 null
 - Step 17：FEEL 的 `number` 类型底层是 **BigDecimal**, 所以 `Discount Rate` / `Final Price` 返回的是 BigDecimal (JSON 序列化成普通数字, 如 `0.10` / `900.00`)。结构化输入 `Customer` 灌的是 `Map<String,Object>` (key 对应 itemComponent name), FEEL 里 `Customer.vipLevel` 按 key 取值
 - Step 17 跟 Step 7 的对照: Step 7 是 Excel 决策表 → drools-decisiontables 编译成 DRL → 跑 KieSession (本质还是 DRL/RETE); Step 17 是 DMN 标准模型 → DMNRuntime 独立求值引擎。两者都能让业务方维护表格, 但 DMN 是跨厂商标准 + 自带 FEEL + 决策链, 可移植性和表达力更强; 决策表只是"规则的表格写法"
+- Step 18：是个"合体 Step", 没有引入新 Drools 机制, 而是把 Step 9 (KieHelper 编译) + Step 10 (JPA/H2 持久化) + Step 4 (标记 fact) 拼成一个真实业务流。教学价值在"怎么组合", 不在单点能力。读它之前先读那三步
+- Step 18：活动绑定的 DRL 由请求传入 (运营写的), **不放 resources/rules/ 也不进 kmodule.xml** —— 跟 Step 9 同理走 KieHelper 编译, 不依赖 DroolsConfig 那个 classpath KieContainer。所以加活动不用改 kmodule、不用重启
+- Step 18：运营写的 DRL 必须 `import com.lrj.drools.domain.UserProfile` 和 `com.lrj.drools.domain.Eligibility` (全限定类名), 因为 KieHelper 编译的是裸 DRL 字符串, 没有项目的 import 上下文。RHS 里 `insert(new Eligibility(true, "理由"))` 是构造新对象, 不踩 record RHS accessor 的坑 (CLAUDE.md 坑 6); 但若 RHS 要读 UserProfile 字段得写 `$u.registrationDays()` 不是 `getRegistrationDays()`
+- Step 18：白名单式判定的安全默认 —— "默认不够格, 命中规则才放行"。漏写规则的后果是"没人够格"(保守、安全), 而不是"所有人都放进来"。跟 Step 14 ReleaseAgendaFilter "没标 @release 默认放行" 是相反方向的默认值选择, 都是按"出错时往安全侧倒"设计的
+- Step 18：两级存储的 rehydrate 是关键观察点 —— `registry.computeIfAbsent(campaignId, id -> compile(DB里的DRL))`。重启后内存缓存空 (list 里 cached=false), 第一次 check 触发从 DB 捞 DRL 重新编译进缓存 (cached 翻 true)。这就是"规则即数据 + 持久化"相比 Step 9 纯内存态的增量。编译贵, 所以缓存; DB 是真相源, 所以重启不丢
+- Step 18：`session.getObjects(ObjectFilter)` 用 lambda `o -> o instanceof Eligibility` 过滤 working memory 拿衍生 fact, 比 Step 4 在 RHS 里手动往 list 里塞更直接。一个活动可能多条规则命中 (示例里"新人"+"一线城市"两条都中), reasons 收集成列表全返回
 
 ## REST 接口
 
@@ -179,9 +194,16 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 | POST | `/scanner/poll/stop`    | Step 16：停自动轮询 |
 | GET  | `/scanner/status`       | Step 16：看 releaseId / container 是否就绪 / 当前 generation / 是否在轮询 |
 | POST | `/dmn/price`            | Step 17：插 Customer + orderAmount, 走 DMN 模型求值, 返回 Discount Rate / Final Price / Membership Tier 三个决策结果 |
+| POST | `/campaign/create`      | Step 18：运营创建活动 + 绑定资格规则 (DRL), 编译并落库; 同 campaignId 覆盖; 编译失败 400 + 行号 |
+| POST | `/campaign/{id}/check`  | Step 18：插 UserProfile 判定够不够格, 白名单式 (命中规则才 insert Eligibility), 返回 eligible + reasons |
+| POST | `/campaign/{id}/end`    | Step 18：结束活动 (status→ENDED), 之后 check 返回 409; 清掉内存 KieBase 缓存 |
+| GET  | `/campaign/list`        | Step 18：列出所有活动 (含 status + 是否已编译进内存缓存 cached) |
 
 ## 配套文档
 
 - `README.md` — 每个 Step 的完整请求示例 + 学习观察点 + 下一步指引
 - `docs/rete-intuition.md` — RETE 算法直觉（拿本仓库折扣规则当例子，讲网络结构 + 增量传播 + 写规则原则）
 - `docs/drools-capabilities.md` — Drools 能力地图（按七大块分类梳理 Drools 全部能力，每项标注本仓库哪一步演示 / 未演示，含能力选型决策树）
+- `docs/drools-vs-aviator.md` — Drools 与 Aviator（轻量表达式引擎）的选型对照：表达式求值 vs 规则引擎，怎么选、怎么组合用
+- `docs/drools-use-cases.md` — Drools 应用场景与定位：澄清"营销平台专用"的误区，梳理风控/保险/信贷/计费等高频领域，以及什么时候不该上 Drools
+- `examples/aviator/AviatorDemo.java` — Aviator 独立学习示例（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）。一个 main 方法 6 段：基本求值 / 编译缓存 / 对象属性 / 自定义函数 / 沙箱安全 / 折扣同题对照 Step 2。未编译验证，API 按 Aviator 5.4.3 写，运行方式见文件头

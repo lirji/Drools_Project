@@ -1,0 +1,15 @@
+# MySQL 数据源 (默认 profile)。所有连接参数都能用环境变量覆盖, 不写死真实值:
+#   DB_HOST / DB_PORT / DB_NAME / DB_USERNAME / DB_PASSWORD
+# 例: DB_HOST=10.0.0.5 DB_PASSWORD=secret ./mvnw spring-boot:run
+#
+# URL 上的几个参数:
+#   createDatabaseIfNotExist=true  库不存在自动建 (学习省事; 生产应预建库 + 收紧权限)
+#   characterEncoding=UTF-8        DRL / reason 里有中文, 避免乱码
+#   serverTimezone                 Instant 字段 (updated_at 等) 时区, 按需改
+#   useSSL=false / allowPublicKeyRetrieval=true  本地连接常用, 生产视情况调整
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:drools_demo}?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver

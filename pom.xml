@@ -96,7 +96,10 @@
         <!-- Step 10: KieSession 持久化。
              - drools-serialization-protobuf: Drools 8 的 Marshaller 实现拆到独立模块,
                不显式引入 MarshallerFactory.newMarshaller(kb) 会报 "no Marshaller available"
-             - spring-boot-starter-data-jpa + h2: 学习场景用 H2 file-based, 状态跨重启不丢 -->
+             - spring-boot-starter-data-jpa: JPA / Hibernate
+             - mysql-connector-j: 默认 (mysql profile) 用的数据库驱动
+             - h2:              备用 (h2 profile), clone 仓库没装 MySQL 也能 file-based 跑起来
+             两个驱动都留, 靠 spring.profiles.active 切换连哪个; 版本由 spring-boot BOM 管。 -->
         <dependency>
             <groupId>org.drools</groupId>
             <artifactId>drools-serialization-protobuf</artifactId>
@@ -104,6 +107,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
