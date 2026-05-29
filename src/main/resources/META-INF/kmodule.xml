@@ -75,4 +75,18 @@
         <ksession name="backwardSession"/>
     </kbase>
 
+    <!-- Step 14: 引擎安全护栏。一个 kbase 同时放"失控循环规则" (Counter 触发) 和
+         "灰度规则" (Cart 触发, 带 @release 元数据), 靠 fact 类型天然隔离。
+         演示 fireAllRules(maxFires) 熔断、session.halt() 超时打断、
+         fireAllRules(AgendaFilter) 按发布通道灰度放行。 -->
+    <kbase name="guardKBase" packages="rules.guard">
+        <ksession name="guardSession"/>
+    </kbase>
+
+    <!-- Step 17: DMN。packages 指向 rules.dmn 目录, 里面的 .dmn 模型被
+         kie-dmn-core 编译。注意 DMN 不靠 ksession 跑, 而是从这个 kbase 取
+         DMNRuntime (KieRuntimeFactory.of(kieBase("dmnKBase")).get(DMNRuntime.class)),
+         所以这里只声明 kbase, 不需要 ksession。 -->
+    <kbase name="dmnKBase" packages="rules.dmn"/>
+
 </kmodule>

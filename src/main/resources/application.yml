@@ -22,6 +22,19 @@ spring:
     console:
       enabled: true         # 浏览器 http://localhost:8081/h2-console 看表; jdbc-url 跟上面一致
 
+# Step 15: Actuator + Prometheus 指标暴露。
+#   GET /actuator/prometheus  → Prometheus 抓取端点 (文本格式)
+#   GET /actuator/metrics/drools.rules.fired → 单个指标的 JSON 视图 (调试用)
+# 生产里 management.endpoints 通常单独开一个 port + 加鉴权, 学习场景全开在 8081。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: drools-demo   # 所有指标默认带上的公共 tag, 多实例时区分来源
+
 logging:
   level:
     com.lrj.drools: DEBUG

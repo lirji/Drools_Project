@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Step 17: DMN (Decision Model and Notation) 模型 — VIP 定价。
+
+  这是 OMG 标准的决策建模, 跟前面 Step 1-16 全部基于 DRL 的体系是两套独立东西:
+    - DRL: Drools 私有语法, when/then 规则, RETE/Phreak 前向链
+    - DMN: 跨厂商标准 (.dmn XML + FEEL 表达式), 决策需求图 (DRG) 描述"决策依赖决策"
+
+  本模型的决策需求图 (谁依赖谁):
+
+      Customer ─────┐
+                    ├──> Discount Rate ──┐
+      Order Amount ─┼────────────────────┴──> Final Price
+                    └──> Membership Tier
+
+    - Discount Rate:   DMN 原生决策表 (按 vipLevel 出折扣率), 跟 Step 7 的 Excel 决策表
+                       对比 —— Step 7 是 .xls 编译成 DRL, 这里是 DMN 标准内建的决策表
+    - Final Price:     FEEL 字面表达式, 依赖 Discount Rate + Order Amount (决策链)
+    - Membership Tier: FEEL 的 if/else 链, 展示 FEEL 表达式而非表格
+
+  命名空间用 DMN 1.2 (20180521), Drools 8.44.2 解析最稳。
+  注意: XML 文本里 `>` 用 &gt; 转义 (虽然裸 > 在 XML content 合法, 转义更保险)。
+-->
+<definitions xmlns="http://www.omg.org/spec/DMN/20180521/MODEL/"
+             xmlns:feel="http://www.omg.org/spec/DMN/20180521/FEEL/"
+             id="vip-pricing"
+             name="VipPricing"
+             namespace="https://lrj.com/dmn/vip-pricing">
+
+  <!-- 结构化输入类型: 一个 Customer 有 name/vipLevel/age 三个字段。
+       这是 DMN 相对 DRL 的一个表达力点: 输入是带类型 schema 的, 不是裸 fact。 -->
+  <itemDefinition name="tCustomer">
+    <itemComponent name="name">
+      <typeRef>string</typeRef>
+    </itemComponent>
+    <itemComponent name="vipLevel">
+      <typeRef>number</typeRef>
+    </itemComponent>
+    <itemComponent name="age">
+      <typeRef>number</typeRef>
+    </itemComponent>
+  </itemDefinition>
+
+  <!-- 输入数据节点: 模型的"入参"。Java 侧 DMNContext.set("Customer", ...) 灌进来。 -->
+  <inputData id="id_customer" name="Customer">
+    <variable name="Customer" typeRef="tCustomer"/>
+  </inputData>
+
+  <inputData id="id_amount" name="Order Amount">
+    <variable name="Order Amount" typeRef="number"/>
+  </inputData>
+
+  <!-- 决策 1: 折扣率 — DMN 原生决策表。hitPolicy UNIQUE = 各行条件互斥, 至多命中一条。 -->
+  <decision id="id_rate" name="Discount Rate">
+    <variable name="Discount Rate" typeRef="number"/>
+    <informationRequirement>
+      <requiredInput href="#id_customer"/>
+    </informationRequirement>
+    <decisionTable hitPolicy="UNIQUE">
+      <input id="in_vip" label="vipLevel">
+        <inputExpression typeRef="number">
+          <text>Customer.vipLevel</text>
+        </inputExpression>
+      </input>
+      <output id="out_rate" name="rate" typeRef="number"/>
+      <rule id="rate_0">
+        <inputEntry id="rate_0_in"><text>0</text></inputEntry>
+        <outputEntry id="rate_0_out"><text>0</text></outputEntry>
+      </rule>
+      <rule id="rate_1">
+        <inputEntry id="rate_1_in"><text>1</text></inputEntry>
+        <outputEntry id="rate_1_out"><text>0.05</text></outputEntry>
+      </rule>
+      <rule id="rate_2">
+        <inputEntry id="rate_2_in"><text>2</text></inputEntry>
+        <outputEntry id="rate_2_out"><text>0.10</text></outputEntry>
+      </rule>
+      <rule id="rate_3">
+        <inputEntry id="rate_3_in"><text>3</text></inputEntry>
+        <outputEntry id="rate_3_out"><text>0.15</text></outputEntry>
+      </rule>
+      <rule id="rate_4">
+        <inputEntry id="rate_4_in"><text>&gt;= 4</text></inputEntry>
+        <outputEntry id="rate_4_out"><text>0.20</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+
+  <!-- 决策 2: 最终价格 — FEEL 字面表达式, 依赖 Discount Rate (另一个决策) + Order Amount。
+       这就是决策链: Final Price 等 Discount Rate 先算完。 -->
+  <decision id="id_final" name="Final Price">
+    <variable name="Final Price" typeRef="number"/>
+    <informationRequirement>
+      <requiredInput href="#id_amount"/>
+    </informationRequirement>
+    <informationRequirement>
+      <requiredDecision href="#id_rate"/>
+    </informationRequirement>
+    <literalExpression>
+      <text>Order Amount * (1 - Discount Rate)</text>
+    </literalExpression>
+  </decision>
+
+  <!-- 决策 3: 会员档位 — FEEL if/else 链, 演示表达式逻辑 (不是表格)。 -->
+  <decision id="id_tier" name="Membership Tier">
+    <variable name="Membership Tier" typeRef="string"/>
+    <informationRequirement>
+      <requiredInput href="#id_customer"/>
+    </informationRequirement>
+    <literalExpression>
+      <text>if Customer.vipLevel &gt;= 3 then "钻石" else if Customer.vipLevel &gt;= 1 then "会员" else "普通"</text>
+    </literalExpression>
+  </decision>
+
+</definitions>

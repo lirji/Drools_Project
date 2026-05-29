@@ -60,6 +60,17 @@ public class DroolsConfig {
             kfs.write(res);
         }
 
+        // 4. DMN 模型 (Step 17). 跟决策表同理: 显式标 ResourceType.DMN, ClasspathKieProject
+        //    不会自动认 .dmn。编译后经 DMNRuntime (KieRuntimeFactory.of(kbase)) 求值。
+        for (var r : resolver.getResources("classpath*:rules/**/*.dmn")) {
+            String path = "src/main/resources/rules/" + extractRulesRelative(r.getURL().toString());
+            Resource res = ks.getResources()
+                    .newByteArrayResource(r.getContentAsByteArray())
+                    .setResourceType(ResourceType.DMN)
+                    .setSourcePath(path);
+            kfs.write(res);
+        }
+
         KieBuilder kb = ks.newKieBuilder(kfs).buildAll();
         if (kb.getResults().hasMessages(Message.Level.ERROR)) {
             throw new IllegalStateException("Drools build errors: " + kb.getResults().getMessages());

@@ -73,6 +73,26 @@
             <artifactId>drools-decisiontables</artifactId>
         </dependency>
 
+        <!-- Step 16: KieScanner + KJAR。kie-ci 带 Maven Aether 解析器, 让 KieContainer
+             能按 ReleaseId 从 Maven 仓库 (含本地 ~/.m2) 解析 KJAR, 并让 KieScanner 轮询
+             新版本。org.kie.scanner.KieMavenRepository 也在这个模块里, 用来把构建好的
+             KJAR 装进本地仓库。注意: 这是个"重"依赖, 会拉进 maven-core / resolver 一票传递依赖。 -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-ci</artifactId>
+        </dependency>
+
+        <!-- Step 17: DMN (Decision Model and Notation)。kie-dmn-core 是 DMN 运行时,
+             传递带 kie-dmn-backend (解析 .dmn XML) + kie-dmn-feel (FEEL 表达式引擎)。
+             加了之后 KieBuilder 会把 classpath 上的 .dmn 编译成 DMNModel,
+             经 DMNRuntime (从 KieContainer / KieBase 取) 求值。跟 DRL 是两套独立体系。 -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-dmn-core</artifactId>
+            <!-- drools-bom 不管 kie-dmn-* 的版本, 显式锁到跟 Drools 同版本号 (KIE 同步发布) -->
+            <version>${drools.version}</version>
+        </dependency>
+
         <!-- Step 10: KieSession 持久化。
              - drools-serialization-protobuf: Drools 8 的 Marshaller 实现拆到独立模块,
                不显式引入 MarshallerFactory.newMarshaller(kb) 会报 "no Marshaller available"
@@ -89,6 +109,19 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
+        </dependency>
+
+        <!-- Step 15: 规则可观测性指标。
+             - actuator:                     暴露 /actuator/metrics、/actuator/prometheus
+             - micrometer-registry-prometheus: 让 Micrometer 指标按 Prometheus 文本格式吐出来
+             版本都由 spring-boot-starter-parent 的 BOM 管, 不写 version。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
         <dependency>

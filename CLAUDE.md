@@ -21,8 +21,13 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - **Step 11 / StatelessKieSession 对比**：`POST /stateless/calculate` + `POST /stateless/batch` → `service/StatelessDiscountService.java`，复用 Step 2 的 `discountKBase` 但派生 `type="stateless"` 的 ksession；同输入结果跟 stateful 完全等价。教学重点：API 极简 (无 `dispose()`)、实例可复用 (线程安全)、execute(Iterable) 一次插入多 fact、批处理零隔离成本
 - **Step 12 / TMS (Truth Maintenance System)**：`POST /tms/compare` → `service/TmsService.java` + `rules/tms/logical/` + `rules/tms/regular/`。同一组 LHS 各写两份 DRL，一份用 `insertLogical` 一份用 `insert`，单次请求里在两个 kbase 各跑两阶段 fire（先 value=95 触发告警 → modify 改成 50 再 fire）。结果对比：logical 的衍生 Alert 被引擎自动 retract，regular 的依然留在 working memory。展示"前提-结论"因果链由引擎维护
 - **Step 13 / 后向链 + query**：`POST /backward/contains` → `service/BackwardChainingService.java` + `rules/backward/backward-chaining.drl`。前面 Step 1-12 全是前向链 (data-driven push)；这一步用经典 `isContainedIn(x, y)` 递归 query 演示反向 (goal-driven pull) 推理。给定 Location(thing, container) 直接关系，引擎反向证明"Office 是否在 Continent 里"，递归走 Office→House→City→Country→Continent 四跳
+- **Step 14 / 引擎安全护栏**：`POST /guard/runaway` + `POST /guard/timeout` + `POST /guard/canary` → `service/GuardService.java` + `guard/ReleaseAgendaFilter.java` + `rules/guard/guard-rules.drl`。第一个偏"生产工程"的 Step，给规则引擎加兜底防失控。三个护栏：① `fireAllRules(maxFires)` 硬上限熔断（失控自增规则被截断在 N 条）；② 另一线程 `session.halt()` watchdog 超时打断（裸 fireAllRules 跑到 timeout 被优雅终止，非 kill 线程）；③ `fireAllRules(AgendaFilter)` 按规则 `@release(...)` 元数据灰度放行（canary 规则编译进 KieBase 但运行时被拦，改白名单即放量，不重编译不重启）。失控靶子用 `Counter`（mutable POJO）触发，灰度靶子用 `Cart` 触发，同 kbase 靠 fact 类型天然隔离
+- **Step 15 / 规则可观测性指标**：`POST /metrics/discount` → `service/MeteredDiscountService.java` + `metrics/MeteredRuleListener.java`，指标经 `GET /actuator/prometheus` 暴露。把 Step 6 的 listener 思路从"攒事件数组"升级成"打 Micrometer 指标"：复用 Step 2 的 discountKBase 零改动，挂 `MeteredRuleListener`（fire/match/fact 累加成 counter）+ 一个 `Timer` 包住 fireAllRules（耗时 + p50/p95/p99）。指标：`drools_rules_fired_total{rule}`（哪条规则最热）/ `drools_matches_total` / `drools_matches_cancelled_total` / `drools_facts_total{op}` / `drools_session_fire_seconds`。Step 6 是单请求"放大镜"，Step 15 是跨请求"仪表盘"，两者互补
+- **Step 16 / KieScanner + KJAR**：`POST /scanner/deploy` + `POST /scanner/run` + `POST /scanner/poll/start|stop` + `GET /scanner/status` → `service/ScannerService.java`。Step 9 热加载的"生产正解版"：DRL → 程序化打成 **KJAR**（带 kmodule.xml + pom 的标准 Maven 构件）→ `KieMavenRepository.installArtifact` 装进本地 `~/.m2` → `KieContainer` 绑 **ReleaseId**（`com.lrj.rules:scanner-cart-rules:1.0.0-SNAPSHOT`）而非 classpath → `KieScanner.scanNow()`（或 `start(ms)` 自动轮询）发现同 GAV 新内容就**热替换 KieBase**，container 不重建、应用不重启。跟 Step 9 的对照：Step 9 是"DRL 字符串 → Map 缓存"的应用内临时态；Step 16 是"规则跟代码独立发版"的工业路径（规则团队 mvn deploy → 所有实例的 scanner 自动拉到）
 
-后续（LLM 联动 / KieScanner+KJAR 全套）按需扩展，**没需求时不要提前加**。Step 10 已加 JPA + H2 但仅服务于持久化 demo，不要把它扩成"全项目状态都进数据库"。
+- **Step 17 / DMN (Decision Model and Notation)**：`POST /dmn/price` → `service/DmnService.java` + `rules/dmn/vip-pricing.dmn`。**第一个非 DRL 体系的 Step**：DMN 是 OMG 跨厂商标准（`.dmn` XML + FEEL 表达式 + 决策需求图 DRG），跟前面 Step 1-16 全部基于 DRL 的引擎是两套独立东西。模型 `VipPricing` 演示：结构化输入（`tCustomer` 带 schema）→ `Discount Rate`（DMN **原生**决策表，hitPolicy UNIQUE，对照 Step 7 的 Excel→DRL 决策表）→ `Final Price`（FEEL 字面表达式，依赖 Discount Rate 形成**决策链**）+ `Membership Tier`（FEEL if/else）。DMN 不走 KieSession/fireAllRules，而是 `DMNRuntime.evaluateAll(model, context)` 按 DRG 拓扑求值
+
+后续（LLM 联动）按需扩展，**没需求时不要提前加**。Step 16 的 `kie-ci` 是个重依赖（拉进 maven-core / aether 一票传递依赖），且 `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`，这是 demo 自己的 GAV、每次 deploy 覆盖，清理直接 `rm -rf ~/.m2/repository/com/lrj/rules`。Step 10 已加 JPA + H2 但仅服务于持久化 demo，不要把它扩成"全项目状态都进数据库"。
 
 ## 技术栈与版本背景
 
@@ -61,7 +66,11 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - `service/` — KieSession 生命周期。**每次请求 `newKieSession` + `fireAllRules` + `dispose`**，KieSession 线程不安全，不要为了"省"复用
 - `config/DroolsConfig.java` — `KieContainer` 注成单例 Bean（编译规则贵，启动时一次性扫 classpath 的 `META-INF/kmodule.xml`）
 - `resources/rules/<kbase>/*.drl` — DRL 文件，**目录名必须和 `kmodule.xml` 里 `<kbase packages="...">` 对齐**
-- `resources/META-INF/kmodule.xml` — 声明 `helloKBase` / `discountKBase` / `cartKBase` / `riskKBase` / `pipelineKBase` / `decisionKBase` / `fraudKBase` / `loyaltyKBase` / `tmsLogicalKBase` / `tmsRegularKBase` / `backwardKBase` 等 kbase + 对应 ksession 名（`fraudKBase` 用 stream mode + pseudo clock；Step 12 的两个 kbase 隔离避免 logical / regular 衍生 fact 互相污染）
+- `resources/META-INF/kmodule.xml` — 声明 `helloKBase` / `discountKBase` / `cartKBase` / `riskKBase` / `pipelineKBase` / `decisionKBase` / `fraudKBase` / `loyaltyKBase` / `tmsLogicalKBase` / `tmsRegularKBase` / `backwardKBase` / `guardKBase` / `dmnKBase` 等 kbase + 对应 ksession 名（`fraudKBase` 用 stream mode + pseudo clock；Step 12 的两个 kbase 隔离避免 logical / regular 衍生 fact 互相污染；`dmnKBase` 只声明 kbase 不带 ksession，因为 DMN 走 DMNRuntime 不走 KieSession）
+- `guard/` — Step 14 引入。`ReleaseAgendaFilter` 实现 `org.kie.api.runtime.rule.AgendaFilter`，按规则 `@release(...)` 元数据放行/拦截，跟 `audit/` 同属"挂在 session 上的横切组件"。读元数据走公共 API `Rule.getMetaData()`（跟 `getAgendaGroup()` 只在 internal 上不同）
+- `metrics/` — Step 15 引入。`MeteredRuleListener` 跟 `audit/RuleAuditListener` 实现同一套 listener 接口、同样按请求挂一个实例，区别只在输出去向：audit 攒进 `List<AuditEvent>` 随请求返回，metrics 累加进全局 `MeterRegistry` 经 `/actuator/prometheus` 抓取。`fireAllRules` 整段耗时是个 `Timer`，包在 service 外层（listener 拿不到 fire 边界）
+- `service/ScannerService.java` — Step 16 引入。**不走** `config/DroolsConfig` 那个 classpath KieContainer，而是自己维护一个绑 ReleaseId 的 `KieContainer` + `KieScanner`（懒创建于首次 deploy）。KJAR 程序化构建（`KieModuleModel` 生成独立 kmodule，跟主项目 `META-INF/kmodule.xml` 完全隔离）。`generation` 计数器标记当前 live 的内容代次，run 时返回，肉眼可见热替换发生
+- `service/DmnService.java` — Step 17 引入。**第二套引擎**：不是 KieSession，而是 `DMNRuntime`（构造时 `KieRuntimeFactory.of(kieContainer.getKieBase("dmnKBase")).get(DMNRuntime.class)` 拿一次缓存当字段，线程安全可复用，跟 Step 11 的 StatelessKieSession 持有方式同理）。`DMNModel` 也一次性解析缓存。`.dmn` 文件放 `rules/dmn/`，由 `DroolsConfig` 扫 `.dmn` 标 `ResourceType.DMN` 编进 `dmnKBase`
 - `persistence/` — Step 10 引入。`SessionSnapshot` (JPA entity, sessionId 做主键, `byte[] data` 存 marshall 出来的 KieSession) + `SessionSnapshotRepository` (Spring Data)。H2 file 在 `./data/drools-demo.mv.db`，repo 根 `.gitignore` 已豁免
 - `config/DroolsConfig.java` — Drools 8.44.2 的 `getKieClasspathContainer()` **不识别 spreadsheet 决策表**（启动报 "No files found"），所以这里改成程序化 `KieFileSystem` 构建：扫 `.drl` 自动加 + `.xls` 显式标 `ResourceType.DTABLE`
 
@@ -112,6 +121,30 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 - Step 13：递归 query 的标准结构是 `base case or (链一步 and 递归调用)`。基础情形先匹配直接 fact, 失败时引擎尝试递归情形, 引入中间变量 z (不在 query 参数表里, 是 query body 内的"自由变量"绑定)
 - Step 13：DRL 里也可以用 `?queryName(args;)` 在规则 LHS 触发后向链做"pull-driven 规则"。本 demo 走 Java API 路径 (getQueryResults) 因为更直观, 不需要额外的 driver fact
 - Step 13：query 的"输出变量"模式 (列出所有满足条件的绑定) 要用 `org.drools.core.runtime.rule.impl.Variable.v` 占位 unbound arg, 但这是 internal API; 本 demo 改成"枚举候选 + 逐个 boolean 后向链证明", 既避开 internal API 也让 query 复用价值更直白
+- Step 14：`fireAllRules(int max)` 是最该默认带上的护栏——生产里几乎所有 `fireAllRules()` 都应写成带上限的版本。失控规则 fire 满 max 强制返回, 不会把请求线程挂死。本 demo 的 "Runaway increment" 故意不写 no-loop, 就是要它失控当靶子
+- Step 14：`session.halt()` 是 KieSession 上**少数几个能跨线程调**的方法。watchdog 线程在超时后调 halt(), 引擎跑完当前 activation 后优雅返回 (不是 kill 线程, 不留脏状态)。按"挂钟时间"兜底比按"fire 次数"更通用——有的规则一次 fire 就很慢, 次数卡不住。这是 KieServer 等部署里"单请求超时"的标准做法
+- Step 14：`AgendaFilter.accept(match)` 在每条 activation **真正 fire 前**被调一次, 返回 false 这条就被跳过 (不执行 RHS, 但仍留在 agenda, 下次没 filter 的 fire 还能跑)。用它做灰度/金丝雀/紧急下线: 规则全量编译进 KieBase, 运行时按白名单决定哪些真正生效, **不重编译、不重启**
+- Step 14：AgendaFilter 里读规则元数据走的是公共 API `Rule.getMetaData()` (返回 `Map<String,Object>`, key 是 `@release` 里的 `release`)。这跟 Step 6 注释里那条"`Rule` 公共接口没有 `getAgendaGroup()`"形成对照——元数据是公共的, agenda-group 不是
+- Step 14：ReleaseAgendaFilter 约定"没标 @release 的规则默认放行 (视为稳定基线)", 这样灰度只控带标记的实验规则, 不会因为忘标 release 把基线规则一起拦掉。这是个有意的安全默认, 不是 Drools 强制的
+- Step 14：失控规则 (Counter) 和灰度规则 (Cart) 共用一个 guardKBase / guardSession, 靠 fact 类型天然隔离 (跑 runaway 只插 Counter, 跑 canary 只插 Cart, 互不触发对方的规则)。不需要像 Step 12 那样拆两个 kbase, 因为这里没有"衍生 fact 互相污染"的问题
+- Step 15：指标分两层挂。**listener 层** (`MeteredRuleListener`) 出 counter——`afterMatchFired` → `drools.rules.fired{rule}`、`matchCreated/Cancelled` → `drools.matches.*`、`object*` → `drools.facts{op}`；**service 层** 出 Timer——`fireAllRules` 整段耗时。为什么 Timer 不在 listener 里: listener 的回调是"单条 match fire 前后", 拿不到"整段 fireAllRules"的起止边界, 那是 service 调 fire 的那一行才有的
+- Step 15：Micrometer → Prometheus 命名转换会**改名**。代码里 `drools.rules.fired` (点分) 在 `/actuator/prometheus` 输出成 `drools_rules_fired_total` (下划线 + counter 自动加 `_total` 后缀); `drools.session.fire` Timer 出 `drools_session_fire_seconds` (自动补单位)。查指标按下划线名, 别拿点分名去 grep
+- Step 15：`Counter.builder(name).tags(...).register(registry)` 对**相同 meter id 幂等** (返回已存在实例), 所以 listener 每次事件都 builder→register→increment 是安全的, 不会重复创建 meter。但 `rule` 当 tag 要警惕 **高基数**: 规则名数量可控没事, 千万别把 orderId / customerId 这种无界值塞进 tag, 会把时序库打爆
+- Step 15：`Timer.record(...)` 对返回 `int` 的 `fireAllRules` 有重载歧义 (`DoubleSupplier` / `Supplier<T>` / `Runnable` 都能匹配), 必须显式转 `(Supplier<Integer>)` 才能编译。这是 Micrometer + 原始类型返回值的常见坑
+- Step 15：`management.endpoints.web.exposure.include` 默认只开 `health`, 必须显式加 `prometheus` 才有抓取端点。`management.metrics.tags.application` 给所有指标加公共 tag (本项目 `drools-demo`), 多实例部署时用来区分来源
+- Step 16：KieScanner 的"发现新版本"对 **release 固定版本 (1.0.0) 不触发** (Maven 契约: 固定版本内容不可变)。必须用 **SNAPSHOT** (`1.0.0-SNAPSHOT`) 才能同 GAV 滚动更新——`scanNow()` 重新解析 + 比对时间戳命中替换。所以 demo 固定一个 SNAPSHOT GAV 反复 install 新内容; 生产规则发版用递增 release 版本 + `KieContainer.updateToVersion(newReleaseId)`
+- Step 16：`installArtifact(ReleaseId, InternalKieModule, File pom)` 三个参数都不能省。pom 文件用 `KieBuilderImpl.generatePomXml(releaseId)` (返回 String) 写临时文件; KJAR 本身的 pom 由 `kfs.generateAndWritePomXML(releaseId)` 写进构件内部, 两者一个给 maven install 元数据、一个让 KJAR 自描述
+- Step 16：`KieMavenRepository` / `KieScanner` / `InternalKieModule` / `KieBuilderImpl` 这些类来自 `kie-ci` (`org.kie.scanner.*` + `org.drools.compiler.kie.builder.impl.*`)。`KieScanner` 接口本身在 `kie-api`, 但实现要 kie-ci。没加 kie-ci 时 `newKieScanner` 会拿不到实现
+- Step 16：KJAR 内的 kmodule 用 `KieModuleModel` 程序化生成 (`newKieBaseModel("scannerKBase").addPackage("rules.scanner")` + `newKieSessionModel("scannerSession")`), 跟主项目 `META-INF/kmodule.xml` 互不影响。DRL 的 `package rules.scanner` 必须跟 kbase 的 addPackage 对齐, 否则规则不进这个 kbase
+- Step 16：老 KieSession 安全性跟 Step 9 同理——`container.newKieSession()` 拿的是 scanner 当前指向的 KieBase, scanNow 替换后**新建的** session 才用新 KieBase, 已经在跑的 session 跑完它的活。热替换不打断进行中的 fire
+- Step 16：`scanNow()` 是同步立即扫 (测试/手动触发用), `start(intervalMillis)` 是后台线程周期轮询 (生产形态, 规则 deploy 后无人值守自动生效)。本 demo deploy 内部调 scanNow 保证 HTTP 响应里立刻看到新内容; `/scanner/poll/start` 单独演示自动轮询
+- Step 17：`kie-dmn-core` 的版本**不在 drools-bom 管理范围内** (drools-bom 只管 org.drools:* 和部分 org.kie:*)。不写 `<version>` 直接报 "version is missing"。显式锁 `${drools.version}` (8.44.2.Final, KIE 各模块同步发版)。它传递带出 kie-dmn-api/model/backend/feel
+- Step 17：`.dmn` 跟 `.xls` 决策表同病: Drools 8.44 的 ClasspathKieProject **不自动识别** `.dmn`, 必须程序化 `KieFileSystem` + `setResourceType(ResourceType.DMN)`。`DroolsConfig.kieContainer()` 里扫 `.dmn` 的循环是 Step 17 加的, 跟扫 `.xls` 那段并列
+- Step 17：DMN 模型用 **DMN 1.2 命名空间** (`http://www.omg.org/spec/DMN/20180521/MODEL/`), Drools 8.44 对它解析最稳。手写 `.dmn` 时 `>` / `<` 在 XML 文本里要转义 (`&gt;` / `&lt;`), 本 demo 的 `&gt;= 4` / `if ... &gt;= 3` 都转了。模型有语法错会在**启动时** KieBuilder.buildAll() 抛出来 (不是 lazy), 比 DRL 早暴露
+- Step 17：DMN 不走 KieSession/fireAllRules。从 kbase 取 `DMNRuntime` (`KieRuntimeFactory.of(kbase).get(DMNRuntime.class)`), `evaluateAll(model, context)` 按决策需求图 (DRG) 拓扑顺序求所有 decision。DMNRuntime 线程安全可复用, 当字段缓存 (跟 Step 11 StatelessKieSession 同理), 不像 stateful KieSession 要每请求新建
+- Step 17：`DMNContext.set(key, value)` 的 **key 必须跟 .dmn 里 inputData 的 name 一字不差**, 包括空格 —— `"Order Amount"` 带空格也要原样传, 写成 `"OrderAmount"` 会导致那个输入为 null。`getModel(namespace, name)` 的两个参数也要跟 `<definitions namespace=... name=...>` 完全一致, 否则返回 null
+- Step 17：FEEL 的 `number` 类型底层是 **BigDecimal**, 所以 `Discount Rate` / `Final Price` 返回的是 BigDecimal (JSON 序列化成普通数字, 如 `0.10` / `900.00`)。结构化输入 `Customer` 灌的是 `Map<String,Object>` (key 对应 itemComponent name), FEEL 里 `Customer.vipLevel` 按 key 取值
+- Step 17 跟 Step 7 的对照: Step 7 是 Excel 决策表 → drools-decisiontables 编译成 DRL → 跑 KieSession (本质还是 DRL/RETE); Step 17 是 DMN 标准模型 → DMNRuntime 独立求值引擎。两者都能让业务方维护表格, 但 DMN 是跨厂商标准 + 自带 FEEL + 决策链, 可移植性和表达力更强; 决策表只是"规则的表格写法"
 
 ## REST 接口
 
@@ -135,8 +168,20 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 | POST | `/stateless/batch`      | Step 11：一次提交 N 个 Order, stateless 单实例反复 execute, 单笔间完全隔离 |
 | POST | `/tms/compare`          | Step 12：同 Sensor 在 logical / regular 两个 kbase 各跑两阶段 fire, 返回前后两次 Alert 快照, 看 TMS 自动撤销 |
 | POST | `/backward/contains`    | Step 13：注入一组 Location 直接关系 + 一组查询, 用 `isContainedIn` 递归 query 反向证明每条查询是否成立 |
+| POST | `/guard/runaway`        | Step 14：插 Counter 跑失控自增规则, fireAllRules(maxFires) 硬上限截断, 返回 fire 次数 + 截断时的值 |
+| POST | `/guard/timeout`        | Step 14：失控规则裸跑, watchdog 线程在 timeoutMillis 后 halt() 打断, 返回中断前 fire 次数 |
+| POST | `/guard/canary`         | Step 14：插 Cart 跑三条带 @release 标记的规则, AgendaFilter 按 allowedReleases 白名单放行, 返回结果 + 被拦规则 skipped |
+| POST | `/metrics/discount`     | Step 15：跟 /discount/calculate 同入参同折扣, 但挂 MeteredRuleListener + Timer, 把 fire/match/fact/耗时打进 Micrometer |
+| GET  | `/actuator/prometheus`  | Step 15：Prometheus 抓取端点, grep `drools_` 看规则指标随调用累积 |
+| POST | `/scanner/deploy`       | Step 16：DRL 打成 KJAR 装进本地 ~/.m2, 首次创建 container 否则 scanNow 热替换; 编译错误 400 |
+| POST | `/scanner/run`          | Step 16：用当前 live KieBase 跑 cart, 返回 fire count + cart + generation (内容代次) |
+| POST | `/scanner/poll/start`   | Step 16：开 KieScanner 自动轮询 (默认 5000ms), 生产形态——deploy 后无人值守自动生效 |
+| POST | `/scanner/poll/stop`    | Step 16：停自动轮询 |
+| GET  | `/scanner/status`       | Step 16：看 releaseId / container 是否就绪 / 当前 generation / 是否在轮询 |
+| POST | `/dmn/price`            | Step 17：插 Customer + orderAmount, 走 DMN 模型求值, 返回 Discount Rate / Final Price / Membership Tier 三个决策结果 |
 
 ## 配套文档
 
-- `README.md` — 3 个 case 的完整请求示例 + 学习观察点 + 下一步指引
+- `README.md` — 每个 Step 的完整请求示例 + 学习观察点 + 下一步指引
 - `docs/rete-intuition.md` — RETE 算法直觉（拿本仓库折扣规则当例子，讲网络结构 + 增量传播 + 写规则原则）
+- `docs/drools-capabilities.md` — Drools 能力地图（按七大块分类梳理 Drools 全部能力，每项标注本仓库哪一步演示 / 未演示，含能力选型决策树）

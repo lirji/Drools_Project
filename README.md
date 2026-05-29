@@ -2,6 +2,9 @@
 
 Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 
+> 想先看 Drools 到底能干什么、各能力在哪一步演示？看 **[docs/drools-capabilities.md](docs/drools-capabilities.md)**（能力地图 + 选型决策树）。
+> 想理解引擎底层匹配原理？看 **[docs/rete-intuition.md](docs/rete-intuition.md)**。
+
 ## 技术栈
 
 - Java 21 / Spring Boot 3.3.5
@@ -531,10 +534,195 @@ curl -s -X POST 'http://localhost:8081/backward/contains' -H 'Content-Type: appl
 5. **"输出绑定"模式没在本 demo 用** — Drools 支持把 query 参数当 unbound output (用 `Variable.v` 占位) 自动列出所有满足条件的绑定, 但那条 API 在 internal 包。本 demo 改成"枚举候选容器 + 逐个 boolean 后向链证明", 演示 query 是可复用的"证明子程序"
 6. **跟前向链的传递闭包对比** — 用前向链算"间接包含"要写一条规则把 (A,B), (B,C) join 成 (A,C) 并 insert 新 Location, 还要处理 N 层递归的物化爆炸; 后向链按需展开, 不物化中间结果 (代价是每次查询都要重算)。N 跟"事实-查询比例"是选边的依据
 
+## Step 14: 引擎安全护栏 (熔断 + AgendaFilter)
+
+第一个偏"生产工程"的 Step。规则集是会被改错的代码 (业务方/运维都能动), 引擎必须有兜底, 不能指望"规则都写对"。三个生产必备护栏:
+
+| 护栏 | API | 防的事故 |
+| --- | --- | --- |
+| 硬上限熔断 | `fireAllRules(maxFires)` | 失控循环规则 fire 满 N 条强制返回, 请求线程不挂死 |
+| 超时熔断 | 另一线程 `session.halt()` | 按挂钟时间兜底, 跑到 timeout 优雅打断 (非 kill) |
+| 灰度放行 | `fireAllRules(AgendaFilter)` | 按 `@release` 元数据运行时放行规则, 灰度/金丝雀/紧急下线不重编译 |
+
+```bash
+# A. 失控自增规则被 fireAllRules(maxFires) 截断在 50 (不传 maxFires 默认 100)
+curl -s -X POST 'http://localhost:8081/guard/runaway' -H 'Content-Type: application/json' \
+  -d '{"startValue":0,"maxFires":50}'
+# → {"fireCount":50,"finalValue":50,...}  规则本会无限自增, 被硬上限按住
+
+# B. 失控规则裸跑, watchdog 在 200ms 后 halt() 打断 (不传默认 200ms)
+curl -s -X POST 'http://localhost:8081/guard/timeout' -H 'Content-Type: application/json' \
+  -d '{"startValue":0,"timeoutMillis":200}'
+# → {"fireCount":<几十万到上百万, 取决于机器>,"elapsedMillis":~200,...}  超时优雅返回
+
+# C1. 灰度: 只放行 stable 通道 (不传 allowedReleases 默认就是 {"stable"})
+curl -s -X POST 'http://localhost:8081/guard/canary' -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Tom","age":30,"vipLevel":0,"yearsSinceRegistration":1},
+       "items":[{"name":"book","quantity":1,"unitPrice":200,"category":"BOOKS"}]}'
+# → finalAmount=190 (满100减10), recommendations 含 baseline,
+#    skipped=["Canary promo (release=canary)"]  ← canary 规则被拦, 编译进了 KieBase 但没生效
+
+# C2. 灰度放量: 白名单加上 canary, 实验规则立即生效, 全程不重启不重编译
+curl -s -X POST 'http://localhost:8081/guard/canary' -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Tom","age":30,"vipLevel":0,"yearsSinceRegistration":1},
+       "items":[{"name":"book","quantity":1,"unitPrice":200,"category":"BOOKS"}],
+       "allowedReleases":["stable","canary"]}'
+# → finalAmount=152 ((200-10)*0.8), discountReasons 含 stable + canary 两条, skipped=[]
+```
+
+**学习观察点 (Step 14)**:
+
+1. **`fireAllRules()` 默认就该带上限** — 裸 `fireAllRules()` 遇到失控规则永不返回, 请求线程挂死, 连锁打满线程池。生产里几乎所有调用都应写成 `fireAllRules(上限)`。"Runaway increment" 故意不写 no-loop 当失控靶子
+2. **`halt()` 是优雅中断, 不是 kill** — watchdog 线程调 `session.halt()`, 引擎跑完当前 activation 后返回, 不留脏状态。`halt()` 是 KieSession 上少数能跨线程调的方法。按时间兜底比按次数更通用 (有的规则一次 fire 就很慢)
+3. **AgendaFilter 在 fire 前拦截** — `accept(match)` 在每条 activation 真正执行 RHS 前被调, 返回 false 就跳过。规则全量编译进 KieBase, 运行时按白名单决定谁生效——这就是金丝雀/灰度/紧急下线, 不用动 DRL 不用重启
+4. **读规则元数据走公共 API** — `Rule.getMetaData()` 返回 `Map<String,Object>` (`@release("canary")` → key=`release`)。对照 Step 6: `Rule` 公共接口**没有** `getAgendaGroup()` (只在 internal RuleImpl 上), 元数据却是公共的
+5. **没标 @release 默认放行** — `ReleaseAgendaFilter` 把无标记规则当稳定基线永远放行 (C1 里 baseline 推荐就在)。这样灰度只控带标记的实验规则, 不会因为忘标把基线一起拦掉
+6. **跟 Step 9 热加载的分工** — Step 9 是"换一整套规则" (KieBase 整体替换); Step 14 灰度是"同一套规则里运行时开关某几条"。生产里两者搭配: 热加载推新规则 (标 canary) → AgendaFilter 先小流量放行 → 验证 OK 再加进白名单放量
+
+## Step 15: 规则可观测性指标 (Micrometer / Prometheus)
+
+把 Step 6 的 listener 思路从"攒事件数组随请求返回"升级成"打 Micrometer 指标进全局 registry"。`/metrics/discount` 跟 Step 2 的 `/discount/calculate` 同入参同折扣逻辑 (复用 discountKBase 零改动), 但每次调用会累加规则指标, 经 `GET /actuator/prometheus` 抓取。
+
+发出的指标 (都带 `session` tag, fired 额外带 `rule` tag):
+
+| Prometheus 指标名 | 类型 | 含义 |
+| --- | --- | --- |
+| `drools_rules_fired_total{rule}` | counter | 每条规则触发次数 → 看**哪条规则最热** |
+| `drools_matches_total` | counter | agenda 上产生的 activation 数 |
+| `drools_matches_cancelled_total` | counter | 被撤销的 activation (not 反向触发 / retract / LHS 失配) |
+| `drools_facts_total{op}` | counter | working memory 增/改/删, op=inserted\|updated\|deleted |
+| `drools_session_fire_seconds` | summary | fireAllRules 整段耗时 + p50/p95/p99 分位 |
+
+```bash
+# 1. 打几次 metered 折扣 (同 Step 2 的 VIP2 老用户大单, finalAmount=807.5)
+for i in 1 2 3; do
+curl -s -X POST 'http://localhost:8081/metrics/discount' -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Alice","age":35,"vipLevel":2,"yearsSinceRegistration":5},
+       "items":[{"name":"Laptop","quantity":1,"unitPrice":1000,"category":"X"}]}'
+echo; done
+# → 每次 {"order":{...,"finalAmount":807.5},"rulesFired":3}
+
+# 2. 抓取 drools.* 指标
+curl -s http://localhost:8081/actuator/prometheus | grep drools_
+```
+
+打 3 次后预期看到 (数值随调用累积):
+
+```
+drools_rules_fired_total{rule="VIP level 2 - 9 fold",session="discountSession"} 3.0
+drools_rules_fired_total{rule="Bulk amount discount",session="discountSession"} 3.0
+drools_rules_fired_total{rule="Loyal customer extra",session="discountSession"} 3.0
+drools_matches_total{session="discountSession"} 9.0                  # 3 activation × 3 次
+drools_facts_total{op="inserted",session="discountSession"} 6.0      # 2 insert × 3 次
+drools_session_fire_seconds{session="discountSession",quantile="0.95"} 0.019...
+drools_session_fire_seconds_count{session="discountSession"} 3
+```
+
+**学习观察点 (Step 15)**:
+
+1. **指标分两层挂** — listener 层出 counter (`afterMatchFired` → fired、`matchCreated` → matches、`object*` → facts); service 层出 Timer (`fireAllRules` 整段耗时)。Timer 不能放 listener 里, 因为回调只看得到"单条 match fire 前后", 拿不到"整段 fire"的起止边界
+2. **跟 Step 6 audit 的分工** — 同一套 listener 接口, 区别只在输出去向: Step 6 攒 `List<AuditEvent>` 跟单次结果返回 (**单请求放大镜**: 这一次到底怎么跑的), Step 15 累加进全局 registry (**跨请求仪表盘**: 整体趋势 / 报警阈值)。生产里两者都要
+3. **Prometheus 会改名** — 代码里 `drools.rules.fired` (点分) 在 `/actuator/prometheus` 输出成 `drools_rules_fired_total` (下划线 + counter 补 `_total`); Timer 的 `drools.session.fire` 出 `drools_session_fire_seconds` (补单位)。grep 用下划线名
+4. **tag 基数要克制** — `rule` 当 tag 没问题 (规则名有限可控)。但**千万别**把 orderId / customerId 这种无界值塞 tag, 每个唯一值都生成一条新时序, 会把 Prometheus 打爆。这是指标设计第一红线
+5. **`rules_fired` vs `matches`** — 本例两者相等 (每个 activation 都 fire 了)。挂个 AgendaFilter (Step 14) 拦掉一部分, 或规则间 `matchCancelled`, 两个数就会分叉: matches 是"产生了多少候选", fired 是"实际执行了多少", 差值就是被撤销/拦截的
+6. **暴露端点要显式开** — `management.endpoints.web.exposure.include` 默认只有 `health`, application.yml 里显式加了 `prometheus`。生产通常把 management 放单独 port + 加鉴权, 别把 `/actuator/**` 裸露公网
+
+## Step 16: KieScanner + KJAR (规则跟代码独立发版)
+
+Step 9 (`/hot/*`) 是"DRL 字符串 → Map 缓存"的应用内临时热加载。这一步是工业路径: DRL 打成 **KJAR** (带 kmodule.xml + pom 的标准 Maven 构件) → 装进本地 `~/.m2` → `KieContainer` 绑 **ReleaseId** 而非 classpath → `KieScanner` 轮询/scanNow 发现同 GAV 新内容就**热替换 KieBase**, 应用零改动零重启。
+
+```bash
+# 0. 还没 deploy → run 报 400
+curl -s http://localhost:8081/scanner/status
+# → {"releaseId":"com.lrj.rules:scanner-cart-rules:1.0.0-SNAPSHOT","containerReady":false,"generation":0,"polling":false}
+
+# 1. deploy v1: 满 100 打 9 折 (注意 package 必须是 rules.scanner)
+curl -s -X POST http://localhost:8081/scanner/deploy -H 'Content-Type: application/json' \
+  -d '{"drl":"package rules.scanner\nimport com.lrj.drools.domain.Cart;\nrule \"v1 9 fold\"\n when $c: Cart(totalAmount >= 100)\n then $c.applyRatioDiscount(0.9, \"v1: 9 fold\");\nend"}'
+# → {"generation":1,"action":"container 首次创建 ..."}
+
+# 2. run → finalAmount=180 (200×0.9), generation=1
+curl -s -X POST http://localhost:8081/scanner/run -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"A","age":30,"vipLevel":0,"yearsSinceRegistration":0},"items":[{"name":"x","quantity":1,"unitPrice":200,"category":"X"}]}'
+
+# 3. deploy v2: 同一个 SNAPSHOT GAV, 改成 8 折 → scanNow 热替换
+curl -s -X POST http://localhost:8081/scanner/deploy -H 'Content-Type: application/json' \
+  -d '{"drl":"package rules.scanner\nimport com.lrj.drools.domain.Cart;\nrule \"v2 8 fold\"\n when $c: Cart(totalAmount >= 100)\n then $c.applyRatioDiscount(0.8, \"v2: 8 fold\");\nend"}'
+# → {"generation":2,"action":"scanner.scanNow() 热替换 KieBase ..."}
+
+# 4. run 同一个 cart → finalAmount=160 (200×0.8), generation=2
+#    应用没重启、container 没重建, v1 规则消失 v2 生效 — 这就是热替换
+curl -s -X POST http://localhost:8081/scanner/run -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"A","age":30,"vipLevel":0,"yearsSinceRegistration":0},"items":[{"name":"x","quantity":1,"unitPrice":200,"category":"X"}]}'
+
+# 5. 看 KJAR 真的装进了本地 Maven 仓库
+ls ~/.m2/repository/com/lrj/rules/scanner-cart-rules/1.0.0-SNAPSHOT/
+# → scanner-cart-rules-1.0.0-SNAPSHOT.jar  .pom  maven-metadata-local.xml
+
+# 6. 生产形态: 开自动轮询 (默认 5000ms), 之后 deploy 无需手动 scanNow
+curl -s -X POST http://localhost:8081/scanner/poll/start -H 'Content-Type: application/json' -d '{"intervalMillis":3000}'
+curl -s -X POST http://localhost:8081/scanner/poll/stop
+
+# 7. 编译错误 → 400 + 行号
+curl -s -X POST http://localhost:8081/scanner/deploy -H 'Content-Type: application/json' -d '{"drl":"this is not valid drl"}'
+```
+
+**学习观察点 (Step 16)**:
+
+1. **KJAR = 版本化的规则构件** — 规则不再"长"在应用 classpath 上, 而是个独立的 Maven artifact (`group:artifact:version`)。规则团队的发版动作就是 `mvn deploy` 一个新 KJAR, 跟应用代码发版彻底解耦
+2. **必须用 SNAPSHOT 才能滚动** — release 固定版本内容不可变 (Maven 契约), KieScanner 对它不触发更新。demo 固定一个 `1.0.0-SNAPSHOT` 反复 install 新内容; 生产用递增 release 版本 + `KieContainer.updateToVersion(newReleaseId)`
+3. **scanNow vs start(interval)** — `scanNow()` 同步立即扫 (本 demo deploy 内部调它, 保证 HTTP 响应里立刻看到新内容); `start(ms)` 后台线程周期轮询, 才是生产无人值守形态 (`/scanner/poll/start` 演示)。这正是 Step 9 注释里说的"@Scheduled 轮询 = KieScanner 等价物"的真身
+4. **热替换不打断进行中的请求** — 跟 Step 9 同理: `newKieSession` 拿的是当前 KieBase, scanNow 替换后只影响**之后新建的** session, 在跑的 fire 跑完老的。`generation` 字段让你肉眼确认切换发生在哪一次
+5. **跟 Step 9 的取舍** — Step 9 轻 (无 Maven 依赖、规则即数据、应用自控编译时机), 适合"规则存数据库 / LLM 即时生成"; Step 16 重 (`kie-ci` 一票传递依赖 + 写 ~/.m2), 但换来标准化的版本/产物/多实例一致性, 适合"规则作为正式制品独立发版治理"
+6. **副作用提示** — `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`。这是 demo 自己的 GAV、每次 deploy 覆盖, 清理直接 `rm -rf ~/.m2/repository/com/lrj/rules`
+
+## Step 17: DMN (Decision Model and Notation)
+
+**第一个非 DRL 体系的 Step**。前面 Step 1-16 全是 Drools 私有的 DRL (when/then + RETE 前向链); DMN 是 OMG 跨厂商标准: `.dmn` XML 模型 + FEEL 表达式 + 决策需求图 (DRG)。两套引擎并存, 业务诉求选边。
+
+`POST /dmn/price` 跑 `rules/dmn/vip-pricing.dmn` 模型, 决策需求图:
+
+```
+Customer ─────┐
+              ├──> Discount Rate ──┐
+Order Amount ─┼────────────────────┴──> Final Price
+              └──> Membership Tier
+```
+
+- **Discount Rate**: DMN **原生**决策表 (vipLevel → 折扣率, hitPolicy UNIQUE)
+- **Final Price**: FEEL 字面表达式 `Order Amount * (1 - Discount Rate)`, 依赖 Discount Rate → 决策链
+- **Membership Tier**: FEEL if/else 链
+
+```bash
+# vipLevel 0 → rate 0, final 1000, 普通
+curl -s -X POST http://localhost:8081/dmn/price -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Tom","age":30,"vipLevel":0,"yearsSinceRegistration":1},"orderAmount":1000}'
+# → {"decisions":{"Discount Rate":0,"Final Price":1000,"Membership Tier":"普通"}}
+
+# vipLevel 2 → rate 0.10, final 900, 会员
+curl -s -X POST http://localhost:8081/dmn/price -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Amy","age":40,"vipLevel":2,"yearsSinceRegistration":3},"orderAmount":1000}'
+# → {"decisions":{"Discount Rate":0.10,"Final Price":900.00,"Membership Tier":"会员"}}
+
+# vipLevel 4 → rate 0.20, final 800, 钻石
+curl -s -X POST http://localhost:8081/dmn/price -H 'Content-Type: application/json' \
+  -d '{"customer":{"name":"Max","age":50,"vipLevel":4,"yearsSinceRegistration":8},"orderAmount":1000}'
+# → {"decisions":{"Discount Rate":0.20,"Final Price":800.00,"Membership Tier":"钻石"}}
+```
+
+**学习观察点 (Step 17)**:
+
+1. **DMN 是独立引擎, 不走 KieSession** — DRL 靠 `insert + fireAllRules`; DMN 靠 `DMNRuntime.evaluateAll(model, context)`, 按决策需求图 (DRG) 拓扑顺序求值 (Final Price 自动等 Discount Rate 先算完)。`DmnService` 把 DMNRuntime 当字段缓存, 线程安全可复用 (跟 Step 11 StatelessKieSession 同理)
+2. **跟 Step 7 决策表的本质区别** — Step 7 是 Excel → 编译成 DRL → 跑 RETE (还是 DRL); Step 17 是 DMN 标准模型 → 独立求值引擎。两者都能给业务方表格维护, 但 DMN 跨厂商可移植、自带 FEEL 表达式、原生支持决策链, 表达力和标准化程度更高
+3. **FEEL 表达式** — `Final Price` 是 `Order Amount * (1 - Discount Rate)`, `Membership Tier` 是 `if ... then ... else ...`。FEEL 是 DMN 标准内建的表达式语言, 不需要写 Java/DRL。number 类型底层是 BigDecimal (所以返回 `0.10` / `900.00`)
+4. **结构化输入** — `Customer` 在 DMN 里是带 schema 的 `tCustomer` (name/vipLevel/age), 不是裸 fact。Java 侧灌 `Map`, FEEL 里 `Customer.vipLevel` 按 key 取值
+5. **context key 要一字不差** — `DMNContext.set("Order Amount", ...)` 的 key 必须跟 `.dmn` 里 inputData 的 name 完全一致, **含空格**。写成 `"OrderAmount"` 那个输入就是 null
+6. **.dmn 要显式标 ResourceType** — 跟 `.xls` 一样, Drools 8.44 不自动识别 `.dmn`, `DroolsConfig` 里扫 `.dmn` 标 `ResourceType.DMN` 编进 `dmnKBase`。模型语法错在**启动时**就暴露 (KieBuilder.buildAll 编译, 不是 lazy)
+
 ## 下一步预告
 
-- LLM × Drools: LLM 生成 DRL → `POST /hot/upsert` 即时校验 + 上线; 或用 Drools 做 LLM 输出的硬约束验证 (本 Step 9 已铺好基础设施)
-- 完整 KieScanner + KJAR: 把"上传 → upsert" 换成 Maven repo 轮询
+- LLM × Drools: LLM 生成 DRL → `POST /hot/upsert` 或 `POST /scanner/deploy` 即时校验 + 上线; 或用 Drools/DMN 做 LLM 输出的硬约束验证 (Step 9 / Step 16 / Step 17 已铺好基础设施)
 - 加 BatchExecutionCommand: stateless 也能拿命名结果 / 调用 query, 不局限于 mutable fact
+- DMN 进阶: PMML 接入 (规则里嵌 ML 模型评分) / DMN 决策表的其他 hitPolicy (FIRST/PRIORITY/COLLECT)
 
 需要时再喊我。

@@ -1,0 +1,70 @@
+// Step 14 规则: 引擎安全护栏 (熔断 + AgendaFilter) 的两组靶子规则。
+//
+// ───────────────────── 为什么需要护栏 ─────────────────────
+//
+// 规则集是"业务方/运维能改的代码", 改错的概率比普通 Java 高得多。两类典型事故:
+//
+//   1. 失控循环: LHS 看可变字段, RHS 改这个字段 → 规则反复重新激活, 一次
+//      fireAllRules() 永不返回, 请求线程挂死, 连锁拖垮线程池。CLAUDE.md 那条
+//      "update 死循环"就是这个。no-loop 只防"自己激活自己", 防不住跨规则互相激活,
+//      所以生产一定要有**引擎级硬上限**兜底。
+//
+//   2. 新规则上线翻车: 直接全量生效, 没有灰度/快速回滚手段。
+//
+// 对应两个护栏 (都在 GuardService 演示):
+//   - fireAllRules(maxFires):     硬上限, fire 到 N 条强制停 (熔断)
+//   - session.halt() + watchdog:  另一线程超时打断 (超时熔断)
+//   - fireAllRules(AgendaFilter): 运行时按 @release 元数据放行规则 (灰度/金丝雀)
+//
+// 三个护栏共用这一个 kbase / session。靠 fact 类型天然隔离:
+// Counter 只触发失控规则, Cart 只触发灰度规则, 互不干扰。
+package rules.guard
+
+import com.lrj.drools.domain.Counter
+import com.lrj.drools.domain.Cart
+
+// ============================================================
+//  靶子 1: 失控循环 (fireAllRules(max) / halt 演示)
+// ============================================================
+//
+// LHS 看 value, RHS modify 改 value → 重新激活自己。上界设得极高 (近 int max),
+// 现实里 fire 几亿次才会自然停, 等价于"永不终止"。
+// 没有 no-loop: 故意的, 就是要它失控, 让护栏来兜。
+rule "Runaway increment"
+    when
+        $c: Counter( value < 2000000000 )
+    then
+        modify($c) { setValue($c.getValue() + 1) }
+end
+
+// ============================================================
+//  靶子 2: 灰度规则 (AgendaFilter by @release 元数据演示)
+// ============================================================
+//
+// 三条规则命中同一个 Cart, 用 @release 标"发布通道"。ReleaseAgendaFilter 在
+// fire 前按白名单放行: 白名单 {"stable"} → "Canary promo" 被拦 (编译进了 KieBase
+// 但运行时不生效); 把 "canary" 加进白名单就放量, 全程不重编译、不重启。
+
+rule "Baseline discount"
+    // 没标 @release → filter 默认放行, 稳定基线永远在
+    when
+        $cart: Cart( totalAmount >= 100 )
+    then
+        $cart.addRecommendation("[baseline] 满 100 基础推荐 (无通道标记, 永远生效)");
+end
+
+rule "Stable promo"
+    @release("stable")
+    when
+        $cart: Cart( totalAmount >= 100 )
+    then
+        $cart.applyFixedDiscount(10, "[stable] 满 100 减 10");
+end
+
+rule "Canary promo"
+    @release("canary")
+    when
+        $cart: Cart( totalAmount >= 100 )
+    then
+        $cart.applyRatioDiscount(0.8, "[canary] 实验通道: 整单 8 折");
+end
