@@ -52,6 +52,28 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 > 全部支持环境变量覆盖 (`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`)。
 > 不想装 MySQL 就加 `-Dspring-boot.run.profiles=h2` 退回 H2 file 模式。
 
+## 🖥 前端演示台（在浏览器里看规则效果）
+
+起服务后，浏览器打开 **<http://localhost:8081/>** 即可。一个内置的静态演示台，把
+**全部 Step 1–18 的 REST 端点**都做成了可点选、可编辑、可运行的面板——不用记 `curl`，
+直接在页面上选示例、改 JSON、点「运行」，右侧看**结构化摘要**（折扣账本、推荐、审计时间线、
+TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+
+```bash
+# 想快速体验、又不想装 MySQL，推荐 H2 profile 起：
+./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
+# 然后浏览器打开 http://localhost:8081/
+```
+
+- **零后端改动**：纯静态资源（`src/main/resources/static/`），跟后端**同源**托管，无需 CORS、无需 Node/构建工具。
+- **左侧按 Step 分组导航**，覆盖后端每一个功能端点 + `/actuator/prometheus`。
+- **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、
+  推荐、审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
+- **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
+- 右上角可切换**明/暗主题**。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+
+> 提示：演示台是学习/本地用途，热加载（`/hot/*`、`/scanner/*`）能运行时编译任意 DRL，**不要把它裸露到公网**。
+
 ## 数据库配置 (MySQL / H2)
 
 只有 **Step 10**（会话持久化）和 **Step 18**（活动规则）需要数据库；其余 Step 纯内存，不连库也能跑。

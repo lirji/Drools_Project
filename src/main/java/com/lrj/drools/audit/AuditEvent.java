@@ -5,7 +5,7 @@ package com.lrj.drools.audit;
  *
  * type 枚举字符串而不是 enum 是为了 JSON 序列化对客户端友好 (前端不用建 enum 字典)。
  * 可能的 type:
- *   MATCH_CREATED    — activation 入 agenda (LHS 通过, 等待触发)
+ *   MATCH_CREATED    — activation（激活） 入 agenda（日程） (LHS 通过, 等待触发)
  *   MATCH_FIRED      — activation 已执行 (then 块跑完)
  *   MATCH_CANCELLED  — activation 被撤销 (LHS 后来失配, 没机会跑)
  *                      ← 这条是观察 `not` 反向触发的关键事件

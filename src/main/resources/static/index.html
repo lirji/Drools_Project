@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drools 演示台</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">◆</span>
+      <div class="brand-text">
+        <h1>Drools 演示台</h1>
+        <span class="brand-sub">Step 1–18 · 在浏览器里看见规则引擎的效果</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <a class="link-actuator" href="/actuator/health" target="_blank" rel="noopener">健康检查</a>
+      <button id="theme-btn" class="theme-btn" title="切换主题">◐</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <nav id="nav" class="nav"></nav>
+    </aside>
+    <main id="panel" class="panel">
+      <!-- 由 app.js 渲染 -->
+    </main>
+  </div>
+
+  <!-- 目录必须在逻辑之前加载 -->
+  <script src="/assets/examples.js"></script>
+  <script src="/assets/app.js"></script>
+</body>
+</html>
