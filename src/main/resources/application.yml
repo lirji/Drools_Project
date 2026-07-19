@@ -74,6 +74,13 @@ activity:
         # activity-beta-cid: beta
       audience-templates:
         - activity-{tenant}-cid
+      # 前端 OIDC 浏览器登录 (52-*.md): 每租户一个 SPA 公有应用 (authorization_code+PKCE, 无 secret),
+      # 由 scratchpad/casdoor-spa-provision.sh 建。tenant→client_id; 其反向自动并入 aud→tenant 解析
+      # (必须 map 级——-web- 后缀会被上面模板误反解成租户 "acme-web")。redirect-uri 须与 Casdoor 应用配置完全一致。
+      redirect-uri: http://localhost:8099/index.html
+      web-client-map:
+        acme: activity-acme-web-cid
+        beta: activity-beta-web-cid
       # 控制台写端点(create/status)所需权限; 空=仅 authenticated。设为 scope/角色可让纯决策 M2M token 调不了运营写接口。
       console-write-authority: ""
       # P1-12: 启动 JWKS 连通/fail-fast 自检 + 有界超时(Casdoor 挂不拖住决策线程)。

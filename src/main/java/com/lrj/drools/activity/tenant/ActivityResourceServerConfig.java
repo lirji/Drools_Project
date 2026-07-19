@@ -53,6 +53,8 @@ public class ActivityResourceServerConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
+                    // 前端 OIDC 配置端点匿名可读（只暴露公开参数；JwtTenantFilter 同步跳过此路径，见 shouldNotFilter）
+                    auth.requestMatchers(HttpMethod.GET, AuthConfigController.PATH).permitAll();
                     // P1-k：配了 console-write-authority 时，运营写端点(create/status)要求该权限；其余活动端点只需 authenticated。
                     if (StringUtils.hasText(writeAuthority)) {
                         auth.requestMatchers(HttpMethod.POST, "/activity-marketing/create", "/activity-marketing/*/status")
@@ -99,11 +101,19 @@ public class ActivityResourceServerConfig {
         return converter;
     }
 
-    /** aud→tenant 解析器（client→tenant 映射优先，activity-{tenant}-cid 家族反解兜底）。校验器与来源过滤器共用。 */
+    /**
+     * aud→tenant 解析器（client→tenant 映射优先，activity-{tenant}-cid 家族反解兜底）。校验器与来源过滤器共用。
+     * <p>{@code webClientMap}（tenant→SPA client_id）的**反向**自动并入 map 级：SPA 应用命名带 {@code -web-}，
+     * 若落到模板兜底会被误反解成租户 {@code <tenant>-web}，必须 map 短路；自动并入也免去两处配置漂移。
+     * 显式 {@code clientTenantMap} 后放（同 key 时以显式配置为准）。
+     */
     @Bean
     public AudienceTenantResolver audienceTenantResolver(TenantProperties props) {
         TenantProperties.Auth auth = props.getAuth();
-        return new AudienceTenantResolver(auth.getClientTenantMap(), auth.getAudienceTemplates());
+        java.util.Map<String, String> merged = new java.util.LinkedHashMap<>();
+        auth.getWebClientMap().forEach((tenant, clientId) -> merged.put(clientId, tenant));
+        merged.putAll(auth.getClientTenantMap());
+        return new AudienceTenantResolver(merged, auth.getAudienceTemplates());
     }
 
     /**

@@ -4,8 +4,8 @@
 > 历史详录（逐轮）见同目录 `review-handoff.md`；专题详情见 `50`(容量模型)/`51`(生产尾项)/`52`(前端 OIDC)/`53`(online-DDL)。
 >
 > **一句话现状**：把学习脚手架 `com.lrj.drools.activity` 演进成「多租户 · 元数据驱动的营销活动决策 SaaS」。
-> **Track A（单租户通用化）+ Track B（多租户/auth/护栏/容量）中所有能在 demo 落地的项已全部实现并测试**（`./mvnw test` = **98 绿**，0 失败）。
-> 只剩需**真外部环境**执行的项（浏览器 E2E / 生产库在线迁移 / 租户注销编排），均已备脚本/设计/runbook。
+> **Track A（单租户通用化）+ Track B（多租户/auth/护栏/容量）+ 前端 OIDC 浏览器登录已全部实现并测试**（`./mvnw test` = **104 绿**，0 失败；浏览器 E2E 9/9）。
+> 只剩需**真生产环境**执行的项（生产库在线迁移 / 租户注销编排 / 目标规模压测），均已备脚本/设计/runbook。
 
 ---
 
@@ -45,7 +45,7 @@
 | P1-16 | 租户注销级联清理 + PII | 📄 | `51-*.md §3`（runbook，需 artifact/审计编排） |
 | P1-17 | per-artifact fire 上界 | ✅ | `ActivityRuleRuntimeService`(FireCeilingListener)、`ActivityFireCeilingTest` |
 | ISSUE-07 | 编辑后幂等重放 | ✅ | `ActivityIdempotencyEntity`/`Repository`、`ActivityIdempotencyTest` |
-| 前端 OIDC | 授权码+PKCE 浏览器登录 | 📄 | `52-frontend-oidc-login-design.md`（需真 Casdoor SPA 应用+浏览器 E2E） |
+| 前端 OIDC | 授权码+PKCE 浏览器登录 | ✅ | `AuthConfigController`+`activity.js` OIDC 段、`scratchpad/casdoor-spa-provision.sh`、E2E `scratchpad/e2e-oidc.mjs` 9/9 绿（2026-07-19，本机 Casdoor+Playwright） |
 
 ---
 
@@ -53,7 +53,7 @@
 
 > demo 内可实现的已全部完成。以下每项都**已备脚本/设计/runbook**，只差真外部环境执行——不是"没做"，是"不在单机 demo 内可跑"。
 
-- [ ] **前端 OIDC 浏览器 E2E**：按 `52-*.md` 建 Casdoor authorization_code+PKCE 的 **SPA 公有应用**（现 `activity-{tenant}-cid` 只 client_credentials），落码 `activity.js` 登录/回调/Bearer/silent-refresh，浏览器验登录→列表→切租户隔离。**四眼后端已就位**（P1-8），前端登录是其人流 UI 前置。
+- [x] **前端 OIDC 浏览器 E2E**（✅ 2026-07-19 完成）：本机 Casdoor 建 SPA 公有应用 `activity-{acme,beta}-web-cid`（`scratchpad/casdoor-spa-provision.sh`，幂等）+ 测试用户 `acme/act-alice`、`beta/act-bob`；后端加匿名 `GET /activity-marketing/auth-config`（链一 permitAll + JwtTenantFilter 跳过）+ `web-client-map`（反向自动并入 aud→tenant map 级，防 `-web-` 被模板误反解成租户 `acme-web`）；`activity.js` 落码 PKCE 登录/回调/Bearer/silent-refresh/登出（`authEnabled=false` 时 dev 租户栏一行不变）。**验证**：Playwright E2E `scratchpad/e2e-oidc.mjs` 9/9（登录→Bearer 列表→UI 建活动→登出→换租户→隔离可见）+ dev 档回归 `e2e-dev.mjs` 3/3 + M2M 冒烟 12/12 不回归。注：dev Casdoor 里有一个本轮误建后无法删的闲置用户 `beta/bob`（无引用，可手动清）。
 - [ ] **P1-16 租户注销演练**：按 `51-*.md §3` 编排级联清 ~13 表 + 不可变凭证退役 + 缓存/Casdoor org/SpiceDB 元组清理 + PII 擦除。需 artifact/审计系统配套。
 - [ ] **P1-15 真库在线迁移**：按 `53-*.md` 用 gh-ost/pt-osc 跑热表 PK 升维（低峰窗口+DBA 值守）。demo `ddl-auto` 已用 `@TenantId`+复合索引建对新表，无升维负担。
 - [ ] **P0-5 目标规模真压测**：demo 已用进程内 gated 测试验证「公式≈实测(0.97~1.09) + churn 回收」；生产按目标租户数在真集群压 P99（需压测环境）。
@@ -81,7 +81,8 @@
 | `OutageTolerantJwks`/`JwksWarmupRunner` | last-good JWKS + 启动自检（P1-12） |
 | `ActorContext` | 操作者身份（四眼，P1-8） |
 | `TenantQuotaService`/`TenantRateLimitConfig` | 每租户限流（P1-13） |
-| `TenantProperties`/`TenantIds` | 配置绑定 + 租户 grammar/保留值 |
+| `TenantProperties`/`TenantIds` | 配置绑定 + 租户 grammar/保留值（含前端 OIDC 公开参数 + web-client-map） |
+| `AuthConfigController` | 前端 OIDC 匿名配置端点 `/activity-marketing/auth-config`（52 §2） |
 
 **服务/持久化**
 | 文件 | 说明 |
@@ -124,7 +125,7 @@
 ## 七、验证方式
 
 ```bash
-# 全套件（当前基线 98 绿，0 失败）
+# 全套件（当前基线 104 绿，0 失败）
 ./mvnw test
 # P0-5 容量/负载/churn 验收（gated，不进常规套件）
 ./mvnw test -Dtest="ActivityKieBaseSizingTest,ActivityCapacityAcceptanceTest" -Dsizing=true \
@@ -135,10 +136,14 @@
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=h2 \
   -Dspring-boot.run.arguments="--server.port=8099 --activity.tenant.dev-default-enabled=false --activity.tenant.auth.enabled=true"
 bash scratchpad/casdoor-m2m-verify.sh     # provision M2M 应用 + 铸真 token + 跨租户冒烟（幂等可复跑）
+# 前端 OIDC：provision SPA 应用/用户 + 浏览器 E2E（需 npm i playwright）
+bash scratchpad/casdoor-spa-provision.sh
+node scratchpad/e2e-oidc.mjs              # auth 档 :8099 起着时跑；9/9 绿
+node scratchpad/e2e-dev.mjs               # dev 档 :8098 起着时跑；3/3 绿（auth 关前端不变回归）
 ```
-- **判读标准**：`./mvnw test` = 98 绿；`casdoor-m2m-verify.sh` = 12/12（MINT 4 + SMOKE 8）；容量测试「实测/预测≈1.0 + churn 增长<20MB」。
-- **已验证**：全套件 98 绿；真 Casdoor token 端到端 12/12；容量 ratio 0.97~1.09；churn 回收。
-- **尚未验证（需外部环境）**：前端浏览器 OIDC 登录；生产库在线迁移；目标规模真压测 P99。
+- **判读标准**：`./mvnw test` = 104 绿；`casdoor-m2m-verify.sh` = 12/12（MINT 4 + SMOKE 8）；`e2e-oidc.mjs` = 9/9；容量测试「实测/预测≈1.0 + churn 增长<20MB」。
+- **已验证**：全套件 104 绿；真 Casdoor token 端到端 12/12；**浏览器 OIDC 登录 E2E 9/9（真 Casdoor + Playwright，跨租户隔离浏览器可见）**；dev 档回归 3/3；容量 ratio 0.97~1.09；churn 回收。
+- **尚未验证（需真生产环境）**：生产库在线迁移；目标规模真压测 P99；P1-16 租户注销全链路演练。
 
 ---
 
