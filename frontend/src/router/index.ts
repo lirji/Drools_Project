@@ -18,8 +18,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'validate', name: 'validate', component: () => import('@/console/pages/ValidateView.vue') },
     ],
   },
-  { path: '/demos', name: 'demos', component: () => import('@/demos/DemosPlaceholder.vue') },
-  { path: '/demos/:demoId', name: 'demo', component: () => import('@/demos/DemosPlaceholder.vue') },
+  {
+    path: '/demos',
+    component: () => import('@/demos/DemoShell.vue'),
+    children: [
+      { path: '', name: 'demos', component: () => import('@/demos/DemoHome.vue') },
+      { path: ':demoId', name: 'demo', component: () => import('@/demos/DemoPanel.vue') },
+    ],
+  },
   { path: '/:pathMatch(.*)*', redirect: '/console' },
 ]
 
