@@ -19,8 +19,15 @@ CASDOOR="${CASDOOR_URL:-http://localhost:8000}"
 BUILTIN_CID="${BUILTIN_CID:-ea46d9a8033b0be2d8ed}"
 ADMIN="${CASDOOR_ADMIN:-admin}"; ADMIN_PW="${CASDOOR_ADMIN_PW:-123}"
 
-# 回调地址 = auth 档 demo 首页（activity.js 在页面加载时检测 ?code= 完成换 token）
-REDIRECT="${REDIRECT_URI:-http://localhost:8099/index.html}"
+# 回调白名单（多值）：
+#   ① 旧原生前端 index.html（activity.js 检测 ?code=）——保留，并存期/回滚不动 Casdoor
+#   ② 新 Vue SPA（挂 /ui/，同源 8099）回调路由 /ui/auth/callback
+#   ③ 新 Vue SPA dev（Vite :5173）回调 /auth/callback（base=/ui/ 由 Vite 处理为此路径）
+# 已存在的应用会被 **更新** 以并入这三个（幂等追加，修早前"应用已存在即 skip 不追加"的坑）。
+REDIRECT_LEGACY="${REDIRECT_URI:-http://localhost:8099/index.html}"
+REDIRECT_SPA="http://localhost:8099/ui/auth/callback"
+REDIRECT_DEV="http://localhost:5173/auth/callback"
+REDIRECTS_JSON="[\"${REDIRECT_LEGACY}\",\"${REDIRECT_SPA}\",\"${REDIRECT_DEV}\"]"
 
 ACME_WEB_CID="activity-acme-web-cid"
 BETA_WEB_CID="activity-beta-web-cid"
@@ -50,10 +57,20 @@ capi(){ curl -s -X POST "${CASDOOR}/api/$1" -H "Authorization: Bearer ${AT}" -H 
 ensure_spa_app(){
   local cid="$1" org="$2"
   local exist; exist=$(curl -s "${CASDOOR}/api/get-application?id=admin/${cid}" -H "Authorization: Bearer ${AT}" | jq -r '.data.name // empty')
-  if [ -n "${exist}" ]; then ok "app ${cid} 已存在（幂等跳过）"; return; fi
+  if [ -n "${exist}" ]; then
+    # 已存在 → 取回整个应用对象，把 redirectUris 并集成三值后 update-application（幂等追加，不丢已有）。
+    local app merged st
+    app=$(curl -s "${CASDOOR}/api/get-application?id=admin/${cid}" -H "Authorization: Bearer ${AT}" | jq '.data')
+    merged=$(echo "${app}" | jq --argjson add "${REDIRECTS_JSON}" '.redirectUris = ((.redirectUris // []) + $add | unique)')
+    st=$(curl -s -X POST "${CASDOOR}/api/update-application?id=admin/${cid}" -H "Authorization: Bearer ${AT}" \
+      -H "Content-Type: application/json" -d "${merged}" | jq -r '.status')
+    [ "${st}" = "ok" ] && ok "app ${cid} 已存在 → 更新 redirectUris 并入 SPA/dev 回调（幂等追加）" \
+                       || no "app ${cid} 更新 redirectUris 失败（status=${st}）"
+    return
+  fi
   # clientSecret 仍是 dev 固定值（Casdoor 必填字段），但公有客户端流程（PKCE）不用它、前端不下发。
-  local st; st=$(capi add-application "{\"owner\":\"admin\",\"name\":\"${cid}\",\"displayName\":\"活动控制台(${org})\",\"organization\":\"${org}\",\"cert\":\"cert-built-in\",\"tokenFormat\":\"JWT\",\"expireInHours\":1,\"refreshExpireInHours\":24,\"enablePassword\":true,\"enableSignUp\":false,\"clientId\":\"${cid}\",\"clientSecret\":\"${cid}-secret-dev-only\",\"grantTypes\":[\"authorization_code\",\"refresh_token\"],\"redirectUris\":[\"${REDIRECT}\"],\"signinMethods\":[{\"name\":\"Password\",\"displayName\":\"Password\",\"rule\":\"All\"}],\"providers\":[]}" | jq -r '.status')
-  [ "${st}" = "ok" ] && ok "创建 SPA app ${cid}（org=${org}, grant=authorization_code+refresh, redirect=${REDIRECT}）" \
+  local st; st=$(capi add-application "{\"owner\":\"admin\",\"name\":\"${cid}\",\"displayName\":\"活动控制台(${org})\",\"organization\":\"${org}\",\"cert\":\"cert-built-in\",\"tokenFormat\":\"JWT\",\"expireInHours\":1,\"refreshExpireInHours\":24,\"enablePassword\":true,\"enableSignUp\":false,\"clientId\":\"${cid}\",\"clientSecret\":\"${cid}-secret-dev-only\",\"grantTypes\":[\"authorization_code\",\"refresh_token\"],\"redirectUris\":${REDIRECTS_JSON},\"signinMethods\":[{\"name\":\"Password\",\"displayName\":\"Password\",\"rule\":\"All\"}],\"providers\":[]}" | jq -r '.status')
+  [ "${st}" = "ok" ] && ok "创建 SPA app ${cid}（org=${org}, grant=authorization_code+refresh, redirects=legacy+spa+dev）" \
                      || no "创建 SPA app ${cid} 失败（status=${st}）"
 }
 

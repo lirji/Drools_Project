@@ -5,6 +5,7 @@ import { api, setHeaderProvider, setUnauthorizedHandler } from '@/shared/apiClie
 import type { AuthConfig } from '@/shared/types'
 import * as authClient from './authClient'
 import { useTenantStore } from '@/stores/useTenantStore'
+import { useActorStore } from '@/stores/useActorStore'
 
 export const useAuthStore = defineStore('auth', () => {
   const cfg = ref<AuthConfig | null>(null)
@@ -60,14 +61,16 @@ export const useAuthStore = defineStore('auth', () => {
     applyTokenState({ token: null, refresh: null, expiresAt: 0 })
   }
 
-  // 注册 header 注入：auth 档发 Bearer（不发 X-Tenant-Id）；dev 档发 X-Tenant-Id。
+  // 注册 header 注入：auth 档发 Bearer（不发 X-Tenant-Id）；dev 档发 X-Tenant-Id + X-Actor（四眼）。
   const tenantStore = useTenantStore()
+  const actorStore = useActorStore()
   setHeaderProvider(() => {
     const h: Record<string, string> = {}
     if (authEnabled.value) {
-      if (token.value) h['Authorization'] = 'Bearer ' + token.value // 不发 X-Tenant-Id
-    } else if (tenantStore.tenant) {
-      h['X-Tenant-Id'] = tenantStore.tenant
+      if (token.value) h['Authorization'] = 'Bearer ' + token.value // 不发 X-Tenant-Id；操作者=JWT sub
+    } else {
+      if (tenantStore.tenant) h['X-Tenant-Id'] = tenantStore.tenant
+      if (actorStore.actor) h['X-Actor'] = actorStore.actor // 四眼：dev 档操作者身份
     }
     return h
   })

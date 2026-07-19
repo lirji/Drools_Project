@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import ToastHost from '@/shared/ui/ToastHost.vue'
 
 // 主题切换（平移旧 initTheme：data-theme + localStorage drools-theme）
 const THEME_KEY = 'drools-theme'
@@ -37,6 +38,7 @@ function toggleTheme(): void {
     </div>
   </header>
   <router-view />
+  <ToastHost />
 </template>
 
 <style>
