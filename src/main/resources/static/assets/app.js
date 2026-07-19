@@ -47,6 +47,28 @@
   function renderNav() {
     var nav = clear($("nav"));
     CATALOG.groups.forEach(function (g) {
+      if (g.external) {
+        // 外部子应用组 (活动营销): 渲染组标题 + 一个入口, 点击把 #panel 交给 activity.js 的 mount。
+        // 必须放在下面"空 demo 提前 return"之前 —— 外部组不带 demo, 否则会被跳过、入口不出现。
+        nav.appendChild(el("div", { class: "nav-group-title" }, [
+          el("span", { text: g.title }),
+          el("span", { class: "nav-group-sub", text: g.subtitle }),
+        ]));
+        var extId = "ext:" + g.id;
+        nav.appendChild(el("button", {
+          class: "nav-item" + (state.demoId === extId ? " active" : ""),
+          "data-id": extId,
+          onclick: function () {
+            state.demoId = extId;
+            renderNav();
+            if (window.ActivityApp) window.ActivityApp.mount($("panel"));
+          },
+        }, [
+          el("span", { class: "method-dot method-POST" }),
+          el("span", { class: "nav-item-title", text: "工作台 · 列表/新建/验证" }),
+        ]));
+        return;
+      }
       var demos = CATALOG.demos.filter(function (d) { return d.group === g.id; });
       if (!demos.length) return;
       nav.appendChild(el("div", { class: "nav-group-title" }, [
@@ -578,6 +600,9 @@
       try { localStorage.setItem("drools-theme", next); } catch (e) {}
     });
   }
+
+  // 供独立子应用 (activity.js) 复用的 DOM/渲染 helper —— 闭包内 helper 唯一的对外出口。
+  window.DemoUI = { el: el, clear: clear, $: $, card: card, kv: kv, tagList: tagList, boolPill: boolPill, fmtMoney: fmtMoney };
 
   /* ───────────────────────── 启动 ───────────────────────── */
   function init() {

@@ -27,6 +27,8 @@ window.DROOLS_CATALOG = {
     { id: "hot",       title: "热加载 · 版本发布",    subtitle: "Step 9 · 16 · 运行时编译 / KieScanner" },
     { id: "ops",       title: "持久化 · 护栏 · 指标", subtitle: "Step 10 · 12 · 14 · 15" },
     { id: "model",     title: "DMN · 营销活动",       subtitle: "Step 17 · 18 · FEEL 决策链 / 资格判定" },
+    // external 组: 不带 demo, 由 app.js 的 renderNav 特判渲染成入口, 点击交给 activity.js 子应用。
+    { id: "activity",  title: "活动营销",             subtitle: "报表式配置 · 条件树 · 优惠验证", external: true },
   ],
 
   demos: [
