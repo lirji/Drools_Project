@@ -31,7 +31,27 @@ management:
     tags:
       application: drools-demo   # 所有指标默认带上的公共 tag, 多实例时区分来源
 
+# 活动营销 demo (com.lrj.drools.activity) 开关。
+#   rule-engine.enabled=false 时优惠查询走旧 Java 逻辑 (取最大红包), 用于灰度对照/回滚;
+#   true 时走 Drools 规则 (资格→阶梯→折扣合并), 引擎异常/空决策仍自动回退旧逻辑。
 activity:
+  marketing:
+    # P1-8 四眼职责分离。默认 false(不改 demo)；开启后活动发布(上线)要求审批人身份(auth=JWT sub / dev=X-Actor header)
+    # 且 ≠ 提交人——提交人不能自审自发。需控制台人流(用户身份/审批)配套，生产建议开。
+    four-eyes-enabled: false
+    rule-engine:
+      enabled: true
+      # P0-5 KieBase 缓存足迹加权预算(KB)。权重≈260KB+37KB×生成规则数(实测 ActivityKieBaseSizingTest),
+      # maximumWeight 同时封顶堆与 Metaspace。默认 256MB=262144KB;生产按目标(租户数×活动数×档位)定,
+      # 并配 -XX:MaxMetaspaceSize ≥ (共享 Drools 基础设施~80MB + 预算的 Metaspace 份额)。容量模型见 docs。
+      cache-max-weight-kb: 262144
+      # P1-17 fire 上界(护栏) = base + per-rule × 该 KieBase 编译规则数(**per-artifact**,大规则集给大预算)。
+      # 成本随规则数线性(基准已证),故上界随规则数派生而非全局常量;超界 halt+warn,决策回退旧逻辑(fail-safe)。
+      max-fires-base: 2000
+      max-fires-per-rule: 200
+    # 种入 demo 商品 + 商品池 (仅当 demo_product 空), 让前端「商品池」自动圈选可演示。
+    # 测试不开此开关, 避免污染 ActivityMarketingFlowTest 的池断言。
+    seed-demo-data: true
   # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
   # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
   #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地/演示, **不是 fail-closed**。
