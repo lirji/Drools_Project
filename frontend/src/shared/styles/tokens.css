@@ -1,0 +1,90 @@
+/* 设计 token —— 忠实平移自后端 static/assets/styles.css:3-65（明/暗双主题）。
+ * 保持变量名与色值不变，让既有组件语汇可无损复用；data-theme 手动覆盖 + prefers-color-scheme 自动跟随。
+ * 唯一新增维度：spacing token（原 CSS 未 token 化，UI/UX 勘察点名的缺口）。 */
+:root {
+  --bg: #f4f5fb;
+  --bg-elev: #ffffff;
+  --bg-soft: #f7f8fc;
+  --border: #e6e8f0;
+  --border-strong: #d3d7e6;
+  --text: #1d2333;
+  --text-soft: #5b6478;
+  --text-faint: #98a0b3;
+  --accent: #6366f1;
+  --accent-2: #8b5cf6;
+  --accent-soft: #eef0ff;
+  --ok: #16a34a;
+  --ok-soft: #e7f7ec;
+  --warn: #d97706;
+  --err: #dc2626;
+  --err-soft: #fdecec;
+  --blue: #2563eb;
+  --blue-soft: #e8f0fe;
+  --green: #15803d;
+  --green-soft: #e6f6ec;
+  --gold: #b45309;
+  --gold-soft: #fdf0da;
+  --red: #b91c1c;
+  --red-soft: #fdeaea;
+  --shadow: 0 1px 2px rgba(20, 25, 50, .04), 0 8px 24px rgba(20, 25, 50, .06);
+  --shadow-sm: 0 1px 2px rgba(20, 25, 50, .06);
+  --radius: 14px;
+  --radius-sm: 9px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+  /* 新增 spacing scale（4 的倍数），替代原散落硬编码 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  /* 触控命中区（(pointer:coarse) 下用，平板/移动 ≥44px） */
+  --touch-min: 44px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --border: #262b38;
+    --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
+    --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
+    --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
+    --blue: #60a5fa; --blue-soft: #16233b; --green: #4ade80; --green-soft: #14251a;
+    --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --border: #262b38;
+  --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
+  --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
+  --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
+  --blue: #60a5fa; --blue-soft: #16233b; --green: #4ade80; --green-soft: #14251a;
+  --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+}
+:root[data-theme="light"] {
+  --bg: #f4f5fb; --bg-elev: #ffffff; --bg-soft: #f7f8fc; --border: #e6e8f0;
+  --border-strong: #d3d7e6; --text: #1d2333; --text-soft: #5b6478; --text-faint: #98a0b3;
+  --accent: #6366f1; --accent-2: #8b5cf6; --accent-soft: #eef0ff;
+  --ok: #16a34a; --ok-soft: #e7f7ec; --err: #dc2626; --err-soft: #fdecec;
+  --blue: #2563eb; --blue-soft: #e8f0fe; --green: #15803d; --green-soft: #e6f6ec;
+  --gold: #b45309; --gold-soft: #fdf0da; --red: #b91c1c; --red-soft: #fdeaea;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--sans);
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
