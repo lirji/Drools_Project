@@ -163,4 +163,65 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- 前后端分离：Vue3 前端工程在 frontend/。默认关闭(不进 ./mvnw test，保证后端迭代速度与零侵入)；
+             用 -Pfrontend 触发 npm install + build 并把 dist/ 拷进 static/ui/(SPA 挂 /ui/，与旧 index.html 并存)。
+             frontend-maven-plugin 本地下载 node/npm(不依赖机器全局 node)，构建可复现。 -->
+        <profile>
+            <id>frontend</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.eirslett</groupId>
+                        <artifactId>frontend-maven-plugin</artifactId>
+                        <version>1.15.1</version>
+                        <configuration>
+                            <workingDirectory>frontend</workingDirectory>
+                            <nodeVersion>v22.12.0</nodeVersion>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>install-node-and-npm</id>
+                                <goals><goal>install-node-and-npm</goal></goals>
+                                <phase>generate-resources</phase>
+                            </execution>
+                            <execution>
+                                <id>npm-install</id>
+                                <goals><goal>npm</goal></goals>
+                                <phase>generate-resources</phase>
+                                <configuration><arguments>install</arguments></configuration>
+                            </execution>
+                            <execution>
+                                <id>npm-build</id>
+                                <goals><goal>npm</goal></goals>
+                                <phase>generate-resources</phase>
+                                <configuration><arguments>run build</arguments></configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-frontend-dist</id>
+                                <goals><goal>copy-resources</goal></goals>
+                                <phase>process-resources</phase>
+                                <configuration>
+                                    <outputDirectory>${project.build.outputDirectory}/static/ui</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>frontend/dist</directory>
+                                            <filtering>false</filtering>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
