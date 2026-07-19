@@ -132,6 +132,15 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!-- P0-3 (Track B 多租户): 决策 API 接 Casdoor —— OIDC resource-server 本地 JWKS 验签,
+             tenant 从 JWT 的 aud 解析(命脉实测 owner=admin 非组织; 不信 header/query)。默认关时
+             提供一条 permitAll 安全链,不锁死 Step1~18 与静态页;开启时只护 /activity-marketing/**。
+             版本由 spring-boot BOM 管。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -31,6 +31,44 @@ management:
     tags:
       application: drools-demo   # 所有指标默认带上的公共 tag, 多实例时区分来源
 
+activity:
+  # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
+  # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
+  #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地/演示, **不是 fail-closed**。
+  #    生产必须: dev-default-enabled=false(无 header→403) + auth.enabled=true(JWT 定租户)。这两项默认值都安全, 是本文件显式放开的。
+  tenant:
+    dev-default-enabled: true
+    dev-default: __dev__
+    # P0-3 接 Casdoor: enabled=true 时 /activity-marketing/** 需带 Casdoor 验签 JWT, 租户从 token 的 aud 解析
+    # (信封 X-Tenant-Id 只校验须=解析出的租户, 否则 403; 绝不作来源)。默认 false → 保持 header 来源 (dev/测试不变)。
+    # 开启前先跑 scratchpad/casdoor-m2m-verify.sh: 每租户独立 client_credentials 应用 + 唯一 secret + 跨租户互斥冒烟。
+    auth:
+      enabled: false
+      issuer: http://localhost:8000
+      jwk-set-uri: http://localhost:8000/.well-known/jwks
+      # 命脉实测: Casdoor client_credentials 的 owner=admin(非组织), 故租户从 aud(client_id) 解析, 不用 owner。
+      # aud 由 Casdoor 绑定到已认证 client + 每应用独立 secret → 不可伪造(跨租户 secret 互斥已冒烟证)。
+      # client-tenant-map 显式映射优先(生产推荐=白名单), 缺则用 audience-templates 的 {tenant} 家族反解。
+      client-tenant-map: {}
+        # activity-acme-cid: acme
+        # activity-beta-cid: beta
+      audience-templates:
+        - activity-{tenant}-cid
+      # 控制台写端点(create/status)所需权限; 空=仅 authenticated。设为 scope/角色可让纯决策 M2M token 调不了运营写接口。
+      console-write-authority: ""
+      # P1-12: 启动 JWKS 连通/fail-fast 自检 + 有界超时(Casdoor 挂不拖住决策线程)。
+      warmup-enabled: true
+      jwks-fetch-timeout-ms: 2000
+      # P1-12 last-good: 正常缓存 TTL + Casdoor 不可达时用旧密钥集续验签的窗口(0=关)。
+      jwks-cache-ttl-ms: 300000
+      jwks-outage-ttl-ms: 3600000
+    # P1-13 每租户限流(进程内 token bucket, demo 切片)。默认关(不改 demo)。
+    #   生产多实例须换 Redis token bucket/网关限流(否则总配额=N×单实例)并定义 Redis 宕机开/闭。
+    quota:
+      enabled: false
+      per-tenant-qps: 50
+      burst: 50
+
 logging:
   level:
     com.lrj.drools: DEBUG
