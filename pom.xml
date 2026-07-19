@@ -132,6 +132,13 @@
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
 
+        <!-- P1-6 (活动引擎通用化): DRL→KieBase 有界缓存。通用化后 DRL 随 tenant/schema/活动/档位膨胀,
+             原无界 ConcurrentHashMap = 更快 OOM,换 Caffeine 有界 LRU + 命中率统计。版本由 spring-boot BOM 管。 -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- P0-3 (Track B 多租户): 决策 API 接 Casdoor —— OIDC resource-server 本地 JWKS 验签,
              tenant 从 JWT 的 aud 解析(命脉实测 owner=admin 非组织; 不信 header/query)。默认关时
              提供一条 permitAll 安全链,不锁死 Step1~18 与静态页;开启时只护 /activity-marketing/**。
