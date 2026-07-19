@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Drools 演示台</title>
   <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="stylesheet" href="/assets/activity.css" />
 </head>
 <body>
   <header class="topbar">
@@ -33,5 +34,7 @@
   <!-- 目录必须在逻辑之前加载 -->
   <script src="/assets/examples.js"></script>
   <script src="/assets/app.js"></script>
+  <!-- 活动营销子应用: 在 app.js 之后加载, mount 时惰性读 window.DemoUI -->
+  <script src="/assets/activity.js"></script>
 </body>
 </html>
