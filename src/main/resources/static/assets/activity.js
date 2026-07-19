@@ -14,6 +14,151 @@
 
   var state = { dict: null, route: "list", panel: null, draft: null, tenant: readTenant() };
 
+  /* ───────────── OIDC 登录 (授权码+PKCE, 52-frontend-oidc-login-design.md) ─────────────
+   * auth 档 (GET /auth-config 返回 authEnabled=true) 时: 未登录先渲染登录页 → Casdoor authorize
+   * (PKCE S256, 公有客户端无 secret) → 回调 ?code= 换 token → 请求带 Bearer, 租户由 token 的 aud 定,
+   * 不再发 X-Tenant-Id (发了且≠aud 会被后端 403)。authEnabled=false 时本节全部旁路, dev 租户栏一行不变。
+   * token 存 sessionStorage (页面关闭即清, 不用 localStorage 降低 XSS 持久窃取面)。 */
+  var AUTH = { cfg: null, token: null, refresh: null, expiresAt: 0 };
+  var SS_TOKEN = "actOidcTok", SS_VERIFIER = "actPkceV", SS_STATE = "actOauthState", SS_CID = "actOauthCid";
+
+  function authOn() { return !!(AUTH.cfg && AUTH.cfg.authEnabled); }
+
+  function ensureAuthConfig() {
+    if (AUTH.cfg) return Promise.resolve(AUTH.cfg);
+    return fetch(BASE + "/auth-config").then(function (r) { return r.json(); })
+      .then(function (cfg) { AUTH.cfg = cfg || { authEnabled: false }; restoreToken(); return AUTH.cfg; })
+      .catch(function () { AUTH.cfg = { authEnabled: false }; return AUTH.cfg; });
+  }
+
+  function restoreToken() {
+    try {
+      var raw = window.sessionStorage.getItem(SS_TOKEN);
+      if (!raw) return;
+      var t = JSON.parse(raw);
+      AUTH.token = t.token; AUTH.refresh = t.refresh; AUTH.expiresAt = t.expiresAt || 0;
+    } catch (e) { /* 解析失败当未登录 */ }
+  }
+  function storeToken(accessToken, expiresIn, refreshToken) {
+    AUTH.token = accessToken || null;
+    AUTH.refresh = refreshToken || AUTH.refresh;
+    AUTH.expiresAt = Date.now() + (Number(expiresIn) || 3600) * 1000;
+    try { window.sessionStorage.setItem(SS_TOKEN, JSON.stringify({ token: AUTH.token, refresh: AUTH.refresh, expiresAt: AUTH.expiresAt })); } catch (e) {}
+  }
+  function clearToken() {
+    AUTH.token = null; AUTH.refresh = null; AUTH.expiresAt = 0;
+    try {
+      window.sessionStorage.removeItem(SS_TOKEN);
+      window.sessionStorage.removeItem(SS_VERIFIER);
+      window.sessionStorage.removeItem(SS_STATE);
+      window.sessionStorage.removeItem(SS_CID);
+    } catch (e) {}
+  }
+  function isExpiring() { return AUTH.expiresAt > 0 && Date.now() > AUTH.expiresAt - 30000; }
+
+  /* JWT payload 观察 (不验签——验签是后端的事, 前端只取展示信息) */
+  function jwtPayload(tok) {
+    try {
+      var b = tok.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+      return JSON.parse(atob(b));
+    } catch (e) { return {}; }
+  }
+  function tokenAud() {
+    var aud = jwtPayload(AUTH.token || "").aud;
+    return Array.isArray(aud) ? aud[0] : (aud || "");
+  }
+  /** 登录租户: 由 token 的 aud 反查 webClients (clientId→tenant); 查不到显示原 aud。 */
+  function tokenTenant() {
+    var aud = tokenAud();
+    var hit = ((AUTH.cfg && AUTH.cfg.webClients) || []).filter(function (w) { return w.clientId === aud; })[0];
+    return hit ? hit.tenant : aud;
+  }
+  /** 操作者展示名: Casdoor 用户 token 的 sub 是 UUID, 展示优先 name/preferred_username (后端四眼仍用原始 sub)。 */
+  function tokenSub() {
+    var p = jwtPayload(AUTH.token || "");
+    return p.name || p.preferred_username || p.sub || "";
+  }
+
+  /* PKCE 助手 (Web Crypto) */
+  function b64url(buf) {
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(buf)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function randomVerifier() { var a = new Uint8Array(32); crypto.getRandomValues(a); return b64url(a.buffer); }
+  function challenge(verifier) {
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)).then(b64url);
+  }
+
+  /** 发起登录: 记 verifier/state/clientId → 重定向 Casdoor authorize。 */
+  function login(clientId) {
+    var verifier = randomVerifier(), st = randomVerifier();
+    try {
+      window.sessionStorage.setItem(SS_VERIFIER, verifier);
+      window.sessionStorage.setItem(SS_STATE, st);
+      window.sessionStorage.setItem(SS_CID, clientId);
+    } catch (e) { alert("sessionStorage 不可用，无法登录（隐私模式？）"); return; }
+    challenge(verifier).then(function (chal) {
+      var u = new URL(AUTH.cfg.authorizeEndpoint);
+      u.search = new URLSearchParams({
+        response_type: "code", client_id: clientId, redirect_uri: AUTH.cfg.redirectUri,
+        scope: AUTH.cfg.scope || "openid profile", state: st,
+        code_challenge: chal, code_challenge_method: "S256",
+      }).toString();
+      window.location.assign(u.toString());
+    });
+  }
+
+  /** 回调着陆: ?code= → token 端点换 token (公有客户端: code_verifier, 无 secret)。 */
+  function handleCallback() {
+    var p = new URLSearchParams(window.location.search);
+    var code = p.get("code");
+    if (!code) return Promise.resolve(false);
+    if (p.get("state") !== window.sessionStorage.getItem(SS_STATE)) {
+      return Promise.reject(new Error("state 不匹配 (可能的 CSRF)，已拒绝回调"));
+    }
+    return ensureAuthConfig().then(function () {
+      return fetch(AUTH.cfg.tokenEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code", code: code,
+          redirect_uri: AUTH.cfg.redirectUri,
+          client_id: window.sessionStorage.getItem(SS_CID) || "",
+          code_verifier: window.sessionStorage.getItem(SS_VERIFIER) || "",
+        }),
+      });
+    }).then(function (r) { return r.json(); }).then(function (t) {
+      if (!t.access_token) throw new Error("换 token 失败: " + JSON.stringify(t));
+      storeToken(t.access_token, t.expires_in, t.refresh_token);
+      window.sessionStorage.removeItem(SS_VERIFIER);
+      window.sessionStorage.removeItem(SS_STATE);
+      window.history.replaceState({}, "", window.location.pathname); // 清 ?code= 防刷新重放
+      return true;
+    });
+  }
+
+  /** silent refresh: refresh_token 换新 token; 失败清 token 回登录页。 */
+  function refreshToken() {
+    if (!AUTH.refresh) { clearToken(); return Promise.reject(new Error("无 refresh_token")); }
+    return fetch(AUTH.cfg.tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token", refresh_token: AUTH.refresh,
+        client_id: window.sessionStorage.getItem(SS_CID) || "",
+      }),
+    }).then(function (r) { return r.json(); }).then(function (t) {
+      if (!t.access_token) { clearToken(); throw new Error("refresh 失败"); }
+      storeToken(t.access_token, t.expires_in, t.refresh_token);
+    });
+  }
+
+  function logout() {
+    clearToken();
+    state.dict = null; // 换身份后字典按新租户重取
+    if (state.panel) mount(state.panel);
+  }
+
   /* ───────────── 多租户 (P0-4/P0-3) ─────────────
    * dev/header 档: 所有请求带 X-Tenant-Id, 后端 @TenantId 按租户隔离数据; 切租户即换数据视图。
    * Casdoor 档 (auth.enabled=true) 由 JWT 的 aud 定租户, 那时需登录换 token (本 demo 未接前端登录, 见文档)。 */
@@ -27,13 +172,25 @@
 
   /* ───────────── fetch ───────────── */
   function api(method, path, body) {
+    // auth 档: token 快过期先 silent refresh 再发 (refresh 失败会 clearToken, 下方走未登录分支渲染登录页)
+    if (authOn() && AUTH.token && isExpiring()) {
+      return refreshToken().then(
+        function () { return api(method, path, body); },
+        function () { if (state.panel) mount(state.panel); return { ok: false, status: 401, json: null, text: "" }; }
+      );
+    }
     var opts = { method: method, headers: {} };
-    if (state.tenant) opts.headers["X-Tenant-Id"] = state.tenant;
+    if (authOn()) {
+      if (AUTH.token) opts.headers["Authorization"] = "Bearer " + AUTH.token; // 租户由 token aud 定, 不发 X-Tenant-Id
+    } else if (state.tenant) {
+      opts.headers["X-Tenant-Id"] = state.tenant; // dev/header 档不变
+    }
     if (body !== undefined && body !== null) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     return fetch(BASE + path, opts).then(function (res) {
+      if (authOn() && res.status === 401) { clearToken(); if (state.panel) mount(state.panel); }
       return res.text().then(function (t) {
         var j = null;
         try { j = t ? JSON.parse(t) : null; } catch (e) { /* 非 JSON */ }
@@ -103,7 +260,7 @@
       el("div", { class: "demo-head" }, [
         el("h2", { text: "活动营销 · 报表配置台" }),
         el("p", { class: "demo-desc", text: "报表式创建活动 → 白名单条件树制定资格规则 → 上线 → 验证优惠命中。对接 /activity-marketing/*，规则由 Drools 执行。" }),
-        tenantBar(),
+        authOn() ? authBar() : tenantBar(),
       ]),
       el("div", { class: "act-tabs" }, tabs.map(function (t) {
         return el("button", {
@@ -132,6 +289,32 @@
       input,
     ].concat(quick).concat([
       el("span", { class: "tenant-hint", text: "切租户即换数据视图 —— 后端 @TenantId 按此隔离" }),
+    ]));
+  }
+
+  /* auth 档身份条: 租户由 token 的 aud 定 (手动切换禁用——信封≠aud 会被后端 403), 换租户 = 登出重登。 */
+  function authBar() {
+    return el("div", { class: "tenant-bar" }, [
+      el("span", { class: "tenant-label", text: "登录租户 (token aud)" }),
+      el("span", { class: "chip chip-active", text: tokenTenant() || "-" }),
+      el("span", { class: "tenant-hint", text: "操作者 " + (tokenSub() || "-") + " —— 租户由 Casdoor token 决定，切租户请登出后用另一租户账号登录" }),
+      el("button", { type: "button", class: "chip", onclick: logout }, ["登出"]),
+    ]);
+  }
+
+  /* auth 档未登录: 登录页 (每租户一个 SPA 应用, 点选租户发起 authorize+PKCE)。 */
+  function renderLogin(panel) {
+    var clients = (AUTH.cfg.webClients || []);
+    clear(panel).appendChild(el("div", { class: "demo-head" }, [
+      el("h2", { text: "活动营销 · 报表配置台" }),
+      el("p", { class: "demo-desc", text: "已开启 Casdoor 鉴权 (auth 档)：访问活动数据需先登录，租户由登录应用的 token aud 决定。" }),
+      banner("请选择租户登录 —— 跳转 Casdoor 完成授权码 + PKCE 登录后自动返回本页。", "info"),
+      el("div", { class: "actions" }, clients.length ? clients.map(function (w) {
+        return el("button", {
+          type: "button", class: "run-btn", style: "margin-right:8px",
+          onclick: function () { login(w.clientId); },
+        }, [el("span", { class: "run-ico", text: "🔐" }), "登录 " + w.tenant]);
+      }) : [banner("auth-config 未配置 web-client-map，无可用登录应用。", "err")]),
     ]));
   }
 
@@ -674,11 +857,29 @@
     el = UI.el; clear = UI.clear; $ = UI.$; card = UI.card; kv = UI.kv; tagList = UI.tagList; boolPill = UI.boolPill; fmtMoney = UI.fmtMoney;
     state.panel = panel;
     state.route = "list";
-    if (!state.dict) {
-      clear(panel).appendChild(banner("加载字段字典…", "info"));
-      api("GET", "/field-dict").then(function (r) { state.dict = r.json; render(); });
-    } else render();
+    ensureAuthConfig().then(function () {
+      if (authOn() && !AUTH.token) { renderLogin(panel); return; } // auth 档未登录 → 登录页
+      if (!state.dict) {
+        clear(panel).appendChild(banner("加载字段字典…", "info"));
+        api("GET", "/field-dict").then(function (r) { state.dict = r.json; render(); });
+      } else render();
+    });
   }
 
   window.ActivityApp = { mount: mount };
+
+  /* ───────────── OIDC 回调着陆 ─────────────
+   * redirect_uri 指向 index.html: Casdoor 授权后带 ?code=&state= 回到首页。仅当本页确实发起过
+   * authorize (sessionStorage 有 verifier) 才接管, 换完 token 直接挂载活动子应用 (免再点导航)。 */
+  if (window.location.search.indexOf("code=") >= 0 && window.sessionStorage.getItem(SS_VERIFIER)) {
+    document.addEventListener("DOMContentLoaded", function () {
+      handleCallback().then(function (done) {
+        if (done && window.ActivityApp && document.getElementById("panel")) {
+          window.ActivityApp.mount(document.getElementById("panel"));
+        }
+      }).catch(function (e) {
+        alert("OIDC 回调处理失败: " + e.message);
+      });
+    });
+  }
 })();

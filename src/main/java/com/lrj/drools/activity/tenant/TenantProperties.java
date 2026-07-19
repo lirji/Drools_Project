@@ -127,6 +127,27 @@ public class TenantProperties {
         /** JWKS 端点（本地缓存公钥离线验签），如 {@code http://localhost:8000/.well-known/jwks}。 */
         private String jwkSetUri = "http://localhost:8000/.well-known/jwks";
 
+        /** 浏览器登录 authorize 端点（授权码+PKCE 重定向目标，openid-config 实测路径）。 */
+        private String authorizeEndpoint = "http://localhost:8000/login/oauth/authorize";
+
+        /** token 端点（回调后 code+code_verifier 换 token；公有客户端不带 secret）。 */
+        private String tokenEndpoint = "http://localhost:8000/api/login/oauth/access_token";
+
+        /** SPA 回调地址（须与 Casdoor SPA 应用 redirectUris 完全一致），如 {@code http://localhost:8099/index.html}。 */
+        private String redirectUri = "";
+
+        /** 浏览器登录申请的 scope。 */
+        private String scope = "openid profile";
+
+        /**
+         * 浏览器登录的 SPA 公有应用映射：{@code tenant → client_id}（每租户一个 SPA 应用，命名
+         * {@code activity-<tenant>-web-cid}，由 scratchpad/casdoor-spa-provision.sh 建）。
+         * 空（默认）= 前端无登录入口。其**反向**（client_id→tenant）会自动并入 aud→tenant 解析
+         * （{@link AudienceTenantResolver} 的 map 级），无需在 {@link #clientTenantMap} 重复登记——
+         * 也**必须**走 map 级：{@code -web-} 后缀会被 {@code activity-{tenant}-cid} 模板误反解成租户 {@code <tenant>-web}。
+         */
+        private Map<String, String> webClientMap = new LinkedHashMap<>();
+
         /**
          * client_id → tenant 显式映射（生产推荐，等价白名单）。命脉实测 Casdoor client_credentials 的
          * {@code owner}=admin 非组织，故租户从 {@code aud}(client_id) 解析；此 map 优先于 {@link #audienceTemplates} 兜底。
@@ -163,6 +184,21 @@ public class TenantProperties {
 
         public String getJwkSetUri() { return jwkSetUri; }
         public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+
+        public String getAuthorizeEndpoint() { return authorizeEndpoint; }
+        public void setAuthorizeEndpoint(String authorizeEndpoint) { this.authorizeEndpoint = authorizeEndpoint; }
+
+        public String getTokenEndpoint() { return tokenEndpoint; }
+        public void setTokenEndpoint(String tokenEndpoint) { this.tokenEndpoint = tokenEndpoint; }
+
+        public String getRedirectUri() { return redirectUri; }
+        public void setRedirectUri(String redirectUri) { this.redirectUri = redirectUri; }
+
+        public String getScope() { return scope; }
+        public void setScope(String scope) { this.scope = scope; }
+
+        public Map<String, String> getWebClientMap() { return webClientMap; }
+        public void setWebClientMap(Map<String, String> webClientMap) { this.webClientMap = webClientMap; }
 
         public Map<String, String> getClientTenantMap() { return clientTenantMap; }
         public void setClientTenantMap(Map<String, String> clientTenantMap) { this.clientTenantMap = clientTenantMap; }

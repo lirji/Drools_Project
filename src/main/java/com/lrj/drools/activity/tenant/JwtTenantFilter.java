@@ -31,6 +31,12 @@ public class JwtTenantFilter extends OncePerRequestFilter {
         this.resolver = resolver;
     }
 
+    /** auth-config 是匿名配置端点（链上 permitAll），无 JWT 可解租户，跳过本过滤器（否则防御式 403 会挡掉它）。 */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return AuthConfigController.PATH.equals(request.getRequestURI());
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {

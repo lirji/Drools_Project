@@ -110,6 +110,29 @@ class AudienceTenantResolutionTest {
         assertEquals("acme", r.resolve(List.of("activity-acme-cid")).orElse(null), "list 内 null 元素不应 NPE");
     }
 
+    // ---- 前端 OIDC：webClientMap 反向并入 map 级（ActivityResourceServerConfig#audienceTenantResolver）----
+
+    @Test
+    void webClientMapInverseBeatsTemplateMisparse() {
+        // -web- 后缀命中模板会误反解成租户 "acme-web"；反向并入 map 级后必须短路成 acme
+        var props = new com.lrj.drools.activity.tenant.TenantProperties();
+        props.getAuth().getWebClientMap().put("acme", "activity-acme-web-cid");
+        var r = new com.lrj.drools.activity.tenant.ActivityResourceServerConfig().audienceTenantResolver(props);
+        assertEquals("acme", r.resolve(List.of("activity-acme-web-cid")).orElse(null),
+                "SPA client_id 应经 map 解析成 acme，而非模板误反解的 acme-web");
+        assertEquals("beta", r.resolve(List.of("activity-beta-cid")).orElse(null), "M2M 模板兜底应不受影响");
+    }
+
+    @Test
+    void explicitClientTenantMapWinsOverWebInverse() {
+        // 同一 client_id 同时出现在显式 clientTenantMap 与 webClientMap 反向 → 显式配置为准
+        var props = new com.lrj.drools.activity.tenant.TenantProperties();
+        props.getAuth().getWebClientMap().put("acme", "shared-cid");
+        props.getAuth().getClientTenantMap().put("shared-cid", "beta");
+        var r = new com.lrj.drools.activity.tenant.ActivityResourceServerConfig().audienceTenantResolver(props);
+        assertEquals("beta", r.resolve(List.of("shared-cid")).orElse(null));
+    }
+
     // ---- validator ----
 
     @Test
