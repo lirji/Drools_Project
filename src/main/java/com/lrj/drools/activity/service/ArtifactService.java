@@ -32,12 +32,14 @@ public class ArtifactService {
     private final ActivityArtifactRepository artifactRepo;
     private final RuleSchemaRegistry schemaRegistry;
     private final ActivityRuleRuntimeService ruleRuntime;
+    private final GenerationService generationService;
 
     public ArtifactService(ActivityArtifactRepository artifactRepo, RuleSchemaRegistry schemaRegistry,
-                           ActivityRuleRuntimeService ruleRuntime) {
+                           ActivityRuleRuntimeService ruleRuntime, GenerationService generationService) {
         this.artifactRepo = artifactRepo;
         this.schemaRegistry = schemaRegistry;
         this.ruleRuntime = ruleRuntime;
+        this.generationService = generationService;
     }
 
     /** 冻结活动某版本为不可变 artifact（pin schema 版本 + 引用字段 + 资格 DRL）。幂等：同版本已存在则不重复建。 */
@@ -60,15 +62,25 @@ public class ArtifactService {
         artifactRepo.save(a);
     }
 
-    /** 发布(上线)时按 artifact 冻结的 DRL 异步预热（P0-5）。NEEDS_REBUILD 的不预热（避免暖旧规则）。 */
+    /**
+     * 发布(上线)时按 artifact 冻结的 DRL 异步预热（P0-5）+ bump 发布代际（M1.4）。NEEDS_REBUILD 的不预热/不 bump（避免暖旧规则）。
+     *
+     * <p>两条预热传播路径并存（双保险）：①进程内直调 {@code warmAsync}（同进程立即暖）；②bump {@code (tenant,bizLine)} 代际，
+     * 供 decision 侧轮询预热（物理拆分后跨进程的唯一路径，见 {@code GenerationWarmService}）。本方法在 {@code changeStatus} 的
+     * {@code @Transactional} 内，bump 与"活动置 ONLINE"同事务提交。
+     */
     public void warmOnPublish(String activityId, Integer version) {
         artifactRepo.findFirstByActivityIdAndVersion(activityId, version).ifPresent(a -> {
             if (ActivityArtifactEntity.NEEDS_REBUILD.equals(a.getStatus())) {
-                log.warn("artifact {} v{} 已 NEEDS_REBUILD，跳过预热（schema 漂移，待重建）", activityId, version);
+                log.warn("artifact {} v{} 已 NEEDS_REBUILD，跳过预热/代际 bump（schema 漂移，待重建）", activityId, version);
                 return;
             }
+            String tenant = a.getTenantId() != null ? a.getTenantId() : TenantContext.get();
+            // M1.4：bump 发布代际（decision 侧轮询预热的跨进程信号）。即使本 artifact 无资格 DRL，发布本身也算配置变更。
+            generationService.bump(tenant, a.getBizLine());
+            // 双保险①：进程内直调，同进程首个决策请求即命中 warm。
             if (a.getEligDrl() != null && !a.getEligDrl().isBlank()) {
-                ruleRuntime.warmAsync(a.getTenantId() != null ? a.getTenantId() : TenantContext.get(), a.getEligDrl());
+                ruleRuntime.warmAsync(tenant, a.getEligDrl());
             }
         });
     }

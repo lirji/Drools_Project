@@ -31,8 +31,16 @@ class TenantArchGuardTest {
 
     private static final String PKG = "com.lrj.drools.activity.persistence";
 
-    /** 全局（租户无关）实体白名单：这些表无 tenant_id 是有意的。当前无——如将来加 activity_benefit_type 全局行表，登记于此。 */
-    private static final Set<String> GLOBAL_ENTITIES = Set.of();
+    /**
+     * @TenantId 豁免白名单（有意为之）。
+     *
+     * <p>{@code ActivityGenerationEntity}（M1.4 发布代际）：**带显式 {@code tenant_id} 列**（每行有租户标签，不泄漏），
+     * 但刻意<b>不</b>加 {@code @TenantId}——它是跨租户的发布传播信号，供 decision 侧<b>无请求上下文</b>的后台 poller
+     * {@code findAll()} 扫描；若加 @TenantId，后台线程会被自动追加 {@code tenant_id = NO_TENANT} 谓词而恒空。
+     * 隔离由 poller 读某租户 ACTIVE artifact 时的 {@code TenantContext.callWith(tenant,…)} 保证，不靠本表自过滤。
+     * 详见 {@link com.lrj.drools.activity.persistence.ActivityGenerationEntity} 类注释。
+     */
+    private static final Set<String> GLOBAL_ENTITIES = Set.of("ActivityGenerationEntity");
 
     @Test
     void everyEntityHasTenantId() throws Exception {

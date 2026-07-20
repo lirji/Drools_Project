@@ -9,7 +9,7 @@
 | 里程碑 | 内容 | 验证门 | 状态 |
 |---|---|---|---|
 | **F3** 退役旧原生页 | 根 `index.html` → 构建无关的跳转/落地页；删旧三 JS(`app/examples/activity`) + 两旧 CSS(`styles/activity`)；README 同步 | G5：git revert 回滚演练 + `./mvnw test` 不降 | ✅ 完成 |
-| **M1.4** 发布 generation 轮询预热 | `(tenant,bizLine,generation)` 表 + repo；`ArtifactService` 发布 bump；`RuntimeService` 轮询预热 | 104+新测试绿；发布→轮询预热命中 | ⬜ 待做 |
+| **M1.4** 发布 generation 轮询预热 | `(tenant,bizLine,generation)` 表 + repo；`ArtifactService` 发布 bump；`RuntimeService` 轮询预热 | 104+新测试绿；发布→轮询预热命中 | ✅ 完成 |
 | **M2.1** Maven 物理模块拆分 | `activity-common/console/decision/drools-lab` 多模块（搬 100+ 文件、拆 pom）——计划自陈最大重构风险点 | 测试绿；两 app 独立启动 | ⬜ 待做 |
 | **M2.2** decision 物理拆进程 | decision 独立 8082 + 只读账号 + `ddl-auto=validate`；网关切流；移除进程内直调 | kill console 决策仍服务；kill decision 不伤 console | ⬜ 待做 |
 | **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | ⬜ 待做 |
@@ -20,6 +20,18 @@
 - F3 无代码/测试依赖旧三 JS/CSS（已 grep 确认），删除低风险。
 
 ## 变更文件流水（每步追加）
+
+### M1.4 ✅
+- **新** `persistence/ActivityGenerationEntity` — `(tenant_id, biz_line, generation)` 单行表，**非 @TenantId**（跨租户传播信号；命门见类注释）
+- **新** `persistence/ActivityGenerationRepository` — `findByTenantIdAndBizLine` + 继承 `findAll`（poller 跨租户扫）
+- **新** `service/GenerationService` — `bump(tenant,bizLine)` 读改写 +1（generation 是变更信号，非精确计数，故无需锁）
+- **新** `engine/GenerationWarmService` — `warmDueGenerations()`：扫代际→对增长者 `callWith(tenant)` 读 ACTIVE artifact→`warmAsync` 预热；返回 futures（fire-and-forget，测试可 await）
+- **新** `engine/GenerationPollScheduler` — `@Scheduled` 触发器，`@ConditionalOnProperty(generation-poll.enabled, matchIfMissing=true)` + `@EnableScheduling`；与预热逻辑分离，测试关调度手动跑
+- **改** `service/ArtifactService.warmOnPublish` — 注入 GenerationService，ACTIVE artifact 发布时 bump 代际（进程内 warmAsync 保留作双保险）
+- **改** `application.yml` — `activity.marketing.generation-poll.{enabled:true, interval-ms:3000}`
+- **新测试** `GenerationWarmPollerTest`（3 例，独立内存库+create-drop，可重跑）；**改** `TenantArchGuardTest` 白名单登记 ActivityGenerationEntity（带显式 tenant_id、有意不 @TenantId）
+- **验证**：全量 `./mvnw test` 110 跑 0 失败（107→110）；日志 `[generation-poll] 预热命中 … generation 0→1 提交 N 个 artifact` = 验证门"发布后轮询预热命中日志"达成
+- **未做（可选）**：`POST /internal/warm` M2M 端点（计划标可选；poller 已足够）
 
 ### F3 ✅（单原子提交，回滚=revert 该 commit）
 - `src/main/resources/static/index.html` — 旧原生演示台外壳 → 构建无关静态落地页（内联样式、明暗主题、44px 触控、指向 `/ui/console` `/ui/demos` + 未构建提示）

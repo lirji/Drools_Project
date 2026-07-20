@@ -49,6 +49,13 @@ activity:
       # 成本随规则数线性(基准已证),故上界随规则数派生而非全局常量;超界 halt+warn,决策回退旧逻辑(fail-safe)。
       max-fires-base: 2000
       max-fires-per-rule: 200
+    # M1.4 发布代际轮询预热。console 发布(上线)时 bump (tenant,bizLine) 代际; decision 侧后台按 interval 轮询,
+    # 见到代际增长即预热该 (tenant,bizLine) 的全部 ACTIVE artifact——物理拆分(M2.2)后 decision 进程无需 console
+    # 进程内直调也能发布后自动 warm。进程内直调(warmOnPublish→warmAsync)保留作双保险。
+    #   enabled=false 关掉调度(仍可手动调 warmDueGenerations, 测试用); 物理拆分后 console 角色可关、decision 角色开。
+    generation-poll:
+      enabled: true
+      interval-ms: 3000
     # 种入 demo 商品 + 商品池 (仅当 demo_product 空), 让前端「商品池」自动圈选可演示。
     # 测试不开此开关, 避免污染 ActivityMarketingFlowTest 的池断言。
     seed-demo-data: true
