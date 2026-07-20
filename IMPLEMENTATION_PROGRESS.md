@@ -1,5 +1,9 @@
 # 实施进度 — Drools 前端演示台
 
+> ⚠️ **已被取代（历史归档，勿据此操作）**：本文记录的是 2026-07-12 那版**原生静态前端演示台**（`index.html` + `assets/{app.js,examples.js,styles.css,activity.css}`，单模块，`localhost:8081` 单 app）。
+> 该原生台已于 **2026-07-20 F3 退役并删除**，取而代之的是前后端分离的 **Vue3 SPA（挂 `/ui/`）**；后端也已 **M2.1 重构为 Maven 四模块 + 双 app**（console 8081 / decision 8082）。
+> 现状以 `README.md`、`CLAUDE.md`、`docs/deployment.md`、`docs/plans/prod-arch-refactor-0719-1330/PROGRESS.md` 为准。本文仅留作那次前端实现的历史记录。
+
 对应计划：`docs/plans/drools-demo-frontend-0712-1553/FINAL_PLAN.md`（方案 A：Spring Boot 同源静态前端，覆盖全部端点，现代美观 UI）
 
 ## 阶段清单
