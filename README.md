@@ -54,23 +54,34 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 
 ## 🖥 前端演示台（在浏览器里看规则效果）
 
-起服务后，浏览器打开 **<http://localhost:8081/>** 即可。一个内置的静态演示台，把
-**全部 Step 1–18 的 REST 端点**都做成了可点选、可编辑、可运行的面板——不用记 `curl`，
-直接在页面上选示例、改 JSON、点「运行」，右侧看**结构化摘要**（折扣账本、推荐、审计时间线、
-TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+前端已做**前后端分离**：一个 Vue3 + Vite + TypeScript 的 SPA（源码在 `frontend/`），挂在后端
+**<http://localhost:8081/ui/>** 下。它把 **全部 Step 1–18 的 REST 端点** + **活动引擎控制台** 做成可点选、
+可编辑、可运行的面板——不用记 `curl`，直接选示例、改 JSON、点「运行」，看**结构化摘要**（折扣账本、
+推荐、审计时间线、TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+
+根路径 **<http://localhost:8081/>** 现在是一个静态落地页，指向 `/ui/`（旧原生演示台已于 F3 退役）。
+
+前端产物默认**不随后端构建**（保后端迭代速度）。三种起法任选：
 
 ```bash
-# 想快速体验、又不想装 MySQL，推荐 H2 profile 起：
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
-# 然后浏览器打开 http://localhost:8081/
+# ① 前端热更新开发（推荐日常）：Vite dev server :5173，API 反代到 8081
+cd frontend && npm install && npm run dev
+# 浏览器打开 http://localhost:5173/
+
+# ② 一条命令全栈起：-Pfrontend 触发 npm build 并把 dist 拷进 static/ui/
+./mvnw -Pfrontend spring-boot:run -Dspring-boot.run.profiles=h2
+# 浏览器打开 http://localhost:8081/ui/
+
+# ③ 生产样式：docker-compose（mysql + console + decision + nginx 网关托管 SPA）
+docker compose -f deploy/docker-compose.yml up --build   # 网关 http://localhost:8090/ui/
 ```
 
-- **零后端改动**：纯静态资源（`src/main/resources/static/`），跟后端**同源**托管，无需 CORS、无需 Node/构建工具。
-- **左侧按 Step 分组导航**，覆盖后端每一个功能端点 + `/actuator/prometheus`。
-- **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、
-  推荐、审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
+- **同源托管、零后端 CORS**：dev 靠 Vite proxy、生产靠 nginx 网关同源（决策 D3）。
+- **history 路由**：深链 / 刷新 `/ui/console/...` 由 `SpaForwardController` forward 回 `index.html`，交给 vue-router。
+- **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、推荐、
+  审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
 - **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
-- 右上角可切换**明/暗主题**。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+- **明/暗主题** + 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
 
 > 提示：演示台是学习/本地用途，热加载（`/hot/*`、`/scanner/*`）能运行时编译任意 DRL，**不要把它裸露到公网**。
 

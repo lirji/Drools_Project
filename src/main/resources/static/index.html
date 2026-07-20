@@ -3,40 +3,83 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Drools 演示台</title>
-  <link rel="stylesheet" href="/assets/styles.css" />
-  <link rel="stylesheet" href="/assets/activity.css" />
+  <title>Drools 演示台 · 已迁移到新版控制台</title>
+  <!--
+    F3 退役：旧原生演示台（app.js/examples.js/activity.js + styles.css/activity.css）已被前后端分离的
+    Vue3 SPA（挂 /ui/）取代。本页是构建无关的静态落地页——不依赖任何 JS/外部 CSS，
+    在「未构建前端（默认 spring-boot:run）」下也不会白屏。SPA 产物由 `-Pfrontend` 构建拷进 static/ui/，
+    或由 compose 的 nginx 网关托管。
+  -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f8fa; --card: #ffffff; --fg: #1a1d24; --sub: #5b6472;
+      --line: #e3e7ee; --accent: #3b6ef0; --accent-fg: #ffffff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #12141a; --card: #1b1e26; --fg: #e8ebf1; --sub: #97a0b0;
+        --line: #2a2e39; --accent: #5b86f5; --accent-fg: #0d1016;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: var(--bg); color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      padding: 24px;
+    }
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      max-width: 560px; width: 100%; padding: 40px 36px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+    .logo { font-size: 26px; color: var(--accent); }
+    h1 { font-size: 20px; margin: 0; }
+    .sub { color: var(--sub); font-size: 13px; margin-top: 2px; }
+    p { color: var(--sub); line-height: 1.65; font-size: 14px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 26px 0 18px; }
+    a.btn {
+      display: inline-flex; align-items: center; gap: 6px; text-decoration: none;
+      padding: 11px 20px; border-radius: 9px; font-size: 14px; font-weight: 600;
+      min-height: 44px; box-sizing: border-box;
+    }
+    a.primary { background: var(--accent); color: var(--accent-fg); }
+    a.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+    .note {
+      font-size: 12.5px; color: var(--sub); border-top: 1px dashed var(--line);
+      padding-top: 16px; margin-top: 4px; line-height: 1.7;
+    }
+    code {
+      background: rgba(127, 127, 127, 0.14); padding: 1px 6px; border-radius: 5px;
+      font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+  </style>
 </head>
 <body>
-  <header class="topbar">
+  <main class="card">
     <div class="brand">
       <span class="logo">◆</span>
-      <div class="brand-text">
+      <div>
         <h1>Drools 演示台</h1>
-        <span class="brand-sub">Step 1–18 · 在浏览器里看见规则引擎的效果</span>
+        <div class="sub">Step 1–18 + 活动引擎控制台 · 已迁移到新版前端</div>
       </div>
     </div>
-    <div class="topbar-right">
-      <!-- 前后端分离新前端（Vue3，挂 /ui/）。旧页保留作回退；两者数据同源。 -->
-      <a class="link-actuator" href="/ui/console">新版工作台 →</a>
-      <a class="link-actuator" href="/actuator/health" target="_blank" rel="noopener">健康检查</a>
-      <button id="theme-btn" class="theme-btn" title="切换主题">◐</button>
+    <p>
+      旧的原生演示台已退役，全部功能（18 个 Step 演示 + 活动营销工作台）迁移到前后端分离的
+      Vue3 控制台，挂载在 <code>/ui/</code>。
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="/ui/console">打开控制台 →</a>
+      <a class="btn ghost" href="/ui/demos">18 Step 演示台</a>
+      <a class="btn ghost" href="/actuator/health" target="_blank" rel="noopener">健康检查</a>
     </div>
-  </header>
-
-  <div class="layout">
-    <aside class="sidebar">
-      <nav id="nav" class="nav"></nav>
-    </aside>
-    <main id="panel" class="panel">
-      <!-- 由 app.js 渲染 -->
-    </main>
-  </div>
-
-  <!-- 目录必须在逻辑之前加载 -->
-  <script src="/assets/examples.js"></script>
-  <script src="/assets/app.js"></script>
-  <!-- 活动营销子应用: 在 app.js 之后加载, mount 时惰性读 window.DemoUI -->
-  <script src="/assets/activity.js"></script>
+    <div class="note">
+      看到 <code>/ui/</code> 404？前端产物默认不随后端构建。用 <code>./mvnw -Pfrontend spring-boot:run</code>
+      构建并托管 SPA，或本地 <code>cd frontend &amp;&amp; npm run dev</code>（Vite :5173），
+      或走 <code>deploy/docker-compose.yml</code> 的 nginx 网关。
+    </div>
+  </main>
 </body>
 </html>
