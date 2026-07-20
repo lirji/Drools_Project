@@ -1,10 +1,18 @@
 /* 设计 token —— 忠实平移自后端 static/assets/styles.css:3-65（明/暗双主题）。
  * 保持变量名与色值不变，让既有组件语汇可无损复用；data-theme 手动覆盖 + prefers-color-scheme 自动跟随。
- * 唯一新增维度：spacing token（原 CSS 未 token 化，UI/UX 勘察点名的缺口）。 */
+ *
+ * 2026-07 重设计扩展（DECISION_RECORD D4，只加不改；唯一例外：浅色 --bg 压深一档以拉开卡片/内容/侧栏三层分离）：
+ * 新增 排版 scale（fs/lh/fw）+ 纵深（radius-lg/pill、shadow-md/lg、focus-ring、z 序）+ 布局尺寸（shell 系列、content-max、page-gutter、sp-7/8）。
+ *
+ * 断点正典（字面量约定；CSS var 不能用于 @media 条件，故各 @media 用下列数值）：
+ *   ≥1024 桌面（侧栏常驻） / 768–1023 平板（侧栏 docked 收窄、身份条内联） / <768 手机（侧栏 off-canvas 抽屉） / ≤560（身份条收 popover）。
+ *   —— 抽屉阈值 <768（非 768–1023）：e2e-tablet-smoke 在 768 直接点 tab-new/等 tenant-bar，docked-768 使其零改保持绿。
+ */
 :root {
-  --bg: #f4f5fb;
+  --bg: #e9ecf5;          /* 重设计：由 #f4f5fb 压深一档，拉开与 --bg-soft/--bg-elev 的明度差 */
   --bg-elev: #ffffff;
   --bg-soft: #f7f8fc;
+  --bg-hover: #eef0f7;    /* 新增：hover 面 */
   --border: #e6e8f0;
   --border-strong: #d3d7e6;
   --text: #1d2333;
@@ -28,24 +36,58 @@
   --red-soft: #fdeaea;
   --shadow: 0 1px 2px rgba(20, 25, 50, .04), 0 8px 24px rgba(20, 25, 50, .06);
   --shadow-sm: 0 1px 2px rgba(20, 25, 50, .06);
+  --shadow-md: 0 2px 6px rgba(20, 25, 50, .08), 0 12px 28px rgba(20, 25, 50, .08);  /* 新增 */
+  --shadow-lg: 0 8px 24px rgba(20, 25, 50, .12), 0 24px 60px rgba(20, 25, 50, .14); /* 新增：弹层/抽屉 */
   --radius: 14px;
   --radius-sm: 9px;
+  --radius-lg: 18px;      /* 新增 */
+  --radius-pill: 999px;   /* 新增 */
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
-  /* 新增 spacing scale（4 的倍数），替代原散落硬编码 */
+  /* spacing scale（4 的倍数） */
   --sp-1: 4px;
   --sp-2: 8px;
   --sp-3: 12px;
   --sp-4: 16px;
   --sp-5: 24px;
   --sp-6: 32px;
+  --sp-7: 40px;          /* 新增：页级留白 */
+  --sp-8: 48px;          /* 新增 */
   /* 触控命中区（(pointer:coarse) 下用，平板/移动 ≥44px） */
   --touch-min: 44px;
+
+  /* ---- 重设计新增：排版 scale（主题无关） ---- */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+  --lh-tight: 1.25;
+  --lh-normal: 1.5;
+  --lh-relaxed: 1.7;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* ---- 布局尺寸（主题无关） ---- */
+  --shell-topbar-h: 52px;
+  --shell-sidebar-w: 248px;
+  --content-max: 1280px;
+  --page-gutter: var(--sp-5);
+
+  /* ---- z-index 数值序（主题无关）：抽屉 900 < ToastHost 硬编码 1000 → ToastHost 零改仍在最上层 ---- */
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-drawer: 900;
+  --z-toast: 1000;
+
+  /* 焦点环（用 accent-soft，随主题变） */
+  --focus-ring: 0 0 0 3px var(--accent-soft);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --border: #262b38;
+    --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --bg-hover: #222634; --border: #262b38;
     --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
     --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
     --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
@@ -53,10 +95,12 @@
     --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
     --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+    --shadow-md: 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 24px 60px rgba(0,0,0,.55);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --border: #262b38;
+  --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --bg-hover: #222634; --border: #262b38;
   --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
   --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
   --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
@@ -64,26 +108,52 @@
   --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
   --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
   --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
+  --shadow-md: 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 24px 60px rgba(0,0,0,.55);
 }
 :root[data-theme="light"] {
-  --bg: #f4f5fb; --bg-elev: #ffffff; --bg-soft: #f7f8fc; --border: #e6e8f0;
+  --bg: #e9ecf5; --bg-elev: #ffffff; --bg-soft: #f7f8fc; --bg-hover: #eef0f7; --border: #e6e8f0;
   --border-strong: #d3d7e6; --text: #1d2333; --text-soft: #5b6478; --text-faint: #98a0b3;
   --accent: #6366f1; --accent-2: #8b5cf6; --accent-soft: #eef0ff;
   --ok: #16a34a; --ok-soft: #e7f7ec; --err: #dc2626; --err-soft: #fdecec;
   --blue: #2563eb; --blue-soft: #e8f0fe; --green: #15803d; --green-soft: #e6f6ec;
   --gold: #b45309; --gold-soft: #fdf0da; --red: #b91c1c; --red-soft: #fdeaea;
+  --shadow-md: 0 2px 6px rgba(20, 25, 50, .08), 0 12px 28px rgba(20, 25, 50, .08);
+  --shadow-lg: 0 8px 24px rgba(20, 25, 50, .12), 0 24px 60px rgba(20, 25, 50, .14);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: var(--fs-md);
+  line-height: var(--lh-normal);
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--accent); }
+
+/* 全局键盘焦点环（重设计：全站原本零 :focus-visible）。用 outline 不占布局、不被 overflow 裁剪。 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 触控兜底（重设计）：coarse 指针下所有可交互件 ≥44px，一处堵住各组件手写 (pointer:coarse) 的缺口
+ * （EditorView chip/mini、theme-btn、tabs、pager 等原先漏放大）。桌面（fine 指针）不受影响。 */
+@media (pointer: coarse) {
+  button,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  a[role="button"],
+  [role="button"],
+  .nav-item {
+    min-height: var(--touch-min);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
