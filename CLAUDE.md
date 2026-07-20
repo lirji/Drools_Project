@@ -41,17 +41,24 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 ## 常用命令
 
+> **M2.1 起是 Maven 多模块**（聚合父 pom + 4 模块：`activity-common` / `drools-lab` / `activity-console`(app,8081) / `activity-decision`(app,8082)）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main）；起服务要 **`-pl` 指定 app 模块**。模块拆分详情见 `docs/plans/prod-arch-refactor-0719-1330/`。
+
 ```bash
-# 默认 MySQL profile，连接走环境变量覆盖（不写死真实值）
+# 起 console 服务（写平面 + Step1-18 + 前端 /ui/，8081）；连接走环境变量覆盖（不写死真实值）
 DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=yourpass \
-  ./mvnw spring-boot:run               # 起 web 服务 (默认 8081)
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file 模式
-./mvnw test                   # 跑测试 (目前只有 spring-boot-starter-test，没业务测试)
-./mvnw clean package          # 打 jar
+  ./mvnw -pl activity-console spring-boot:run
+./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file
+# 起 decision 服务（只读决策热路径 /decision/v1 + 发布代际轮询预热，8082）
+./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
+./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
+
+./mvnw test                   # 跑全 reactor 测试（common 63 + console 40 + decision 8 = 111）
+./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
+# 单模块：./mvnw -pl activity-common test（-am 连带先构建依赖模块）
 ```
 
-**端口 8081** 跟主项目 LangChain4j (8080) 错开，方便两个 demo 同时跑。改端口看 `application.yml`。
+**端口**：console 8081 / decision 8082，跟主项目 LangChain4j (8080) 错开。console 改端口看 `activity-console/src/main/resources/application.yml`，decision 看 `activity-decision/.../application.yml`。
 **数据库 profile**：`application.yml` 是公共配置 + `spring.profiles.active: mysql` 默认；数据源细节分到 `application-mysql.yml`（带 `createDatabaseIfNotExist=true`，库不存在自动建）/ `application-h2.yml`。连接参数 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` 都能用环境变量覆盖。
 
 ## 已踩过的坑（务必先读，再动 pom / DRL）

@@ -10,7 +10,7 @@
 |---|---|---|---|
 | **F3** 退役旧原生页 | 根 `index.html` → 构建无关的跳转/落地页；删旧三 JS(`app/examples/activity`) + 两旧 CSS(`styles/activity`)；README 同步 | G5：git revert 回滚演练 + `./mvnw test` 不降 | ✅ 完成 |
 | **M1.4** 发布 generation 轮询预热 | `(tenant,bizLine,generation)` 表 + repo；`ArtifactService` 发布 bump；`RuntimeService` 轮询预热 | 104+新测试绿；发布→轮询预热命中 | ✅ 完成 |
-| **M2.1** Maven 物理模块拆分 | `activity-common/console/decision/drools-lab` 多模块（搬 100+ 文件、拆 pom）——计划自陈最大重构风险点 | 测试绿；两 app 独立启动 | ⬜ 待做 |
+| **M2.1** Maven 物理模块拆分 | `activity-common/console/decision/drools-lab` 多模块（搬 100+ 文件、拆 pom）——计划自陈最大重构风险点 | 测试绿；两 app 独立启动 | ✅ 完成 |
 | **M2.2** decision 物理拆进程 | decision 独立 8082 + 只读账号 + `ddl-auto=validate`；网关切流；移除进程内直调 | kill console 决策仍服务；kill decision 不伤 console | ⬜ 待做 |
 | **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | ⬜ 待做 |
 
@@ -20,6 +20,19 @@
 - F3 无代码/测试依赖旧三 JS/CSS（已 grep 确认），删除低风险。
 
 ## 变更文件流水（每步追加）
+
+### M2.1 ✅（Maven 四模块物理拆分）
+- **新** 根 `pom.xml` → 聚合 pom（packaging=pom，`<modules>` + dependencyManagement 内部模块版本）
+- **新模块 `activity-common`**（库，69 主类）：`activity/{domain,engine(除 poller),persistence,tenant}` + 读服务 `ActivityQueryService`/`ActivityPoolMatchService`；drools 只引 KieHelper 所需（core/compiler/mvel/kie-api），**不引 kie-ci/dmn/decisiontables**
+- **新模块 `drools-lab`**（库，57 主类）：Step1-18 教学（`com.lrj.drools` 非 activity）+ rules/kmodule/xls/dmn 资源 + 全套重 drools 依赖（kie-ci/dmn/decisiontables/xml-support）
+- **新模块 `activity-console`**（app，8081）：写平面（`ActivityMarketingService`/`ArtifactService`/`GenerationService`/`ActivityMarketingController`/seeder）+ `ConsoleApplication`(根包) + app 配置 + static 落地页 + `-Pfrontend`；依赖 common+drools-lab
+- **新模块 `activity-decision`**（app，8082）：`DecisionPlaneController` + poller(`GenerationWarmService`/`PollScheduler`) + `DecisionApplication`(根包) + 自有 application*.yml；仅依赖 common
+- **135 主类 + 30 测试全量 git mv 到位**；测试拓扑：unit→common(14)/drools-lab(1)，BOOT→console(12)/decision(3)
+- **测试改造**：`DecisionAliasAndRoleGateTest` 去掉 console-only 的 `/activity-marketing` 断言（decision 模块无此 controller）；`GenerationWarmPollerTest` 改用 `genRepo` 直接落代际（decision 无 console 的 `GenerationService`）；**新** console `GenerationBumpTest` 补 bump 覆盖
+- **关键坑**：主类须放 `com.lrj.drools` 根包（非 `.console`/`.decision`），否则 `@SpringBootTest` 沿测试包 `com.lrj.drools.activity` 向上找不到 `@SpringBootConfiguration`（13 test 全 error）
+- **验证**：`./mvnw test` reactor 全绿 = common 63 + console 40 + decision 8 = **111 跑 0 失败 3 skip**；`./mvnw -DskipTests package` 两 app 均产出可执行 jar（Start-Class Console/DecisionApplication）；**decision jar 67MB vs console 104MB，轻 37MB = 依赖甩除实证**
+- **回滚**：M2.1 前无不可逆改动；`git revert` 该 commit 回单模块（但需连带 revert 后续 M2.2/M2.3）
+- **未做（M2.2）**：decision 只读账号 + ddl-auto=validate（现 update 便于单机启动）；网关切流；移除进程内直调
 
 ### M1.4 ✅
 - **新** `persistence/ActivityGenerationEntity` — `(tenant_id, biz_line, generation)` 单行表，**非 @TenantId**（跨租户传播信号；命门见类注释）

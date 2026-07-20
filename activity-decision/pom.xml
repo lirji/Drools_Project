@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lrj</groupId>
+        <artifactId>drools-demo-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>activity-decision</artifactId>
+    <name>activity-decision</name>
+    <description>
+        决策服务（decision-svc，8082，可启动）：只读决策热路径（/decision/v1/spu-discount、/gifts）
+        + 发布代际轮询预热。仅依赖 activity-common——**不背 drools-lab 的 kie-ci/kie-dmn/decisiontables 重依赖**，
+        无写平面 bean（结构上不能写）。M2.2 起连只读 DB 账号 + ddl-auto=validate。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.lrj</groupId>
+            <artifactId>activity-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
