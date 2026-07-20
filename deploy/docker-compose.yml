@@ -82,3 +82,24 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports: ["8095:80"]   # 8090 常被本机其它服务占用，用 8095；网关内部仍 :80
     depends_on: [console, decision]
+
+  # M2.3 · Prometheus 抓取 console + decision 的 /actuator/prometheus（两独立进程各自指标端点）
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on: [console, decision]
+
+  # M2.3 · Grafana 自动装配数据源 + 面板（Activity Services：两服务 HTTP/JVM/Metaspace/CPU 对比）
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"      # demo：免登录看板（生产勿开）
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]

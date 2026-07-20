@@ -12,7 +12,7 @@
 | **M1.4** 发布 generation 轮询预热 | `(tenant,bizLine,generation)` 表 + repo；`ArtifactService` 发布 bump；`RuntimeService` 轮询预热 | 104+新测试绿；发布→轮询预热命中 | ✅ 完成 |
 | **M2.1** Maven 物理模块拆分 | `activity-common/console/decision/drools-lab` 多模块（搬 100+ 文件、拆 pom）——计划自陈最大重构风险点 | 测试绿；两 app 独立启动 | ✅ 完成 |
 | **M2.2** decision 物理拆进程 | decision 独立 8082 + 只读账号 + `ddl-auto=validate`；网关切流；移除进程内直调 | kill console 决策仍服务；kill decision 不伤 console | ✅ 完成（整栈 live 验证通过）|
-| **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | 🚧 config 就位，待并入 compose 验证 |
+| **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | ✅ 完成（live：两 target up，面板/数据源自动装配）|
 
 ## 关键约束 / 已定决策（执行期补充）
 
@@ -20,6 +20,13 @@
 - F3 无代码/测试依赖旧三 JS/CSS（已 grep 确认），删除低风险。
 
 ## 变更文件流水（每步追加）
+
+### M2.3 ✅（双 prometheus + grafana）
+- **新** `deploy/prometheus/prometheus.yml`：抓 `console:8080` + `decision:8080` 的 `/actuator/prometheus`
+- **新** `deploy/grafana/provisioning/{datasources,dashboards}/*` + `dashboards/activity-services.json`：自动装配 Prometheus 数据源(uid=prometheus) + 面板（两服务 HTTP 速率/时延、JVM heap、NonHeap(Metaspace=KieBase 足迹)、CPU、线程，按 application tag 区分 drools-demo/drools-decision）
+- **改** `deploy/docker-compose.yml`：加 prometheus(9090) + grafana(3001，匿名 Viewer)
+- **验证（live）**：Prometheus targets `activity-console` + `activity-decision` 均 **health=up**；`jvm_memory_used_bytes{area=heap}` by application：drools-decision 70.9MB / drools-demo 122.5MB（两服务指标都进来了、可区分）；Grafana 数据源+面板 provisioning 成功，grafana→prometheus 代理查询 `up` 返回 2 条。
+- 注：grafana/prometheus 的 config 文件在 M2.2 提交里已随 `git add -A` 带入；本步补 compose 服务 + live 验证。
 
 ### M2.2 ✅（decision 物理拆进程 + 只读账号 + 网关切流 + 移除进程内直调）
 - **改** `ArtifactService`：移除进程内直调 `ruleRuntime.warmAsync`（物理拆分后 console 就地 warm 暖不到 decision 的独立缓存，属残留耦合）+ 去掉 `ruleRuntime` 依赖；`warmOnPublish`→`onPublish`（只 bump 代际）。发布预热唯一路径统一为代际轮询。caller `ActivityMarketingService.changeStatus` 同步改名。
