@@ -2,7 +2,6 @@ package com.lrj.drools.activity.service;
 
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.SchemaField;
-import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.persistence.ActivityArtifactEntity;
 import com.lrj.drools.activity.persistence.ActivityArtifactRepository;
@@ -20,7 +19,7 @@ import java.util.Map;
  * P1-9 · artifact 冻结/失效 + P0-5 发布预热的落点。
  *
  * <p><b>冻结（{@link #snapshot}）</b>：活动某版本创建时，把它的资格 DRL + **pin 的 schema 版本 / 引用字段**固化成不可变 artifact。
- * <p><b>发布预热（{@link #warmOnPublish}）</b>：上线时按 artifact 冻结的 DRL 在独立编译池**异步预热**（冷编译不落决策热路径）。
+ * <p><b>发布传播（{@link #onPublish}）</b>：上线时 bump {@code (tenant,bizLine)} 发布代际，供 decision 侧轮询预热（M1.4）。
  * <p><b>硬失效（{@link #revalidateOnSchemaChange}）</b>：schema 删字段/改类型 → 引用该字段的 ACTIVE artifact 标 NEEDS_REBUILD，
  * 不静默用旧 pin 继续跑（P1-9：改 schema 后旧 artifact 行为可预测、不静默改金额）。
  */
@@ -31,14 +30,12 @@ public class ArtifactService {
 
     private final ActivityArtifactRepository artifactRepo;
     private final RuleSchemaRegistry schemaRegistry;
-    private final ActivityRuleRuntimeService ruleRuntime;
     private final GenerationService generationService;
 
     public ArtifactService(ActivityArtifactRepository artifactRepo, RuleSchemaRegistry schemaRegistry,
-                           ActivityRuleRuntimeService ruleRuntime, GenerationService generationService) {
+                           GenerationService generationService) {
         this.artifactRepo = artifactRepo;
         this.schemaRegistry = schemaRegistry;
-        this.ruleRuntime = ruleRuntime;
         this.generationService = generationService;
     }
 
@@ -63,25 +60,23 @@ public class ArtifactService {
     }
 
     /**
-     * 发布(上线)时按 artifact 冻结的 DRL 异步预热（P0-5）+ bump 发布代际（M1.4）。NEEDS_REBUILD 的不预热/不 bump（避免暖旧规则）。
+     * 发布(上线)时 bump {@code (tenant,bizLine)} 发布代际（M1.4）。NEEDS_REBUILD 的不 bump（避免传播旧规则）。
      *
-     * <p>两条预热传播路径并存（双保险）：①进程内直调 {@code warmAsync}（同进程立即暖）；②bump {@code (tenant,bizLine)} 代际，
-     * 供 decision 侧轮询预热（物理拆分后跨进程的唯一路径，见 {@code GenerationWarmService}）。本方法在 {@code changeStatus} 的
-     * {@code @Transactional} 内，bump 与"活动置 ONLINE"同事务提交。
+     * <p><b>M2.2 已移除进程内直调</b>（原 {@code warmOnPublish} 里的 {@code ruleRuntime.warmAsync}）：物理拆分后
+     * console 与 decision 是两个进程，console 就地 warmAsync 只暖<em>自己</em>的缓存、暖不到 decision，属"写平面直连读平面缓存"
+     * 的残留耦合。发布预热的唯一路径统一为 <b>代际轮询</b>（decision 侧 {@code GenerationWarmService} 见代际增长即预热）。
+     * 本方法在 {@code changeStatus} 的 {@code @Transactional} 内，bump 与"活动置 ONLINE"同事务提交。
+     * console 自身的 legacy {@code /activity-marketing} 读端点首次命中冷编译（Caffeine single-flight，只慢一次）。
      */
-    public void warmOnPublish(String activityId, Integer version) {
+    public void onPublish(String activityId, Integer version) {
         artifactRepo.findFirstByActivityIdAndVersion(activityId, version).ifPresent(a -> {
             if (ActivityArtifactEntity.NEEDS_REBUILD.equals(a.getStatus())) {
-                log.warn("artifact {} v{} 已 NEEDS_REBUILD，跳过预热/代际 bump（schema 漂移，待重建）", activityId, version);
+                log.warn("artifact {} v{} 已 NEEDS_REBUILD，跳过代际 bump（schema 漂移，待重建）", activityId, version);
                 return;
             }
             String tenant = a.getTenantId() != null ? a.getTenantId() : TenantContext.get();
-            // M1.4：bump 发布代际（decision 侧轮询预热的跨进程信号）。即使本 artifact 无资格 DRL，发布本身也算配置变更。
+            // 即使本 artifact 无资格 DRL，发布本身也算配置变更 → bump 代际，供 decision 轮询预热。
             generationService.bump(tenant, a.getBizLine());
-            // 双保险①：进程内直调，同进程首个决策请求即命中 warm。
-            if (a.getEligDrl() != null && !a.getEligDrl().isBlank()) {
-                ruleRuntime.warmAsync(tenant, a.getEligDrl());
-            }
         });
     }
 

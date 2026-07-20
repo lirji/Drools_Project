@@ -1,0 +1,10 @@
+# M2.3 · Grafana 自动装配 Prometheus 数据源（免手点）。
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

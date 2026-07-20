@@ -211,9 +211,9 @@ public class ActivityMarketingService {
         row.setActivityStatus(target.code());
         row.setModifiedStime(Instant.now());
         manageRepo.save(row);
-        // P0-5：发布(上线)按 artifact 冻结的 DRL 异步预热，首个决策请求命中 warm、冷编译不落热路径。
+        // M1.4/M2.2：发布(上线)bump 发布代际，供 decision 侧轮询预热（进程内直调已于 M2.2 移除，见 ArtifactService.onPublish）。
         if (target == ActivityStatus.ONLINE) {
-            artifactService.warmOnPublish(row.getActivityId(), row.getVersion());
+            artifactService.onPublish(row.getActivityId(), row.getVersion());
         }
         return new CreateResult(row.getActivityId(), row.getVersion(), row.getActivityStatus(), false, 0);
     }

@@ -11,8 +11,8 @@
 | **F3** 退役旧原生页 | 根 `index.html` → 构建无关的跳转/落地页；删旧三 JS(`app/examples/activity`) + 两旧 CSS(`styles/activity`)；README 同步 | G5：git revert 回滚演练 + `./mvnw test` 不降 | ✅ 完成 |
 | **M1.4** 发布 generation 轮询预热 | `(tenant,bizLine,generation)` 表 + repo；`ArtifactService` 发布 bump；`RuntimeService` 轮询预热 | 104+新测试绿；发布→轮询预热命中 | ✅ 完成 |
 | **M2.1** Maven 物理模块拆分 | `activity-common/console/decision/drools-lab` 多模块（搬 100+ 文件、拆 pom）——计划自陈最大重构风险点 | 测试绿；两 app 独立启动 | ✅ 完成 |
-| **M2.2** decision 物理拆进程 | decision 独立 8082 + 只读账号 + `ddl-auto=validate`；网关切流；移除进程内直调 | kill console 决策仍服务；kill decision 不伤 console | ⬜ 待做 |
-| **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | ⬜ 待做 |
+| **M2.2** decision 物理拆进程 | decision 独立 8082 + 只读账号 + `ddl-auto=validate`；网关切流；移除进程内直调 | kill console 决策仍服务；kill decision 不伤 console | ✅ 完成（整栈 live 验证通过）|
+| **M2.3** 双 prometheus + grafana | 两服务各暴露指标 + grafana 面板 | 面板双服务指标可见 | 🚧 config 就位，待并入 compose 验证 |
 
 ## 关键约束 / 已定决策（执行期补充）
 
@@ -20,6 +20,17 @@
 - F3 无代码/测试依赖旧三 JS/CSS（已 grep 确认），删除低风险。
 
 ## 变更文件流水（每步追加）
+
+### M2.2 ✅（decision 物理拆进程 + 只读账号 + 网关切流 + 移除进程内直调）
+- **改** `ArtifactService`：移除进程内直调 `ruleRuntime.warmAsync`（物理拆分后 console 就地 warm 暖不到 decision 的独立缓存，属残留耦合）+ 去掉 `ruleRuntime` 依赖；`warmOnPublish`→`onPublish`（只 bump 代际）。发布预热唯一路径统一为代际轮询。caller `ActivityMarketingService.changeStatus` 同步改名。
+- **改** `deploy/Dockerfile`：单 build 阶段构建整个 reactor，运行阶段 `ARG MODULE` 选 console/decision jar（compose 用不同 `--build-arg` 出两镜像，共享 build 缓存）；runtime 加 `curl` 供 healthcheck。
+- **重写** `deploy/docker-compose.yml`：两个物理镜像（activity-console/activity-decision，非 M1.3 的单镜像+ACTIVITY_ROLE）；console healthcheck(`/actuator/health` 含 db 探针) + decision `depends_on: console service_healthy`（修 validate 撞 missing table 竞态）；gateway 8095（8090/8091 被占）；`SERVER_PORT=8080` 容器内统一。
+- **新** `deploy/mysql-init/01-decision-readonly-user.sql`：建 `decision_ro` 只读账号（仅 `GRANT SELECT`）；decision 连它 → 物理上不能写/建表（比应用层 validate 更硬）。
+- **验证（整栈 live，docker compose up --build）**：
+  - **kill-gate**：baseline decision=200/console=200；`stop console`→decision=**200**/console=504（决策独立存活）；`stop decision`→decision=502/console=**200**（console 独立存活）✓
+  - **只读账号**：`decision_ro` SELECT 成功；`CREATE TABLE`/`INSERT` 均 `ERROR 1142 command denied` ✓
+  - decision validate 通过（等 console healthy 后）；两 app 各自独立进程/镜像/依赖集。
+- **回滚**：`docker compose down` 回不起栈；代码层 revert 本 commit（onPublish 改回 warmOnPublish+warmAsync）。
 
 ### M2.1 ✅（Maven 四模块物理拆分）
 - **新** 根 `pom.xml` → 聚合 pom（packaging=pom，`<modules>` + dependencyManagement 内部模块版本）
