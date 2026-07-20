@@ -9,7 +9,11 @@
 | 1 | AppLayout/AppShell/SidebarNav/TopBar/IdentityBar + App/ConsoleShell/DemoShell/DemoNav 接线（F1b+F1c 同 commit）+ `<768` 抽屉 | typecheck+vitest 26 绿 + 3 视口截图（768 docked h-overflow=0） | ✅ `bd226fc`/`+fix` |
 | 2 | PageHeader/EmptyState/Button/Badge/Field/Segmented/Section + 4 页套页头 + type-chip-5 + e2e-dev + phone-smoke | typecheck 0 + build 43.9KB + vitest 26 绿 + 编辑页截图 | ✅ |
 
-**待整栈 E2E 门（需起 dev 后端 :8097 + auth :8099 + Casdoor :8000）**：`e2e:dev`（含改动的 type-chip-5）/`e2e:oidc`/`e2e:catalog`/`e2e:tablet`（零改应绿）/`e2e:phone`（新增）。已本地 Playwright 3 视口截图 + testid 逐字保留核对通过；完整 E2E 留待有后端环境时跑。
+**整栈 E2E 门（起 console -Pfrontend :8097 h2 mem + 种子 实跑）✅**：
+- `e2e:dev` **7/7**（含 type-chip-5：切活动类型不丢值；外壳/租户栏/建活动/条件树 keyed-diff）
+- `e2e:tablet`(768 docked) **3/3**（body 溢出 0px，脚本零改保持绿——B1/B2 修复实证）
+- `e2e:phone`(390 抽屉) **4/4**（汉堡→抽屉开合→导航→提交，溢出 0px）
+- **共 14/14 绿，零业务回归。** 未跑 `e2e:oidc`（需 Casdoor :8000）：auth 档登录流未结构性改动，IdentityBar 逐字保留 auth-bar/auth-tenant/logout + actor 留 auth-bar 内（C2），低风险；`e2e:catalog` 未跑（DemoNav/DemoPanel 未动，仅删 external 组，e2e-catalog 直达 URL 不受影响）。
 
 ## Phase 2 变更（在 Phase 1 之后）
 - 新增 `shared/ui/{PageHeader,Section,EmptyState,Button,Badge,Segmented,Field}.vue`（scoped + 仅 token）
