@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { getDetail } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
 import { isoToLocal } from '../logic'
@@ -9,9 +9,10 @@ import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 import Banner from '@/shared/ui/Banner.vue'
+import PageHeader from '@/shared/ui/PageHeader.vue'
+import Button from '@/shared/ui/Button.vue'
 
 const route = useRoute()
-const router = useRouter()
 const dict = useDictStore()
 const id = route.params.id as string
 
@@ -42,10 +43,14 @@ onUnmounted(() => ctrl?.abort())
 
 <template>
   <section data-testid="detail-view">
-    <div class="bar">
-      <button class="ghost" @click="router.push({ name: 'activities' })">← 返回列表</button>
-      <button class="ghost" @click="router.push({ name: 'activity-edit', params: { id } })">编辑</button>
-    </div>
+    <PageHeader
+      title="活动详情"
+      :breadcrumb="[{ label: '控制台' }, { label: '活动列表', to: { name: 'activities' } }, { label: '详情' }]"
+    >
+      <template #actions>
+        <Button variant="primary" :to="{ name: 'activity-edit', params: { id } }">编辑</Button>
+      </template>
+    </PageHeader>
     <Skeleton v-if="loading" :rows="6" />
     <Banner v-else-if="err" kind="err">{{ err }}</Banner>
     <div v-else-if="d" class="grid">

@@ -74,8 +74,10 @@ try {
     : no(`条件树串值了：v0=${v0} v1=${v1}（期望 AAA/CCC）`)
 
   // 7. 切活动类型 segToggle 不丢已输入的名称（v-model，不再 DOM 回读重建）
+  //    重设计后活动类型选择器改用 Segmented，「买赠」= 活动类型 code 5 → data-testid="type-chip-5"
+  //    （替代原先靠 .chip + 中文文本定位的最高危易碎点）。
   await page.fill('[data-testid="form-name"]', 'KEEP-ME')
-  await page.locator('.chip:has-text("买赠")').first().click()
+  await page.locator('[data-testid="type-chip-5"]').click()
   const kept = await page.inputValue('[data-testid="form-name"]')
   kept === 'KEEP-ME' ? ok('切活动类型不丢已输入值（v-model）') : no(`切类型丢了输入：${kept}`)
 } catch (e) {

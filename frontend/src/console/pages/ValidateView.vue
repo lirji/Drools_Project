@@ -7,6 +7,8 @@ import type { SpuDiscountRequest } from '@/shared/types'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
 import Banner from '@/shared/ui/Banner.vue'
+import PageHeader from '@/shared/ui/PageHeader.vue'
+import EmptyState from '@/shared/ui/EmptyState.vue'
 
 const form = ref({ spu: '', user: '1001', district: '', tags: '', amount: '200', qty: '1' })
 const busy = ref(false)
@@ -51,7 +53,9 @@ async function run(kind: 'discount' | 'gifts'): Promise<void> {
 </script>
 
 <template>
-  <section class="grid" data-testid="validate-view">
+  <section data-testid="validate-view">
+    <PageHeader title="优惠验证" subtitle="对已上线活动跑决策，看命中与决策轨迹（为什么命中）" />
+    <div class="grid">
     <div class="col">
       <div class="col-label">商品与用户上下文</div>
       <div class="fg">
@@ -98,7 +102,8 @@ async function run(kind: 'discount' | 'gifts'): Promise<void> {
           <div v-else class="muted">无</div>
         </Card>
       </template>
-      <div v-else class="muted idle">尚未查询</div>
+      <EmptyState v-else icon="⚖" title="尚未查询" hint="左侧填上下文，点「查红包优惠」或「查买赠赠品」" />
+    </div>
     </div>
   </section>
 </template>

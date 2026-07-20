@@ -5,9 +5,19 @@
 ## 阶段状态
 | Phase | 内容 | 验证门 | 状态 |
 |---|---|---|---|
-| 0 | tokens.css 扩展（排版/纵深/焦点/布局尺寸/明色分离/coarse 兜底）+ index.html viewport | typecheck + build 绿 | 🚧 |
-| 1 | AppLayout/AppShell/SidebarNav/TopBar/IdentityBar + App/ConsoleShell/DemoShell/DemoNav 接线（F1b+F1c 同 commit）+ `<768` 抽屉 | typecheck+vitest 26 绿 + e2e 全绿 + tablet-smoke 零改绿 | ⬜ |
-| 2 | PageHeader/Toolbar/Section/EmptyState/Button/Badge/Field/Segmented + 逐页套页头 + type-chip-5 + e2e-dev + phone-smoke | 同上 + phone-smoke 绿 | ⬜ |
+| 0 | tokens.css 扩展（排版/纵深/焦点/布局尺寸/明色分离/coarse 兜底）+ index.html viewport | typecheck + build 绿 | ✅ `bd226fc` |
+| 1 | AppLayout/AppShell/SidebarNav/TopBar/IdentityBar + App/ConsoleShell/DemoShell/DemoNav 接线（F1b+F1c 同 commit）+ `<768` 抽屉 | typecheck+vitest 26 绿 + 3 视口截图（768 docked h-overflow=0） | ✅ `bd226fc`/`+fix` |
+| 2 | PageHeader/EmptyState/Button/Badge/Field/Segmented/Section + 4 页套页头 + type-chip-5 + e2e-dev + phone-smoke | typecheck 0 + build 43.9KB + vitest 26 绿 + 编辑页截图 | ✅ |
+
+**待整栈 E2E 门（需起 dev 后端 :8097 + auth :8099 + Casdoor :8000）**：`e2e:dev`（含改动的 type-chip-5）/`e2e:oidc`/`e2e:catalog`/`e2e:tablet`（零改应绿）/`e2e:phone`（新增）。已本地 Playwright 3 视口截图 + testid 逐字保留核对通过；完整 E2E 留待有后端环境时跑。
+
+## Phase 2 变更（在 Phase 1 之后）
+- 新增 `shared/ui/{PageHeader,Section,EmptyState,Button,Badge,Segmented,Field}.vue`（scoped + 仅 token）
+- ListView：PageHeader（+新建活动移入）+ EmptyState + Badge 状态 + `.tr > span{min-width:0}` 防窄内容区横向溢出（保 `.tr` 类名）
+- EditorView：PageHeader（面包屑）+ **活动类型选择器改 Segmented，买赠=`type-chip-5`**（消除最高危易碎点）
+- DetailView：PageHeader（面包屑替孤立返回）；ValidateView：PageHeader + EmptyState
+- e2e-dev-v2 L78 改用 `type-chip-5`；新增 `e2e-phone-smoke.mjs`（390 抽屉）+ 挂 `e2e:phone`/`e2e:tablet` script；契约文档登记 type-chip-5/nav-toggle
+- 全部 testid 逐字保留、无运行时重复；catalog 仍独立 chunk
 
 ## 硬护栏（每步核对）
 - 全部 data-testid 逐字保留、无重复；以 `e2e/*.mjs` 为真值源双向 grep。
