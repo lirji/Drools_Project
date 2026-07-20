@@ -8,6 +8,10 @@ import { errText } from '@/shared/apiClient'
 import type { ActivityListRow } from '@/shared/types'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 import Banner from '@/shared/ui/Banner.vue'
+import PageHeader from '@/shared/ui/PageHeader.vue'
+import Button from '@/shared/ui/Button.vue'
+import Badge from '@/shared/ui/Badge.vue'
+import EmptyState from '@/shared/ui/EmptyState.vue'
 
 const router = useRouter()
 const dict = useDictStore()
@@ -79,6 +83,12 @@ onUnmounted(() => ctrl?.abort())
 
 <template>
   <section data-testid="list-view">
+    <PageHeader title="活动列表" subtitle="发现、复核、上下线营销活动">
+      <template #actions>
+        <Button variant="primary" :to="{ name: 'activity-new' }">＋ 新建活动</Button>
+      </template>
+    </PageHeader>
+
     <div class="toolbar">
       <input class="search" v-model="q" placeholder="搜索名称/ID/业务线" data-testid="list-search" />
       <select class="fsel" v-model="statusFilter" data-testid="list-status-filter">
@@ -88,15 +98,21 @@ onUnmounted(() => ctrl?.abort())
       </select>
       <span class="spacer" />
       <button class="ghost" data-testid="list-refresh" @click="load">刷新</button>
-      <router-link class="primary" :to="{ name: 'activity-new' }">+ 新建活动</router-link>
     </div>
 
     <Skeleton v-if="loading" :rows="5" />
     <Banner v-else-if="loadErr" kind="err" data-testid="list-error">
       加载失败：{{ loadErr }} <button class="retry" @click="load">重试</button>
     </Banner>
-    <div v-else-if="!filtered.length" class="empty" data-testid="list-empty">
-      {{ rows.length ? '无匹配结果' : '（暂无活动）— 点右上「新建活动」' }}
+    <div v-else-if="!filtered.length" data-testid="list-empty">
+      <EmptyState
+        :title="rows.length ? '无匹配结果' : '暂无活动'"
+        :hint="rows.length ? '换个搜索词或状态筛选试试' : '还没有活动，点右上「新建活动」创建第一个'"
+      >
+        <template v-if="!rows.length" #action>
+          <Button variant="primary" :to="{ name: 'activity-new' }">＋ 新建活动</Button>
+        </template>
+      </EmptyState>
     </div>
     <template v-else>
       <div class="tbl">
@@ -107,7 +123,7 @@ onUnmounted(() => ctrl?.abort())
           <span class="mono id">{{ a.activityId }}</span>
           <span><div>{{ a.activityName }}</div><div class="sub">{{ a.bizLine || '-' }}</div></span>
           <span>{{ typeLabel(a.activityType) }}</span>
-          <span><em class="pill" :class="a.activityStatus === 1 ? 'on' : 'off'">{{ statusLabel(a.activityStatus) }}</em></span>
+          <span><Badge :kind="a.activityStatus === 1 ? 'ok' : 'neutral'">{{ statusLabel(a.activityStatus) }}</Badge></span>
           <span class="mono">v{{ a.version }}</span>
           <span class="acts">
             <button @click="router.push({ name: 'activity-detail', params: { id: a.activityId } })">详情</button>
@@ -131,18 +147,16 @@ onUnmounted(() => ctrl?.abort())
 .search { flex: 1; min-width: 160px; }
 .spacer { flex: 1; }
 .ghost { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); cursor: pointer; }
-.primary { background: var(--accent); color: #fff; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); text-decoration: none; font-size: 13px; }
 .retry { margin-left: var(--sp-2); cursor: pointer; }
-.empty { color: var(--text-faint); padding: var(--sp-5); text-align: center; }
-.tbl { display: flex; flex-direction: column; }
-.tr { display: grid; grid-template-columns: 1.6fr 1.4fr .8fr .8fr .6fr 1.4fr; gap: var(--sp-2); padding: var(--sp-2); border-bottom: 1px solid var(--border); align-items: center; }
-.tr.th { font-size: 12px; color: var(--text-soft); font-weight: 600; }
-.id { font-size: 12px; }
-.sub { font-size: 12px; color: var(--text-faint); }
+.tbl { display: flex; flex-direction: column; background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+.tr { display: grid; grid-template-columns: 1.6fr 1.4fr .8fr .8fr .6fr 1.4fr; gap: var(--sp-2); padding: var(--sp-3); border-bottom: 1px solid var(--border); align-items: center; }
+.tr:last-child { border-bottom: none; }
+.tr:not(.th):hover { background: var(--bg-hover); }
+.tr > span { min-width: 0; }  /* 窄内容区(侧栏占位)下让 grid 列可收缩，防 mono ID 撑出横向溢出 */
+.tr.th { font-size: var(--fs-xs); color: var(--text-soft); font-weight: var(--fw-semibold); background: var(--bg-soft); }
+.id { font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.sub { font-size: var(--fs-xs); color: var(--text-faint); }
 .mono { font-family: var(--mono); }
-.pill { font-style: normal; font-size: 12px; padding: 2px var(--sp-2); border-radius: 999px; }
-.pill.on { background: var(--ok-soft); color: var(--green); }
-.pill.off { background: var(--bg-soft); color: var(--text-soft); }
 .acts { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
 .acts button { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-2); cursor: pointer; font-size: 12px; }
 .pager { display: flex; align-items: center; gap: var(--sp-3); justify-content: center; margin-top: var(--sp-4); }

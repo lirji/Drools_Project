@@ -50,3 +50,15 @@
 | `text=活动已保存` | `save-success` |
 | `.alist, .row-empty` | `list-view`（内含行或空态） |
 | `.tenant-chip:has-text("beta")` | `tenant-chip-beta` |
+
+## 2026-07 前端重设计（frontend-console-redesign）新增/迁移
+
+> 外壳重设计把「顶栏 nav + ConsoleShell 三 tab + 三条身份条」迁入全局 `shared/layout/`（SidebarNav / TopBar / IdentityBar），
+> **所有既有 testid 逐字保留、仅换了所在组件**（迁移后各只出现一次，无重复）。以 `e2e/*.mjs` 脚本为契约真值源。
+
+| 新增 testid | 位置 | 说明 |
+|---|---|---|
+| `type-chip-5` | `EditorView` 活动类型 Segmented（code 5=买赠） | 替代原先 `.chip:has-text("买赠")` 靠 class+中文文本定位的最高危易碎点；`e2e-dev-v2` 已改用它 |
+| `nav-toggle` | `TopBar` 汉堡按钮（<768 出现） | `e2e-phone-smoke` 用它开抽屉 |
+
+平板/手机 smoke：`e2e-tablet-smoke`（768 docked，零改）+ 新增 `e2e-phone-smoke`（390 抽屉），均已挂 npm script（`e2e:tablet` / `e2e:phone`）。

@@ -15,6 +15,8 @@ import DynRowTable from '../DynRowTable.vue'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
 import Banner from '@/shared/ui/Banner.vue'
+import PageHeader from '@/shared/ui/PageHeader.vue'
+import Segmented from '@/shared/ui/Segmented.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -186,6 +188,11 @@ onBeforeRouteLeave(() => {
 
 <template>
   <section data-testid="editor-view" @input="dirty = true">
+    <PageHeader
+      :title="editId ? '编辑活动' : '新建活动'"
+      subtitle="报表式配置 → 白名单条件树 → 保存后上线"
+      :breadcrumb="[{ label: '控制台' }, { label: '活动列表', to: { name: 'activities' } }, { label: editId ? '编辑' : '新建' }]"
+    />
     <Banner v-if="editId" kind="warn">编辑将生成新版本 (version+1)，且活动状态回到「待上线」，保存后需重新上线。</Banner>
 
     <div class="layout">
@@ -196,9 +203,11 @@ onBeforeRouteLeave(() => {
           <label>活动名称 *<input v-model="dr.name" data-testid="form-name" /></label>
           <label>业务线 (bizLine)<input v-model="dr.bizLine" placeholder="如 mall" /></label>
           <label class="full">活动类型
-            <div class="seg">
-              <button v-for="t in enabledTypes" :key="t.code" class="chip" :class="{ 'chip-active': dr.activityType === t.code }" @click="dr.activityType = t.code; dirty = true">{{ t.label }}</button>
-            </div>
+            <Segmented
+              :model-value="dr.activityType"
+              :options="enabledTypes.map((t) => ({ value: t.code, label: t.label, testid: 'type-chip-' + t.code }))"
+              @update:model-value="dr.activityType = ($event as number); dirty = true"
+            />
           </label>
           <label>优先级 (越小越优先)<input v-model="dr.priority" type="number" /></label>
           <label>库存<input v-model="dr.inventory" type="number" /></label>

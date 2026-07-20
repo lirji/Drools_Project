@@ -3,9 +3,8 @@ import { useRoute } from 'vue-router'
 import { GROUPS, DEMOS } from './catalog'
 
 const route = useRoute()
-// external 组（活动营销）→ 链到 /console，其余按组列 demo
+// 只列内容组的 demo；external 组（跳回 /console）已随重设计移除——工作台入口在全局左侧栏。
 const contentGroups = GROUPS.filter((g) => !g.external)
-const externalGroups = GROUPS.filter((g) => g.external)
 function demosOf(gid: string) {
   return DEMOS.filter((d) => d.group === gid)
 }
@@ -34,13 +33,6 @@ function methodClass(m: string): string {
         </router-link>
       </div>
     </template>
-    <div v-for="g in externalGroups" :key="g.id" class="group">
-      <div class="g-title">{{ g.title }}</div>
-      <div class="g-sub">{{ g.subtitle }}</div>
-      <router-link class="item" :to="{ name: 'activities' }" data-testid="demo-nav-activity">
-        <span class="dot post" /><span class="i-title">工作台 · 列表/新建/验证</span>
-      </router-link>
-    </div>
   </nav>
 </template>
 

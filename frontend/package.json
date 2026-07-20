@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "e2e:dev": "node e2e/e2e-dev-v2.mjs",
     "e2e:oidc": "node e2e/e2e-oidc-v2.mjs",
-    "e2e:catalog": "node e2e/e2e-catalog-v2.mjs"
+    "e2e:catalog": "node e2e/e2e-catalog-v2.mjs",
+    "e2e:tablet": "node e2e/e2e-tablet-smoke.mjs",
+    "e2e:phone": "node e2e/e2e-phone-smoke.mjs"
   },
   "dependencies": {
     "pinia": "^2.2.6",
