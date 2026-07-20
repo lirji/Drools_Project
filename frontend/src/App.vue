@@ -12,9 +12,13 @@ import ToastHost from '@/shared/ui/ToastHost.vue'
 const route = useRoute()
 const router = useRouter()
 const ready = ref(false)
-router.isReady().then(() => {
+// 初始导航「落定」后再决定套壳/裸壳（避免冷启动 route.name 未定误闪外壳，评审 I5）。
+// 用「resolve 与 reject 都置 ready」——即便首跳因后端不可达而 guard 抛错，也降级为「渲染外壳 + 页面错误态」，
+// 而非整屏白（对齐旧 App 的行为）。
+const done = (): void => {
   ready.value = true
-})
+}
+router.isReady().then(done, done)
 const isBare = computed(() => route.name === 'login' || route.name === 'callback')
 </script>
 
