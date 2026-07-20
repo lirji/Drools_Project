@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lrj</groupId>
+        <artifactId>drools-demo-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>drools-lab</artifactId>
+    <name>drools-lab</name>
+    <description>
+        Step 1–18 教学库：Hello→DMN 的 18 个 Step（controller/service/config/domain/audit/metrics/guard/
+        persistence(Step10/18 JPA)/web + rules(drl/xls/dmn) + kmodule.xml）。与 activity 世界零耦合（无 activity.* import）。
+        独占重依赖 kie-ci(Step16 KJAR/KieScanner) + kie-dmn(Step17) + decisiontables(Step7) + xml-support(kmodule)——
+        这些**不进** activity-common，故 decision 服务不背这些重量级传递依赖。console 服务依赖本库以提供 Step1-18。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- Step10/18 JPA 持久化 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Step15 可观测性指标 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+
+        <!-- Drools 全家桶（教学覆盖 DRL/决策表/KJAR/DMN 全体系） -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-compiler</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-mvel</artifactId>
+        </dependency>
+        <!-- kmodule.xml 解析（8.x 拆独立模块，不加启动报错，已踩坑） -->
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-xml-support</artifactId>
+        </dependency>
+        <!-- Step7 决策表 -->
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-decisiontables</artifactId>
+        </dependency>
+        <!-- Step16 KieScanner+KJAR（重依赖：拉进 maven-core/aether） -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-ci</artifactId>
+        </dependency>
+        <!-- Step17 DMN（drools-bom 不管 kie-dmn-* 版本，显式锁同版本号） -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-dmn-core</artifactId>
+            <version>${drools.version}</version>
+        </dependency>
+        <!-- Step10 KieSession 持久化 Marshaller -->
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-serialization-protobuf</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

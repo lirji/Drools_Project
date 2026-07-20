@@ -8,6 +8,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**。渐进式 demo，从 Hello World 到"引擎安全护栏 / DMN / 真实业务场景"共 18 个 Step，每步一个 REST 入口。
 
+**仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：本仓库已从「纯 Drools 教学脚手架」长成「多租户活动引擎平台 + 教学 Steps」两部分，物理拆成**聚合父 `pom.xml` + 4 个模块**（`org.drools:drools-bom` 与内部模块版本在父 pom 统一管）。下表 Step 1–18 的代码全在 **drools-lab**，由 **activity-console** 暴露：
+
+| 模块 | 类型 | 职责 |
+| ---- | ---- | ---- |
+| `activity-common` | 库 | 活动引擎共享内核：`activity/{domain,engine,persistence,tenant}` + 读服务（`ActivityQueryService`）。走 `KieHelper` 运行时编译，**不用 kmodule / KieContainer / DMN** |
+| `drools-lab` | 库 | **下表 Step 1–18 教学代码全在这里**（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`，及 Step7 决策表 / Step16 `kie-ci` / Step17 `kie-dmn` 等重依赖） |
+| `activity-console` | 应用 · 8081 | 写平面 + 复用 drools-lab 暴露 Step 1–18 全端点 + 前端 SPA 托管（`/ui/`）+ **唯一 DDL 执行者**；依赖 common + drools-lab |
+| `activity-decision` | 应用 · 8082 | 只读决策热路径 `/decision/v1` + 发布代际轮询预热；**只依赖 common，不依赖 drools-lab**（jar 更轻，甩掉 kie-ci/DMN），M2.2 起连只读 DB 账号（仅 SELECT），DDL 由 console 独占 |
+
+两 app 主类都放根包 `com.lrj.drools`（`ConsoleApplication` / `DecisionApplication`，`scanBasePackages/@EntityScan/@EnableJpaRepositories = com.lrj.drools`）；decision 的 classpath 上没有写平面 bean / `DroolsConfig`，结构上就写不了。本地整套编排见 `deploy/`（nginx 网关 host `:8095` + 两 app + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）。
+
 | Step | 主题 | 入口 |
 | ---- | ---- | ---- |
 | 1 | Hello World（facts / when-then / 多规则） | `POST /hello` |
@@ -41,23 +52,33 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 ## 常用命令
 
+> **M2.1 起是 Maven 多模块**（聚合父 pom + 4 模块：`activity-common` / `drools-lab` / `activity-console`(app,8081) / `activity-decision`(app,8082)）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main）；起服务要 **`-pl` 指定 app 模块**。模块拆分详情见 `docs/plans/prod-arch-refactor-0719-1330/`。
+
 ```bash
-# 默认 MySQL profile，连接走环境变量覆盖（不写死真实值）
+# 起 console 服务（写平面 + Step1-18 + 前端 /ui/，8081）；连接走环境变量覆盖（不写死真实值）
 DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=yourpass \
-  ./mvnw spring-boot:run               # 起 web 服务 (默认 8081)
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file 模式
-./mvnw test                   # 跑测试 (目前只有 spring-boot-starter-test，没业务测试)
-./mvnw clean package          # 打 jar
+  ./mvnw -pl activity-console spring-boot:run
+./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file
+# 起 decision 服务（只读决策热路径 /decision/v1 + 发布代际轮询预热，8082）
+./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
+./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
+
+./mvnw test                   # 跑全 reactor 测试（common 63 + console 40 + decision 8 = 111）
+./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
+# 单模块：./mvnw -pl activity-common test（-am 连带先构建依赖模块）
+
+# 起整套微服务编排（nginx 网关 :8095 + console + decision + MySQL 单库双账号 + Prometheus :9090 + Grafana :3001）
+docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 http://localhost:8095/ui/console
 ```
 
-**端口 8081** 跟主项目 LangChain4j (8080) 错开，方便两个 demo 同时跑。改端口看 `application.yml`。
-**数据库 profile**：`application.yml` 是公共配置 + `spring.profiles.active: mysql` 默认；数据源细节分到 `application-mysql.yml`（带 `createDatabaseIfNotExist=true`，库不存在自动建）/ `application-h2.yml`。连接参数 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` 都能用环境变量覆盖。
+**端口**：console 8081 / decision 8082，跟主项目 LangChain4j (8080) 错开。console 改端口看 `activity-console/src/main/resources/application.yml`，decision 看 `activity-decision/.../application.yml`。
+**数据库 profile**：console / decision **各自带一套** `application.yml`（公共配置 + `spring.profiles.active: mysql` 默认）；数据源细节分到 `application-mysql.yml`（带 `createDatabaseIfNotExist=true`，库不存在自动建）/ `application-h2.yml`。连接参数 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` 都能用环境变量覆盖。
 
 ## 已踩过的坑（务必先读，再动 pom / DRL）
 
-1. **`org.kie:kie-bom` 在 8.44.2 没发布** → `pom.xml` 必须用 `org.drools:drools-bom`
-2. **Drools 8.x 把 XML 解析拆成独立模块** → 必须显式加 `drools-xml-support`，否则启动报 `Unable to build index of kmodule.xml ... add module org.drools:drools-xml-support`
+1. **`org.kie:kie-bom` 在 8.44.2 没发布** → **根聚合 `pom.xml`** 的 `dependencyManagement` 用 `org.drools:drools-bom`（各子模块 import 继承，不各自锁版本）
+2. **Drools 8.x 把 XML 解析拆成独立模块** → 必须显式加 `drools-xml-support`（在 `drools-lab/pom.xml`——只有 drools-lab 走 kmodule；activity-common 走 `KieHelper` 运行时编译不吃这条），否则启动报 `Unable to build index of kmodule.xml ... add module org.drools:drools-xml-support`
 3. **不要随便加 `update($fact)` → 会死循环**：
    - `update()` 重新评估所有依赖该 fact 的规则
    - 本项目 LHS 条件都看 `vipLevel` / `totalAmount` / `yearsSinceRegistration`（不可变字段），修改 `finalAmount` 不会让条件失配 → 规则永远满足，被反复触发，请求挂住
@@ -72,6 +93,8 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 
 ## 代码结构（按职责，不是按目录）
 
+> 下列前 8 条「职责」均属 **drools-lab**（Step 1–18 教学，包 `com.lrj.drools.*`，路径前缀 `drools-lab/src/main/…`）；活动引擎平台代码在 **activity-common**（包 `com.lrj.drools.activity.*`），两 app 只放各自 controller/service 薄壳（见末尾三条）。
+
 - `domain/` — fact 类型。record (`Customer`, `OrderItem`, `Promotion`) 用于不可变事实；mutable POJO (`Order`, `Cart`) 用于会被规则改字段的事实。`Promotion` 是 Step 4 的"标记 fact"，规则自己 insert 出来给 `not` 检测
 - `service/` — KieSession 生命周期。**每次请求 `newKieSession` + `fireAllRules` + `dispose`**，KieSession 线程不安全，不要为了"省"复用。StatelessKieSession（Step 11）/ DMNRuntime（Step 17）线程安全，可当字段缓存复用
 - `config/DroolsConfig.java` — `KieContainer` 注成单例 Bean。**程序化 `KieFileSystem` 构建**（不是 `getKieClasspathContainer()`）：扫 `.drl` 自动加 + `.xls` 标 `ResourceType.DTABLE` + `.dmn` 标 `ResourceType.DMN`，因为 8.44.2 的 ClasspathKieProject 不识别决策表 / DMN
@@ -81,7 +104,15 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 - `persistence/`（Step 10 / 18）— JPA entity + Spring Data repo。大字段用 `@JdbcTypeCode`（不是 `@Lob`，见坑 7）
 - Step 16 `ScannerService` / Step 17 `DmnService` 不走 `DroolsConfig` 那个 classpath KieContainer，各自维护绑 ReleaseId 的 container / `DMNRuntime`
 
+活动引擎平台三模块（`com.lrj.drools.activity.*`）：
+
+- `activity-common · activity/{domain,engine,persistence,tenant} + service/` — 活动引擎共享内核：多租户事实 / 规则编译引擎（`KieHelper` 运行时编译 + 足迹加权 LRU 缓存，**非 kmodule/KieContainer**）/ 活动·规则·条件·幂等·发布代际的 JPA / 租户上下文 + 读服务（`ActivityQueryService`）。console 与 decision 共享；Step 10/18 那套教学 JPA 不在这里、仍在 drools-lab
+- `activity-console · activity/{controller,service}`（应用，8081）— 写平面（`ActivityMarketingService` / `ArtifactService` / `GenerationService` + seeder）+ legacy `/activity-marketing` 读端点；main = `ConsoleApplication`，**唯一 DDL 执行者**
+- `activity-decision · activity/{controller,engine}`（应用，8082）— 只读 `DecisionPlaneController`（`/decision/v1` 热路径）+ 发布代际轮询预热（`GenerationWarmService` / poller）；main = `DecisionApplication`，classpath 上无写平面 bean / 无 drools-lab
+
 ## 扩展点
+
+> 以下均针对 **drools-lab** 教学模块（`rules/` / `kmodule.xml` / `domain/` 都在 `drools-lab/src/main/…`）。活动引擎那侧「加规则」是「规则即数据」入库 + `KieHelper` 运行时编译（见 `activity-common`），不改 classpath 资源。
 
 - **加新规则**：在 `rules/<kbase 名>/` 下加 `.drl`，重启生效
 - **加新 KieBase**：编辑 `kmodule.xml` 加 `<kbase>` + `<ksession>`，service 里换 `newKieSession("新名字")`
@@ -99,3 +130,5 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 - `docs/drools-vs-aviator.md` — Drools 与 Aviator（轻量表达式引擎）的选型对照
 - `docs/drools-use-cases.md` — Drools 应用场景与定位（风控/保险/信贷/计费，以及什么时候不该上 Drools）
 - `examples/aviator/AviatorDemo.java` — Aviator 独立学习示例（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
+- `deploy/` — 微服务本地编排：`docker-compose.yml`（console 8081 / decision 8082 / nginx 网关 host `:8095` / MySQL 单库双账号 / Prometheus `:9090` / Grafana `:3001`）+ `nginx.conf`（API 网关原位替身）+ `mysql-init/`（decision 只读账号）+ `Dockerfile`
+- `docs/plans/prod-arch-refactor-0719-1330/` — 本次「微服务化 + 前后端分离」重构的评估 / 决策 / 计划 / 评审归档（模块拆分细节）

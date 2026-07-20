@@ -21,12 +21,18 @@
 
 ## 跑起来
 
+> **M2.1 起是 Maven 四模块**（`activity-common` 共享库：domain/engine/persistence/tenant + 只读查询服务 / `drools-lab` Step1–18 教学 / `activity-console` 写平面 app:8081 / `activity-decision` 只读决策 app:8082）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main），起服务要 `-pl` 指定 app 模块。拆分详情见下节「决策平面拆分」。
+
 ```bash
-# 起服务（默认 8081），H2 profile 免装 MySQL
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
+# 控制台写平面（活动创建/编辑/上下线 + 前端 /ui/ + Step1–18），默认 8081；H2 profile 免装 MySQL
+./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
+# 只读决策热路径（/decision/v1/* + 发布代际轮询预热），默认 8082
+./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
+# 顺带把 Vue SPA 构建拷进 static/ui/（否则前端用 frontend/ 的 Vite dev server :5173）
+./mvnw -pl activity-console -Pfrontend spring-boot:run
 ```
 
-浏览器打开 `http://localhost:8081` → 侧栏「活动营销」组 →「工作台」，即可用报表式表单创建活动、拖出资格条件树、上线、在「优惠验证」页查命中。
+浏览器打开 `http://localhost:8081/ui/`（根 `/` 是构建无关落地页，跳 `/ui/`；旧原生演示台已于 F3 退役）→ 活动配置台 `/ui/console/activities`，即可用报表式表单创建活动、拖出资格条件树、上线，在「优惠验证」页 `/ui/console/validate` 查命中。
 
 开关：
 - `activity.marketing.rule-engine.enabled`（默认 true）：false 时优惠查询走旧 Java 逻辑（取最大红包），用于灰度对照/回滚。
@@ -59,6 +65,33 @@ curl -X POST localhost:8081/activity-marketing/create -H 'Content-Type: applicat
 }'
 # → {"activityId":"ACT...","version":1,"status":0,"idempotentHit":false,"autoBoundCount":0}
 # 上线后 POST /spu-discount {"spuIdList":[1001],"orderAmount":200} → hit=true, amount=50
+```
+
+## 决策平面拆分（console / decision）
+
+M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用 `activity-common`（domain/engine/persistence/tenant + 只读查询服务 `ActivityQueryService`）：
+
+| 应用 | 端口 | 承载 | Maven 依赖 |
+| ---- | ---- | ---- | ---- |
+| `activity-console` | 8081 | 写平面（create/status/幂等/四眼）+ Step1–18 教学 + 前端 `/ui/` | `activity-common` + `drools-lab`（全量，含 kie-ci/dmn/decisiontables） |
+| `activity-decision` | 8082 | 只读决策热路径 `/decision/v1/*` + 发布代际轮询预热 | 仅 `activity-common`（甩掉 `drools-lab` 带来的 kie-ci/dmn/decisiontables 与全部写面依赖，更轻） |
+
+**`/decision/v1` 是决策热路径将来物理拆出去的稳定契约**——`DecisionPlaneController` 复用与控制台**同一份** `ActivityQueryService`（与 `/activity-marketing/spu-discount` 走同一代码，行为一致）；旧 `/activity-marketing/*` 路径保留、不弃用，前端与旧脚本不受影响。
+
+| 决策平面路径（decision, 8082） | 等价的控制台路径（console, 8081） |
+| ---- | ---- |
+| POST `/decision/v1/spu-discount` | POST `/activity-marketing/spu-discount` |
+| POST `/decision/v1/gifts` | POST `/activity-marketing/gifts` |
+
+- **角色门控**（`RoleGateFilter`，靠 `activity.role`，仅显式设置该属性时才装配）：`decision` 只放行 `/decision/v1/**` + `/actuator/**`；`console` 屏蔽 `/decision/v1/**`、放行写面 + Step1–18 + SPA；`all`（默认，本地/测试）全开。这是**部署角色边界**而非安全边界（同一份代码），真隔离仍靠 Casdoor 验签 + `@TenantId`。
+- **发布代际轮询预热（M1.4）**：console 上线活动时 bump `(tenant,bizLine)` 代际；decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact——物理拆分后 decision 进程无需 console 进程内直调，也能「发布即 warm」。
+- **网关**（`deploy/docker-compose.yml`：mysql + console + decision + nginx）：nginx 把 `/api/decision/*`→decision、`/api/console/*`→console、`/ui/*` 及其余→console；host 端口 **8095**（`http://localhost:8095/ui/console`）。`docker compose stop console` 后 `/api/decision/*` 仍可决策，可当场演示拆分价值。
+
+```bash
+# 直连 decision 服务的决策别名（等价 console 的 /activity-marketing/spu-discount）
+curl -X POST localhost:8082/decision/v1/spu-discount -H 'X-Tenant-Id: acme' \
+  -H 'Content-Type: application/json' -d '{"spuIdList":[1001],"orderAmount":200}'
+# 经网关：POST localhost:8095/api/decision/spu-discount（同 body）
 ```
 
 ## 多租户隔离（P0-4，Track B）

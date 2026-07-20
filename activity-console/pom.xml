@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lrj</groupId>
+        <artifactId>drools-demo-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>activity-console</artifactId>
+    <name>activity-console</name>
+    <description>
+        控制台服务（console-svc，8081，可启动）：写平面（活动创建/编辑/上下线、artifact 冻结/预热、发布代际 bump）
+        + Step 1–18 教学端点 + legacy /activity-marketing 读端点 + 前端 SPA 托管（/ui/）。唯一 DDL 执行者。
+        依赖 activity-common(共享) + drools-lab(Step1-18)。前端产物由 -Pfrontend 构建拷入 static/ui/。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.lrj</groupId>
+            <artifactId>activity-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.lrj</groupId>
+            <artifactId>drools-lab</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- 前后端分离：Vue3 前端在 ../frontend。默认关闭（保后端迭代速度）；-Pfrontend 触发 npm build 并把
+             dist/ 拷进 console 的 static/ui/（SPA 挂 /ui/）。frontend-maven-plugin 本地下载 node，可复现。 -->
+        <profile>
+            <id>frontend</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.eirslett</groupId>
+                        <artifactId>frontend-maven-plugin</artifactId>
+                        <version>1.15.1</version>
+                        <configuration>
+                            <workingDirectory>../frontend</workingDirectory>
+                            <nodeVersion>v22.12.0</nodeVersion>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>install-node-and-npm</id>
+                                <goals><goal>install-node-and-npm</goal></goals>
+                                <phase>generate-resources</phase>
+                            </execution>
+                            <execution>
+                                <id>npm-install</id>
+                                <goals><goal>npm</goal></goals>
+                                <phase>generate-resources</phase>
+                                <configuration><arguments>install</arguments></configuration>
+                            </execution>
+                            <execution>
+                                <id>npm-build</id>
+                                <goals><goal>npm</goal></goals>
+                                <phase>generate-resources</phase>
+                                <configuration><arguments>run build</arguments></configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-resources-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>copy-frontend-dist</id>
+                                <goals><goal>copy-resources</goal></goals>
+                                <phase>process-resources</phase>
+                                <configuration>
+                                    <outputDirectory>${project.build.outputDirectory}/static/ui</outputDirectory>
+                                    <resources>
+                                        <resource>
+                                            <directory>../frontend/dist</directory>
+                                            <filtering>false</filtering>
+                                        </resource>
+                                    </resources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

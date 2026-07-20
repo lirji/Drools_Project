@@ -1,0 +1,70 @@
+server:
+  port: 8082  # decision-svc；与 console(8081) 错开，compose 网关 /api/decision → 此端口
+
+spring:
+  application:
+    name: drools-decision   # 独立指标 application tag，Prometheus/grafana 区分 console vs decision
+
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:mysql}
+
+  jpa:
+    hibernate:
+      # M2.1：dev 标准 profile 用 update 让 decision 可独立启动建表。
+      # M2.2 起：decision 连**只读账号** + 改 validate（不碰 DDL，DDL 由 console 独占）。
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+
+# 决策耗时/命中率指标；两服务各自暴露，M2.3 grafana 抓取双实例。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    tags:
+      application: drools-decision
+
+# 决策平面只需：规则引擎（读热路径）+ 发布代际轮询预热 + 多租户/安全。
+# 不含 four-eyes / seed-demo-data（那是 console 写平面的 bean 读的，decision classpath 上没有）。
+activity:
+  marketing:
+    rule-engine:
+      enabled: true
+      cache-max-weight-kb: 262144
+      max-fires-base: 2000
+      max-fires-per-rule: 200
+    # decision 是轮询预热的执行方——启用调度。console 侧可关（console 只 bump 不 poll）。
+    generation-poll:
+      enabled: true
+      interval-ms: 3000
+  # 多租户 + 安全（common 的租户/安全 bean 读此；与 console 一致以便同一 token 两服务都能验签）。
+  tenant:
+    dev-default-enabled: true
+    dev-default: __dev__
+    auth:
+      enabled: false
+      issuer: http://localhost:8000
+      jwk-set-uri: http://localhost:8000/.well-known/jwks
+      client-tenant-map: {}
+      audience-templates:
+        - activity-{tenant}-cid
+      redirect-uri: http://localhost:8099/index.html
+      web-client-map:
+        acme: activity-acme-web-cid
+        beta: activity-beta-web-cid
+      console-write-authority: ""
+      warmup-enabled: true
+      jwks-fetch-timeout-ms: 2000
+      jwks-cache-ttl-ms: 300000
+      jwks-outage-ttl-ms: 3600000
+    quota:
+      enabled: false
+      per-tenant-qps: 50
+      burst: 50
+
+logging:
+  level:
+    com.lrj.drools: DEBUG
+    org.drools: INFO

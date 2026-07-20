@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lrj</groupId>
+        <artifactId>drools-demo-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>activity-common</artifactId>
+    <name>activity-common</name>
+    <description>
+        活动引擎共享库：domain / engine（KieHelper 运行时编译，非 classpath KieContainer）/ persistence /
+        tenant（多租户 + 安全 + 限流 + 决策别名角色门控）+ 读服务 ActivityQueryService / ActivityPoolMatchService。
+        console 与 decision 都依赖它。**刻意只引 KieHelper 所需的 drools 核心**（core/compiler/mvel/kie-api），
+        不引 kie-ci / kie-dmn / decisiontables / xml-support（那些是 Step16/17 教学专属，落 drools-lab）——
+        让 decision 依赖集甩掉重量级 maven-core/aether/DMN。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- P0-3 决策 API 接 Casdoor：OIDC resource-server 本地 JWKS 验签 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+        </dependency>
+        <!-- 活动持久化（artifact/规则/条件/幂等/代际…）；Step10/18 的 JPA 在 drools-lab -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- 决策耗时/命中率指标（两 app 各自暴露 /actuator/prometheus，M2.3 grafana 抓取） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- P1-6 DRL→KieBase 有界缓存（足迹加权 LRU） -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
+        <!-- Drools：仅 KieHelper 运行时编译所需（activity 不走 kmodule / 不用 KieContainer / 无 DMN） -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-compiler</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-mvel</artifactId>
+        </dependency>
+
+        <!-- 两个 DB 驱动都留，靠 spring.profiles.active 切；版本由 spring-boot BOM 管 -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

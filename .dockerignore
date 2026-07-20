@@ -1,0 +1,16 @@
+# 精简 Docker 构建上下文 + 让前端在容器内全新构建（排除宿主 node_modules，避免 macOS/linux 二进制冲突）
+**/target
+.git
+.idea
+**/node_modules
+frontend/node
+frontend/dist
+**/data
+data
+*.log
+scratchpad
+# 这些不参与 maven 构建；排除后改它们不会使 `COPY . .` 层缓存失效（避免无谓重跑 maven）
+deploy
+docs
+*.md
+.dockerignore

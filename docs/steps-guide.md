@@ -2,6 +2,8 @@
 
 本文是 CLAUDE.md 的详细配套：每个 Step 的完整说明、REST 接口清单、以及各 Step 特有的 DRL 语义 / 实现注意点。CLAUDE.md 只保留概览与通用规范，具体到某个 Step 时来这里查。
 
+> **代码位置（2026-07-20 四模块重构后）**：本文涉及的 Step 1–18 全部实现（controller / service / domain / `rules/` / `DroolsConfig` / `META-INF/kmodule.xml` 等）已从仓库根 `src/` 迁入 **`drools-lab`** 模块（落在 `drools-lab/src/main/...`），本文中形如 `service/HotReloadService.java`、`rules/hello/hello.drl`、`audit/RuleAuditListener.java`、`META-INF/kmodule.xml` 的相对路径均相对该模块根。`drools-lab` 是**库模块（不含 Spring Boot 启动类）**：Step 1–18 的 REST 入口由依赖它的 **`activity-console`** 应用对外提供（`ConsoleApplication`，端口 **8081**，`@SpringBootApplication(scanBasePackages="com.lrj.drools")` 把 lab 里的 controller 扫进来）。因此根 `./mvnw spring-boot:run` 已失效，改用 `./mvnw -pl activity-console spring-boot:run` 起服务后再打本文各接口（8082 的 `activity-decision` 只暴露活动引擎只读决策 `/decision/v1`，不含 Step 1–18）。
+
 ## 各 Step 详解
 
 三阶段渐进式 demo，从 Hello World 到"引擎安全护栏 / DMN / 真实业务场景"逐步加深：
@@ -12,7 +14,7 @@
 - **Step 4 / 风控推荐**：`POST /risk/evaluate` → `rules/risk/risk-rules.drl`，演示 `not` / `exists` 两种否定/存在判断，并用 "insert 标记 fact + not 检测" 替代 `no-loop` 做自终止
 - **Step 5 / agenda-group 流水线**：`POST /pipeline/run` → `rules/pipeline/pipeline-rules.drl`，演示 `agenda-group` (validate→discount→risk→notify 四阶段) + `setFocus` 栈式控制 + `auto-focus` + `lock-on-active`
 - **Step 6 / 规则可观测性**：`POST /pipeline/audit` → `audit/RuleAuditListener.java`，挂 `AgendaEventListener` + `RuleRuntimeEventListener` 把规则触发轨迹打成结构化 `AuditEvent[]` 一起返回，能直接"看见" agenda 栈压弹和 auto-focus 时序
-- **Step 7 / 决策表**：`POST /decision/calculate` → `rules/decision/vip-discount.xls`，业务方用 Excel/Numbers 直接维护 VIP 折扣档位；XLS 由 `src/test/java/.../VipDiscountSheetGenerator` 一键生成
+- **Step 7 / 决策表**：`POST /decision/calculate` → `rules/decision/vip-discount.xls`，业务方用 Excel/Numbers 直接维护 VIP 折扣档位；XLS 由 `drools-lab/src/test/java/.../VipDiscountSheetGenerator` 一键生成
 - **Step 8 / CEP 滑窗风控**：`POST /fraud/check` → `rules/fraud/fraud-rules.drl`，演示 `@role(event)` / `@timestamp` / `over window:time(5m)` / pseudo clock 推进事件时间线
 - **Step 9 / 规则热加载**：`POST /hot/upsert` + `POST /hot/run/{name}` → `service/HotReloadService.java`，把 DRL 字符串运行时编译成 KieBase 缓存进 `ConcurrentHashMap`，同名 upsert 替换；编译错误返回 400 + 行号
 - **Step 10 / KieSession 持久化**：`POST /loyalty/start` + `POST /loyalty/{id}/purchase` + `GET /loyalty/{id}` → `service/LoyaltyService.java`，用 `Marshaller` 把整个 working memory + agenda state 序列化成 byte[]，经 Spring Data JPA 存到 H2 file (`./data/drools-demo.mv.db`)。同一 sessionId 跨请求、跨重启接着上次状态继续累积积分 + 链式升级 (BRONZE → SILVER → GOLD)

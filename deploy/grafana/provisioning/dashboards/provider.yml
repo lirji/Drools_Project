@@ -1,0 +1,12 @@
+# M2.3 · Grafana 自动装配 dashboards 目录下的面板 JSON（免手动导入）。
+apiVersion: 1
+providers:
+  - name: activity
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

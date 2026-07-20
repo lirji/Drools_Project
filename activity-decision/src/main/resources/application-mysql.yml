@@ -1,0 +1,9 @@
+# decision MySQL 数据源（默认 profile）。**与 console 同一个库**（DB_NAME 默认 drools_demo）——
+# 「单库双账号不拆库」：console 读写 + 独占 DDL，decision 只读。M2.1 先用同一组 DB_* 默认值让它能跑；
+# M2.2 起 decision 换**只读账号**（DECISION_DB_USERNAME/PASSWORD，仅 SELECT 授权）+ 上面 application.yml 的 ddl-auto=validate。
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:drools_demo}?useSSL=false&allowPublicKeyRetrieval=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: ${DECISION_DB_USERNAME:${DB_USERNAME:root}}
+    password: ${DECISION_DB_PASSWORD:${DB_PASSWORD:root}}
+    driver-class-name: com.mysql.cj.jdbc.Driver

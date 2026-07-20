@@ -11,40 +11,61 @@ Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 
 - Java 21 / Spring Boot 3.3.5
 - Drools 8.44.2.Final (kie-api, drools-core/compiler/mvel/decisiontables)
+- **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–18 + 前端；`activity-decision`(8082) 只读决策热路径。本地可用 `deploy/` 下的 docker-compose 起 nginx 网关一把托管。
 
 ## 项目结构
 
+自 2026-07 起是 **Maven 四模块**（聚合父 pom `pom.xml`，本身无 `main`，**不能**直接 `spring-boot:run`）：
+
 ```
-src/main/
-├── java/com/lrj/drools/
-│   ├── DroolsDemoApplication.java            启动类
-│   ├── config/DroolsConfig.java              KieContainer Bean (扫 classpath 上的 DRL)
-│   ├── domain/
-│   │   ├── Customer.java                     用户事实 (record)
-│   │   ├── OrderItem.java                    订单行项 (record)
-│   │   └── Order.java                        订单事实 (mutable，被规则改 finalAmount)
-│   ├── service/DiscountService.java          KieSession 生命周期 (insert → fireAllRules → dispose)
-│   └── controller/DiscountController.java    REST: /hello, /discount/calculate
-└── resources/
-    ├── application.yml                       端口 8081 (跟 langchain4j 8080 错开)
-    ├── META-INF/kmodule.xml                  声明两个 kbase: helloKBase + discountKBase
-    └── rules/
-        ├── hello/hello.drl                   Step 1 入门规则
-        └── discount/order-discount.drl       Step 2 订单折扣 (VIP/满减/老用户/大单提示)
+drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
+├── activity-common/             共享库：domain / engine（规则编译·翻译） / persistence（JPA） /
+│                                tenant（多租户·安全） + 只读查询与选品服务。两个 app 都依赖它
+├── drools-lab/                  Step 1–18 教学库（重 drools 依赖：kie-ci / kie-dmn / decisiontables）
+│   └── src/main/
+│       ├── java/com/lrj/drools/  config/DroolsConfig（KieContainer Bean）+ domain / service /
+│       │                         controller（/hello、/discount/calculate … 各 Step 端点）
+│       └── resources/
+│           ├── META-INF/kmodule.xml   声明各 kbase（helloKBase / discountKBase / fraudKBase …）
+│           └── rules/                 各 Step 的 .drl / .xls（决策表） / .dmn
+├── activity-console/   【可执行 app · 8081】写平面 + Step 1–18 端点 + 前端 SPA(/ui/) + 唯一 DDL 执行者
+│   └── src/main/                依赖 activity-common + drools-lab
+│       ├── java/com/lrj/drools/ConsoleApplication.java   启动类
+│       └── resources/
+│           ├── application.yml / -mysql.yml / -h2.yml    端口 8081；H2 落 ./data/drools-demo.mv.db
+│           └── static/index.html                         落地页（指向 /ui/）+ 构建期注入的 SPA 产物
+└── activity-decision/  【可执行 app · 8082】只读决策热路径 /decision/v1/*（spu-discount / gifts）+
+    └── src/main/                发布代际轮询预热。仅依赖 activity-common（甩掉 drools-lab 的重依赖，jar 更轻）
+        ├── java/com/lrj/drools/DecisionApplication.java  启动类
+        └── resources/
+            ├── application.yml / -mysql.yml / -h2.yml    端口 8082；H2 落 ./data/decision.mv.db
+            └── （默认 mysql profile 单跑仍是 ddl-auto=update + root；只有 docker-compose 部署叠**只读账号** decision_ro + validate，物理上不建表/不写库）
+
+frontend/                        Vue3 + Vite + TS 的 SPA 源码（构建产物拷进 console 的 static/ui/）
+deploy/                          docker-compose（mysql + console + decision + nginx 网关 + Prometheus + Grafana）
 ```
 
 ## 运行
 
+> **多模块后根 `./mvnw spring-boot:run` 已失效**（父是聚合 pom，没有 main）。起服务要用 `-pl` 指定 app 模块：`activity-console`（写平面 + Step 1–18 + 前端，8081）或 `activity-decision`（只读决策，8082）。两个 app 可分别或并行起。
+
 ```bash
 cd /Users/liruijun/personal/LLM/drools-demo
 
-# 默认连 MySQL (mysql profile)。连接参数用环境变量覆盖, 不写死:
+# 起 console (Step 1–18 + /ui/, 8081)。默认连 MySQL (mysql profile), 连接参数走环境变量, 不写死:
 DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo \
 DB_USERNAME=root DB_PASSWORD=yourpass \
-  ./mvnw spring-boot:run
+  ./mvnw -pl activity-console spring-boot:run
 
-# 没装 MySQL? 切 H2 file 跑 (状态落 ./data/, 不依赖外部库):
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
+# 没装 MySQL? 切 H2 file 跑 (状态落 ./data/drools-demo.mv.db, 不依赖外部库):
+./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
+
+# 起 decision (只读决策热路径 /decision/v1/*, 8082)。可单独跑, 也可与 console 并行:
+./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
+
+# 一次编译/测试整个 reactor (4 模块):
+./mvnw clean package        # 两个 app 各出可执行 jar
+./mvnw test                 # 跑全 reactor 测试
 ```
 
 > **数据库**: Step 10 (会话持久化) 和 Step 18 (活动规则) 都用 JPA 落库。默认 profile 是 **MySQL**;
@@ -54,23 +75,36 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 
 ## 🖥 前端演示台（在浏览器里看规则效果）
 
-起服务后，浏览器打开 **<http://localhost:8081/>** 即可。一个内置的静态演示台，把
-**全部 Step 1–18 的 REST 端点**都做成了可点选、可编辑、可运行的面板——不用记 `curl`，
-直接在页面上选示例、改 JSON、点「运行」，右侧看**结构化摘要**（折扣账本、推荐、审计时间线、
-TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+前端已做**前后端分离**：一个 Vue3 + Vite + TypeScript 的 SPA（源码在 `frontend/`），挂在后端
+**<http://localhost:8081/ui/>** 下。它把 **全部 Step 1–18 的 REST 端点** + **活动引擎控制台** 做成可点选、
+可编辑、可运行的面板——不用记 `curl`，直接选示例、改 JSON、点「运行」，看**结构化摘要**（折扣账本、
+推荐、审计时间线、TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+
+根路径 **<http://localhost:8081/>** 现在是一个静态落地页，指向 `/ui/`（旧原生演示台已于 F3 退役）。
+
+前端产物默认**不随后端构建**（保后端迭代速度）。三种起法任选：
 
 ```bash
-# 想快速体验、又不想装 MySQL，推荐 H2 profile 起：
-./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
-# 然后浏览器打开 http://localhost:8081/
+# ① 前端热更新开发（推荐日常）：Vite dev server :5173，API 反代到 8081
+cd frontend && npm install && npm run dev
+# 浏览器打开 http://localhost:5173/
+
+# ② 一条命令全栈起：console 的 -Pfrontend 触发 npm build 并把 dist 拷进 static/ui/
+./mvnw -pl activity-console -Pfrontend spring-boot:run -Dspring-boot.run.profiles=h2
+# 浏览器打开 http://localhost:8081/ui/
+
+# ③ 生产样式：docker-compose（mysql + console + decision + nginx 网关 + Prometheus + Grafana）
+docker compose -f deploy/docker-compose.yml up --build   # 网关 http://localhost:8095/ui/console
+# 网关按前缀分流：/api/decision/* → decision 服务、/api/console/* 与 /ui/、Step1-18 → console。
+# 附带 Prometheus http://localhost:9090、Grafana http://localhost:3001（两服务指标对比看板）。
 ```
 
-- **零后端改动**：纯静态资源（`src/main/resources/static/`），跟后端**同源**托管，无需 CORS、无需 Node/构建工具。
-- **左侧按 Step 分组导航**，覆盖后端每一个功能端点 + `/actuator/prometheus`。
-- **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、
-  推荐、审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
+- **同源托管、零后端 CORS**：dev 靠 Vite proxy、生产靠 nginx 网关同源（决策 D3）。
+- **history 路由**：深链 / 刷新 `/ui/console/...` 由 `SpaForwardController` forward 回 `index.html`，交给 vue-router。
+- **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、推荐、
+  审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
 - **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
-- 右上角可切换**明/暗主题**。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+- **明/暗主题** + 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
 
 > 提示：演示台是学习/本地用途，热加载（`/hot/*`、`/scanner/*`）能运行时编译任意 DRL，**不要把它裸露到公网**。
 
@@ -454,7 +488,7 @@ curl -X POST 'http://localhost:8081/loyalty/alice/purchase' -H 'Content-Type: ap
 curl 'http://localhost:8081/loyalty/alice'
 
 # 6. 杀掉 app, 重启, 再 peek → 状态还在 (跨重启验证)
-#    ./mvnw spring-boot:run
+#    ./mvnw -pl activity-console spring-boot:run
 curl 'http://localhost:8081/loyalty/alice'
 
 # 7. 未知 session

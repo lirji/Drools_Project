@@ -1,0 +1,12 @@
+# decision H2 file 数据源（dev 备用 profile：-Dspring-boot.run.profiles=h2）。
+# 独立文件 ./data/decision（避免与 console 的 ./data/drools-demo 抢文件锁）——dev 下 decision 单机自建空表可启动。
+# 真正的「单库双账号」共享数据是 MySQL 形态（见 application-mysql.yml + compose）；h2 仅用于结构性单机启动验证。
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/decision;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  h2:
+    console:
+      enabled: true
