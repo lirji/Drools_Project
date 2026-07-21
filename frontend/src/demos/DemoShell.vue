@@ -3,8 +3,8 @@
  * 演示台区外壳：18-Step 目录（DemoNav，次级导航，懒加载不进主包）+ 面板。
  * 重设计后本壳位于全局 AppShell 内容区内，去掉自有 max-width/居中（由 AppShell 内容区统一框住）。
  */
-import { RouterView } from 'vue-router'
 import DemoNav from './DemoNav.vue'
+import PageTransition from '@/shared/ui/PageTransition.vue'
 </script>
 
 <template>
@@ -13,7 +13,7 @@ import DemoNav from './DemoNav.vue'
       <DemoNav />
     </aside>
     <section class="demos-panel">
-      <RouterView />
+      <PageTransition />
     </section>
   </div>
 </template>

@@ -4,16 +4,23 @@
 > 组件重构可改 class/DOM，但**不得改这些 testid**（改了要同步改 E2E 脚本并在此登记）。
 
 ## 全局 / 外壳
+> 位置栏已更新到 2026-07 UX 重设计后现状（外壳三件套在 `shared/layout/`）。真值源仍是 `e2e/*.mjs` 脚本。
+
 | testid | 位置 | 用途 |
 |---|---|---|
-| `theme-btn` | App.vue | 主题切换 |
-| `tenant-bar` | ConsoleShell（dev 档） | dev 档租户栏容器 |
-| `tenant-input` | ConsoleShell | X-Tenant-Id 输入 |
-| `tenant-chip-{acme\|beta\|__dev__}` | ConsoleShell | 快捷切租户 |
-| `auth-bar` | ConsoleShell（auth 档） | 登录身份条容器 |
-| `auth-tenant` | ConsoleShell | 显示 token aud 派生租户 |
-| `logout` | ConsoleShell | 登出 |
-| `tab-list` / `tab-new` / `tab-validate` | ConsoleShell | 三个子标签 |
+| `theme-btn` | TopBar | 主题切换（迁自 App.vue） |
+| `nav-toggle` | TopBar | 汉堡按钮（<768 出现），phone-smoke 用它开抽屉 |
+| `nav-home` / `nav-console` / `nav-demos` | SidebarNav | 概览 / 控制台 / 演示台 一级入口（无 e2e 点击，仅登记） |
+| `tab-list` / `tab-new` / `tab-validate` | SidebarNav | 控制台三个子导航项 |
+| `tenant-bar` | IdentityBar（dev 档） | dev 档租户栏容器 |
+| `tenant-input` | IdentityBar | X-Tenant-Id 输入 |
+| `tenant-chip-{acme\|beta\|__dev__}` | IdentityBar | 快捷切租户 |
+| `actor-bar` / `actor-input` | IdentityBar（dev 档） | 四眼操作者 X-Actor |
+| `auth-bar` | IdentityBar（auth 档） | 登录身份条容器 |
+| `auth-tenant` | IdentityBar | 显示 token aud 派生租户 |
+| `logout` | IdentityBar | 登出 |
+| `toast-host` | ToastHost（App.vue 全局挂载） | toast 容器 |
+| `confirm-dialog` / `confirm-ok` / `confirm-cancel` | ConfirmDialog（App.vue 全局挂载） | 二次确认弹窗（UX 重设计新增，无 e2e 点击，仅登记） |
 
 ## 登录 / 回调
 | testid | 位置 | 用途 |
@@ -62,3 +69,18 @@
 | `nav-toggle` | `TopBar` 汉堡按钮（<768 出现） | `e2e-phone-smoke` 用它开抽屉 |
 
 平板/手机 smoke：`e2e-tablet-smoke`（768 docked，零改）+ 新增 `e2e-phone-smoke`（390 抽屉），均已挂 npm script（`e2e:tablet` / `e2e:phone`）。
+
+## 2026-07 UX 重设计（frontend-ux-redesign）新增（均只增不改，无 e2e 点击依赖，登记以备后用）
+
+| 新增 testid | 位置 | 说明 |
+|---|---|---|
+| `home-view` | `HomeView`（`/home` 概览首页） | 首页容器；`home-error` 加载失败 Banner |
+| `home-go-list` / `home-go-new` / `home-go-demos` | HomeView 快捷入口 | 概览页到各区的快捷按钮 |
+| `home-recent-{id}` | HomeView 最近活动行 | 点击进活动详情 |
+| `nav-home` | SidebarNav 概览入口 | 见上「全局/外壳」 |
+| `confirm-dialog` / `confirm-ok` / `confirm-cancel` | ConfirmDialog | 上下线 / 离开守卫二次确认 |
+| `demo-home-{id}` | DemoHome 目录页 demo 卡片项 | 点击进 demo 面板（与侧栏 `demo-nav-{id}` 并存） |
+
+**图标系统**：全站 emoji/几何字形已统一为内联 SVG `Icon.vue`（`shared/ui/Icon.vue`）。装饰性图标 `aria-hidden`，语义图标透传 `aria-label`。
+**路由过渡**：`PageTransition.vue` 落 AppShell / ConsoleShell / DemoShell 三出口；被全局 `prefers-reduced-motion` 兜底禁用。
+**首页路由**：`/` 与 catch-all 改指 `/home`（无 e2e 走裸根路径，零冲突）；`/console` 仍 redirect `/console/activities` 不变。

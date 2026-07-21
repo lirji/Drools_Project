@@ -10,6 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppLayout from './AppLayout.vue'
 import SidebarNav from './SidebarNav.vue'
 import TopBar from './TopBar.vue'
+import PageTransition from '@/shared/ui/PageTransition.vue'
 import { useAuthStore } from '@/auth/useAuthStore'
 import { lockScroll, unlockScroll } from '@/shared/useScrollLock'
 
@@ -58,6 +59,6 @@ onUnmounted(() => {
     <template #sidebar>
       <SidebarNav @navigate="closeDrawer" />
     </template>
-    <router-view />
+    <PageTransition />
   </AppLayout>
 </template>
