@@ -18,6 +18,10 @@ const results = []
 const ok = (m) => { results.push(['PASS', m]); }
 const no = (m) => { results.push(['FAIL', m]); console.log('  ❌', m) }
 
+// 下限守卫（评审 M7）：catalog.ts 若被重排/改格式导致抽取为空，ran===ids.length 会是 0===0 静默假绿。
+if (ids.length >= 30) ok(`catalog 抽取到 ${ids.length} 个 demo id（≥30 下限）`)
+else no(`catalog 只抽到 ${ids.length} 个 id（<30，疑似格式漂移导致抽取失效）`)
+
 const browser = await chromium.launch()
 const page = await browser.newPage()
 const pageErrors = []

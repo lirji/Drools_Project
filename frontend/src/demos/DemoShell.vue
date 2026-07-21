@@ -25,7 +25,8 @@ import DemoNav from './DemoNav.vue'
   max-height: calc(100dvh - var(--shell-topbar-h) - var(--sp-6)); overflow-y: auto;
 }
 .demos-panel { flex: 1; min-width: 0; }
-@media (max-width: 767px) {
+/* <1024（正典）：塌单列。768 平板下全局侧栏已 docked 占 248px，再并排 260px 二级导航会双侧栏挤压→溢出，故此处随内容多栏统一 <1024 堆叠。 */
+@media (max-width: 1023px) {
   .demos-layout { flex-direction: column; }
   .demos-side { width: 100%; position: static; max-height: none; }
 }

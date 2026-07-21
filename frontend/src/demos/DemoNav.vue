@@ -8,9 +8,6 @@ const contentGroups = GROUPS.filter((g) => !g.external)
 function demosOf(gid: string) {
   return DEMOS.filter((d) => d.group === gid)
 }
-function methodClass(m: string): string {
-  return 'dot ' + (m === 'GET' ? 'get' : 'post')
-}
 </script>
 
 <template>
@@ -27,7 +24,7 @@ function methodClass(m: string): string {
           :to="{ name: 'demo', params: { demoId: d.id } }"
           :data-testid="'demo-nav-' + d.id"
         >
-          <span :class="methodClass(d.method)" />
+          <span class="meth" :class="d.method === 'GET' ? 'get' : 'post'">{{ d.method }}</span>
           <span class="i-title">{{ d.title }}</span>
           <span class="i-step">S{{ d.step }}</span>
         </router-link>
@@ -45,12 +42,15 @@ function methodClass(m: string): string {
   display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2);
   border-radius: var(--radius-sm); text-decoration: none; color: var(--text-soft); font-size: 13px;
 }
-.item:hover { background: var(--bg-soft); }
-.item.active { background: var(--accent-soft); color: var(--accent); }
-.i-title { flex: 1; }
-.i-step { font-size: 11px; color: var(--text-faint); font-family: var(--mono); }
-.dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.dot.get { background: var(--blue); }
-.dot.post { background: var(--accent); }
+.item:hover { background: var(--bg-hover); color: var(--text); }
+.item.active { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
+.i-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.i-step { font-size: 11px; color: var(--text-faint); font-family: var(--mono); flex: 0 0 auto; }
+.meth {
+  flex: 0 0 auto; width: 38px; text-align: center; font-size: 9px; font-weight: var(--fw-semibold);
+  font-family: var(--mono); padding: 2px 0; border-radius: var(--radius-sm); letter-spacing: .02em;
+}
+.meth.get { background: var(--blue-soft); color: var(--blue); }
+.meth.post { background: var(--accent-soft); color: var(--accent); }
 @media (pointer: coarse) { .item { min-height: var(--touch-min); } }
 </style>

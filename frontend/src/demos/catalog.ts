@@ -12,37 +12,37 @@ export interface DemoGroup { id: string; title: string; subtitle: string; extern
 export const GROUPS: DemoGroup[] = [
   {
     "id": "basics",
-    "title": "入门 · 折扣",
+    "title": "入门：一条数据命中多条规则",
     "subtitle": "Step 1–3 · facts / salience / accumulate"
   },
   {
     "id": "reasoning",
-    "title": "推理 · 流水线",
+    "title": "推理：多步骤流水线决策",
     "subtitle": "Step 4–6 · not/exists / agenda-group / 审计"
   },
   {
     "id": "table",
-    "title": "决策表 · 无状态",
+    "title": "决策表：用 Excel 表格配规则",
     "subtitle": "Step 7 · 11 · 决策表 / StatelessKieSession"
   },
   {
     "id": "event",
-    "title": "事件 · 后向链",
+    "title": "事件流：滑动窗口实时风控",
     "subtitle": "Step 8 · 13 · CEP 滑窗 / query"
   },
   {
     "id": "hot",
-    "title": "热加载 · 版本发布",
+    "title": "热更新：规则不停机上线",
     "subtitle": "Step 9 · 16 · 运行时编译 / KieScanner"
   },
   {
     "id": "ops",
-    "title": "持久化 · 护栏 · 指标",
+    "title": "运维：持久化 · 安全护栏 · 指标",
     "subtitle": "Step 10 · 12 · 14 · 15"
   },
   {
     "id": "model",
-    "title": "DMN · 营销活动",
+    "title": "决策模型：DMN 与营销活动落地",
     "subtitle": "Step 17 · 18 · FEEL 决策链 / 资格判定"
   },
   {
