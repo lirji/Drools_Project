@@ -5,6 +5,7 @@
  */
 import { onMounted, ref } from 'vue'
 import IdentityBar from './IdentityBar.vue'
+import Icon from '@/shared/ui/Icon.vue'
 
 defineEmits<{ (e: 'toggle-nav'): void }>()
 
@@ -28,13 +29,24 @@ function toggleTheme(): void {
 <template>
   <div class="topbar">
     <div class="left">
-      <button class="hamburger" aria-label="打开导航" data-testid="nav-toggle" @click="$emit('toggle-nav')">☰</button>
-      <span class="logo">◆</span>
-      <span class="brand">活动引擎控制台</span>
+      <button class="hamburger" aria-label="打开导航" data-testid="nav-toggle" @click="$emit('toggle-nav')">
+        <Icon name="menu" :size="20" />
+      </button>
+      <span class="brand-link">
+        <span class="logo"><Icon name="logo" :size="22" /></span>
+        <span class="brand">活动引擎控制台</span>
+      </span>
     </div>
     <div class="right">
       <IdentityBar />
-      <button class="theme-btn" title="切换主题" data-testid="theme-btn" @click="toggleTheme">◐</button>
+      <button
+        class="theme-btn"
+        :title="dark ? '切换到浅色' : '切换到深色'"
+        :aria-label="dark ? '切换到浅色主题' : '切换到深色主题'"
+        :aria-pressed="dark"
+        data-testid="theme-btn"
+        @click="toggleTheme"
+      ><Icon :name="dark ? 'sun' : 'moon'" :size="18" /></button>
     </div>
   </div>
 </template>
@@ -49,15 +61,27 @@ function toggleTheme(): void {
   display: none; align-items: center; justify-content: center;
   width: 40px; min-height: 40px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text);
-  font-size: 16px; cursor: pointer;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease;
 }
-.logo { font-size: 20px; color: var(--accent); }
-.brand { font-size: var(--fs-lg); font-weight: var(--fw-semibold); white-space: nowrap; }
+.hamburger:hover { background: var(--bg-hover); }
+.brand-link {
+  display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0;
+  color: var(--text); text-decoration: none; border-radius: var(--radius-sm);
+}
+.logo {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--radius-sm);
+  background: var(--accent-soft); color: var(--accent);
+}
+.brand { font-size: var(--fs-lg); font-weight: var(--fw-semibold); white-space: nowrap; letter-spacing: -.01em; }
 .right { display: flex; align-items: center; gap: var(--sp-4); }
 .theme-btn {
+  display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
 }
+.theme-btn:hover { background: var(--bg-hover); }
 @media (pointer: coarse) { .theme-btn { min-height: var(--touch-min); } }
 @media (max-width: 767px) {
   .hamburger { display: inline-flex; }

@@ -10,6 +10,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/auth/useAuthStore'
 import { useTenantStore } from '@/stores/useTenantStore'
 import { useActorStore } from '@/stores/useActorStore'
+import Icon from '@/shared/ui/Icon.vue'
 
 const auth = useAuthStore()
 const tenantStore = useTenantStore()
@@ -27,14 +28,18 @@ function doLogout(): void {
 
 <template>
   <div class="identity">
-    <button class="pop-toggle" aria-label="上下文" @click="open = !open">上下文 ▾</button>
+    <button class="pop-toggle" aria-label="上下文" :aria-expanded="open" @click="open = !open">
+      <span>上下文</span><Icon name="chevron-down" :size="15" />
+    </button>
     <div class="bars" :class="{ open }">
       <!-- auth 档：租户由 token aud 定，只读 -->
       <div v-if="auth.authEnabled" class="bar" data-testid="auth-bar">
         <span class="lbl">租户</span>
         <span class="chip chip-active" data-testid="auth-tenant">{{ auth.tenant || '-' }}</span>
         <span class="who">操作者 {{ auth.actor || '-' }}</span>
-        <button class="chip" data-testid="logout" @click="doLogout">登出</button>
+        <button class="chip chip-btn" data-testid="logout" @click="doLogout">
+          <Icon name="log-out" :size="14" /><span>登出</span>
+        </button>
       </div>
 
       <!-- dev/header 档：可切租户 + 操作者 -->
@@ -89,12 +94,16 @@ function doLogout(): void {
   background: var(--bg-elev); color: var(--text); font-size: var(--fs-xs); cursor: pointer;
 }
 .chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chip { transition: background .12s ease, border-color .12s ease; }
+.chip:hover { background: var(--bg-hover); }
+.chip-active:hover { background: var(--accent-hover); }
+.chip-btn { display: inline-flex; align-items: center; gap: 4px; }
 @media (pointer: coarse) { .chip { min-height: var(--touch-min); } }
 
 /* ≤560：收进 popover（该档无自动化 e2e） */
 @media (max-width: 560px) {
   .pop-toggle {
-    display: inline-flex; align-items: center; min-height: var(--touch-min);
+    display: inline-flex; align-items: center; gap: 4px; min-height: var(--touch-min);
     padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border);
     border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text);
     font-size: var(--fs-sm); cursor: pointer;

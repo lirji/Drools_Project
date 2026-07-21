@@ -1,11 +1,14 @@
 <script setup lang="ts">
 /**
- * 全局主导航（重设计）：收编原 App.vue 顶部 nav（工作台/演示台）+ ConsoleShell 三 tab（列表/新建/验证）为单一持久左侧栏。
+ * 全局主导航（UX 重设计）：收编原 App.vue 顶部 nav（工作台/演示台）+ ConsoleShell 三 tab（列表/新建/验证）为单一持久左侧栏。
+ * 「一眼可懂」增强：每项加图标 + 一句说明；active 态＝soft 填充 + 左 3px accent 条。
  * testid 逐字保留：nav-console / nav-demos / tab-list / tab-new / tab-validate。演示台的 18-Step 目录（DemoNav）
  * 仍留在 demos 内容区做次级导航（保懒加载、防 catalog.ts 进主包），本侧栏只放「演示台」入口。
+ * nav-home 入口在 Phase C 随 /home 路由注册后加入（避免指向未注册路由）。
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import Icon from '@/shared/ui/Icon.vue'
 
 const route = useRoute()
 const emit = defineEmits<{ (e: 'navigate'): void }>()
@@ -39,21 +42,30 @@ const inDemos = computed(() => typeof route.path === 'string' && route.path.star
           :to="{ name: 'activities' }"
           data-testid="tab-list"
           @click="emit('navigate')"
-        >活动列表</router-link>
+        >
+          <span class="ic"><Icon name="list" :size="18" /></span>
+          <span class="txt"><span class="label">活动列表</span><span class="desc">浏览 · 复核 · 上下线</span></span>
+        </router-link>
         <router-link
           class="nav-item item"
           :class="{ active: consoleTab === 'activity-new' }"
           :to="{ name: 'activity-new' }"
           data-testid="tab-new"
           @click="emit('navigate')"
-        >新建活动</router-link>
+        >
+          <span class="ic"><Icon name="plus" :size="18" /></span>
+          <span class="txt"><span class="label">新建活动</span><span class="desc">配置红包 / 买赠规则</span></span>
+        </router-link>
         <router-link
           class="nav-item item"
           :class="{ active: consoleTab === 'validate' }"
           :to="{ name: 'validate' }"
           data-testid="tab-validate"
           @click="emit('navigate')"
-        >优惠验证</router-link>
+        >
+          <span class="ic"><Icon name="badge-check" :size="18" /></span>
+          <span class="txt"><span class="label">优惠验证</span><span class="desc">对已上线活动跑决策</span></span>
+        </router-link>
       </div>
     </div>
 
@@ -66,7 +78,15 @@ const inDemos = computed(() => typeof route.path === 'string' && route.path.star
         @click="emit('navigate')"
       >演示台</router-link>
       <div class="items">
-        <span class="hint">Drools 18 Step · 目录在右侧</span>
+        <router-link
+          class="nav-item item"
+          :class="{ active: inDemos }"
+          :to="{ name: 'demos' }"
+          @click="emit('navigate')"
+        >
+          <span class="ic"><Icon name="flask" :size="18" /></span>
+          <span class="txt"><span class="label">Drools 18 Step</span><span class="desc">可运行规则引擎示例</span></span>
+        </router-link>
       </div>
     </div>
   </nav>
@@ -77,17 +97,30 @@ const inDemos = computed(() => typeof route.path === 'string' && route.path.star
 .section { display: flex; flex-direction: column; gap: var(--sp-1); }
 .group-link {
   display: block; text-decoration: none; font-size: var(--fs-xs);
-  font-weight: var(--fw-semibold); letter-spacing: .04em; text-transform: uppercase;
+  font-weight: var(--fw-semibold); letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-faint); padding: var(--sp-1) var(--sp-2);
 }
 .group-link.current { color: var(--accent); }
 .items { display: flex; flex-direction: column; gap: 2px; }
 .item {
-  display: flex; align-items: center; padding: var(--sp-2) var(--sp-3);
-  border-radius: var(--radius-sm); text-decoration: none;
-  color: var(--text-soft); font-size: var(--fs-md);
+  position: relative; display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm);
+  text-decoration: none; color: var(--text-soft);
+  transition: background .12s ease, color .12s ease;
 }
+.ic { display: inline-flex; color: var(--text-faint); transition: color .12s ease; flex: 0 0 auto; }
+.txt { display: flex; flex-direction: column; min-width: 0; line-height: var(--lh-tight); }
+.label { font-size: var(--fs-md); font-weight: var(--fw-medium); }
+.desc { font-size: var(--fs-xs); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item:hover { background: var(--bg-hover); color: var(--text); }
-.item.active { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
-.hint { font-size: var(--fs-xs); color: var(--text-faint); padding: var(--sp-1) var(--sp-3); }
+.item:hover .ic { color: var(--text-soft); }
+.item.active { background: var(--accent-soft); color: var(--accent); }
+.item.active .ic { color: var(--accent); }
+.item.active .label { font-weight: var(--fw-semibold); }
+.item.active .desc { color: var(--accent-2); }
+/* active 左 3px accent 条 */
+.item.active::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 3px; border-radius: var(--radius-pill); background: var(--accent);
+}
 </style>
