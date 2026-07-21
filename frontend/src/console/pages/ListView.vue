@@ -132,11 +132,11 @@ onUnmounted(() => ctrl?.abort())
           <span>活动ID</span><span>名称/业务线</span><span>类型</span><span>状态</span><span>版本</span><span>操作</span>
         </div>
         <div v-for="a in paged" :key="a.activityId" class="tr" :data-testid="'activity-row-' + a.activityId">
-          <span class="mono id">{{ a.activityId }}</span>
-          <span><div>{{ a.activityName }}</div><div class="sub">{{ a.bizLine || '-' }}</div></span>
-          <span>{{ typeLabel(a.activityType) }}</span>
-          <span><Badge :kind="a.activityStatus === 1 ? 'ok' : 'neutral'">{{ statusLabel(a.activityStatus) }}</Badge></span>
-          <span class="mono">v{{ a.version }}</span>
+          <span class="mono id" data-label="活动ID">{{ a.activityId }}</span>
+          <span class="namecol" data-label="名称/业务线"><div class="nm">{{ a.activityName }}</div><div class="sub">{{ a.bizLine || '-' }}</div></span>
+          <span data-label="类型">{{ typeLabel(a.activityType) }}</span>
+          <span data-label="状态"><Badge :kind="a.activityStatus === 1 ? 'ok' : 'neutral'">{{ statusLabel(a.activityStatus) }}</Badge></span>
+          <span class="mono" data-label="版本">v{{ a.version }}</span>
           <span class="acts">
             <button @click="router.push({ name: 'activity-detail', params: { id: a.activityId } })">详情</button>
             <button @click="router.push({ name: 'activity-edit', params: { id: a.activityId } })">编辑</button>
@@ -169,14 +169,34 @@ onUnmounted(() => ctrl?.abort())
 .id { font-size: var(--fs-xs); overflow-wrap: anywhere; }
 .sub { font-size: var(--fs-xs); color: var(--text-faint); }
 .mono { font-family: var(--mono); }
+.nm { font-weight: var(--fw-medium); }
 .acts { display: flex; gap: var(--sp-1); flex-wrap: wrap; }
-.acts button { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-2); cursor: pointer; font-size: 12px; }
+.acts button { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-2); cursor: pointer; font-size: 12px; transition: background .12s ease; }
+.acts button:hover { background: var(--bg-hover); }
 .pager { display: flex; align-items: center; gap: var(--sp-3); justify-content: center; margin-top: var(--sp-4); }
 .pager button { border: 1px solid var(--border); background: var(--bg-soft); border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-3); cursor: pointer; }
-@media (max-width: 760px) {
-  .tr { grid-template-columns: 1fr 1fr; }
+
+/* <1024（平板 docked + 手机）：表格 → 卡片，每格显字段标签（修 768 六列拥挤 + ≤760 无标签两笔旧债）。
+ * .tr class 保留（e2e-dev 用 [data-testid=list-view] .tr 做存在性检查），仅从 grid 改 block 卡片。 */
+@media (max-width: 1023px) {
+  .tbl { background: transparent; border: none; box-shadow: none; overflow: visible; gap: var(--sp-3); }
   .tr.th { display: none; }
-  .acts button { min-height: 36px; }
+  .tr {
+    display: block; background: var(--bg-elev); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: var(--sp-2) var(--sp-4);
+  }
+  .tr:not(.th):hover { background: var(--bg-elev); border-color: var(--border-strong); }
+  .tr > span { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); min-width: 0; }
+  .tr > span:last-child { border-bottom: none; }
+  .tr > span:not(.acts)::before {
+    content: attr(data-label); flex: 0 0 auto;
+    font-size: var(--fs-xs); color: var(--text-faint); font-weight: var(--fw-medium);
+  }
+  .tr .namecol { flex-direction: column; align-items: flex-end; gap: 0; }
+  .tr .namecol::before { align-self: flex-start; }
+  .tr .id { text-align: right; overflow-wrap: anywhere; }
+  .tr .acts { justify-content: flex-start; flex-wrap: wrap; padding-top: var(--sp-3); }
+  .tr .acts button { flex: 1; min-width: 88px; min-height: 38px; }
 }
 @media (pointer: coarse) { .acts button { min-height: var(--touch-min); } }
 </style>

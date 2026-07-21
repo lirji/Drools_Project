@@ -107,5 +107,5 @@ onUnmounted(() => ctrl?.abort())
 .tag { font-size: 12px; padding: 2px var(--sp-2); border-radius: var(--radius-sm); }
 .tag.green { background: var(--green-soft); color: var(--green); }
 .tag.red { background: var(--red-soft); color: var(--red); }
-@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .grid { grid-template-columns: 1fr; } }
 </style>

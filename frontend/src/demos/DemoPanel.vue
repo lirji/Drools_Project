@@ -131,5 +131,5 @@ h2 { margin: var(--sp-2) 0 var(--sp-1); }
 .text-box { font-family: var(--mono); font-size: 12px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--sp-3); overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
 .idle { color: var(--text-faint); font-size: 13px; padding: var(--sp-4); }
 .notfound { padding: var(--sp-5); }
-@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .grid { grid-template-columns: 1fr; } }
 </style>

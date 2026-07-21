@@ -18,6 +18,9 @@ import Kv from '@/shared/ui/Kv.vue'
 import Banner from '@/shared/ui/Banner.vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
 import Segmented from '@/shared/ui/Segmented.vue'
+import Section from '@/shared/ui/Section.vue'
+import Button from '@/shared/ui/Button.vue'
+import Icon from '@/shared/ui/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -212,31 +215,31 @@ onBeforeRouteLeave(async () => {
     <div class="layout">
       <div class="form">
         <!-- ① 基础信息 -->
-        <div class="sec-title">① 活动基础信息</div>
-        <div class="fg">
-          <label>活动名称 *<input v-model="dr.name" data-testid="form-name" /></label>
-          <label>业务线 (bizLine)<input v-model="dr.bizLine" placeholder="如 mall" /></label>
-          <label class="full">活动类型
-            <Segmented
-              :model-value="dr.activityType"
-              :options="enabledTypes.map((t) => ({ value: t.code, label: t.label, testid: 'type-chip-' + t.code }))"
-              @update:model-value="dr.activityType = ($event as number); dirty = true"
-            />
-          </label>
-          <label>优先级 (越小越优先)<input v-model="dr.priority" type="number" /></label>
-          <label>库存<input v-model="dr.inventory" type="number" /></label>
-          <label>开始时间 *<input v-model="dr.startLocal" type="datetime-local" data-testid="form-start" /></label>
-          <label>结束时间 *<input v-model="dr.endLocal" type="datetime-local" data-testid="form-end" /></label>
-          <label>地域类型
-            <select v-model.number="dr.areaType"><option :value="1">全国</option><option :value="2">指定地域</option></select>
-          </label>
-          <label v-if="dr.areaType === 2">地域IDs (逗号)<input v-model="dr.districtIds" /></label>
-          <label class="full">活动说明 (外显)<textarea v-model="dr.rule" rows="2" /></label>
-        </div>
+        <Section :num="1" title="活动基础信息">
+          <div class="fg">
+            <label>活动名称 *<input v-model="dr.name" data-testid="form-name" /></label>
+            <label>业务线 (bizLine)<input v-model="dr.bizLine" placeholder="如 mall" /></label>
+            <label class="full">活动类型
+              <Segmented
+                :model-value="dr.activityType"
+                :options="enabledTypes.map((t) => ({ value: t.code, label: t.label, testid: 'type-chip-' + t.code }))"
+                @update:model-value="dr.activityType = ($event as number); dirty = true"
+              />
+            </label>
+            <label>优先级 (越小越优先)<input v-model="dr.priority" type="number" /></label>
+            <label>库存<input v-model="dr.inventory" type="number" /></label>
+            <label>开始时间 *<input v-model="dr.startLocal" type="datetime-local" data-testid="form-start" /></label>
+            <label>结束时间 *<input v-model="dr.endLocal" type="datetime-local" data-testid="form-end" /></label>
+            <label>地域类型
+              <select v-model.number="dr.areaType"><option :value="1">全国</option><option :value="2">指定地域</option></select>
+            </label>
+            <label v-if="dr.areaType === 2">地域IDs (逗号)<input v-model="dr.districtIds" /></label>
+            <label class="full">活动说明 (外显)<textarea v-model="dr.rule" rows="2" /></label>
+          </div>
+        </Section>
 
         <!-- ② 红包 / ③ 买赠 -->
-        <template v-if="dr.activityType === 1">
-          <div class="sec-title">② 红包规则</div>
+        <Section v-if="dr.activityType === 1" :num="2" title="红包规则">
           <div class="seg">
             <button class="chip" :class="{ 'chip-active': dr.redMode === 'fixed' }" @click="dr.redMode = 'fixed'; dirty = true">固定金额</button>
             <button class="chip" :class="{ 'chip-active': dr.redMode === 'ladder' }" @click="dr.redMode = 'ladder'; dirty = true">阶梯分档</button>
@@ -252,9 +255,8 @@ onBeforeRouteLeave(async () => {
             <input type="number" v-model="(row as LadderRow).max" />
             <input type="number" v-model="(row as LadderRow).reward" />
           </DynRowTable>
-        </template>
-        <template v-else-if="dr.activityType === 5">
-          <div class="sec-title">③ 买赠赠品明细</div>
+        </Section>
+        <Section v-else-if="dr.activityType === 5" :num="3" title="买赠赠品明细">
           <DynRowTable :rows="dr.gifts" :headers="['批次', '赠品名', '类型', '数量', '金额', '权益类型']" :make-row="() => ({ batchId: '', giftName: '', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 0, rightType: 'GIFT' })" label="赠品" :min-width="600" v-slot="{ row }">
             <input v-model="(row as any).batchId" />
             <input v-model="(row as any).giftName" />
@@ -263,41 +265,42 @@ onBeforeRouteLeave(async () => {
             <input type="number" v-model="(row as any).absoluteAmount" />
             <input v-model="(row as any).rightType" />
           </DynRowTable>
-        </template>
+        </Section>
 
         <!-- ④ 商品绑定 -->
-        <div class="sec-title">④ 商品绑定</div>
-        <div class="seg">
-          <button class="chip" :class="{ 'chip-active': dr.bindMode === 'manual' }" @click="dr.bindMode = 'manual'; dirty = true">手动 SPU</button>
-          <button class="chip" :class="{ 'chip-active': dr.bindMode === 'pool' }" @click="dr.bindMode = 'pool'; dirty = true">商品池(自动圈选)</button>
-        </div>
-        <DynRowTable v-if="dr.bindMode === 'manual'" :rows="dr.spu" :headers="['店铺ID', 'SPU ID']" :make-row="() => ({ storeId: 1, spuId: '' })" label="SPU 绑定" :min-width="280" v-slot="{ row }">
-          <input type="number" v-model="(row as any).storeId" />
-          <input type="number" v-model="(row as any).spuId" data-testid="spu-row-input" />
-        </DynRowTable>
-        <template v-else>
-          <div class="hint">填商品池 ID (demo 种子池为 1)，保存时后端按池规则圈选并自动绑定。</div>
-          <DynRowTable :rows="dr.pool" :headers="['Pool ID']" :make-row="() => ({ poolId: '' })" label="商品池" :min-width="160" v-slot="{ row }">
-            <input type="number" v-model="(row as any).poolId" />
+        <Section :num="4" title="商品绑定">
+          <div class="seg">
+            <button class="chip" :class="{ 'chip-active': dr.bindMode === 'manual' }" @click="dr.bindMode = 'manual'; dirty = true">手动 SPU</button>
+            <button class="chip" :class="{ 'chip-active': dr.bindMode === 'pool' }" @click="dr.bindMode = 'pool'; dirty = true">商品池(自动圈选)</button>
+          </div>
+          <DynRowTable v-if="dr.bindMode === 'manual'" :rows="dr.spu" :headers="['店铺ID', 'SPU ID']" :make-row="() => ({ storeId: 1, spuId: '' })" label="SPU 绑定" :min-width="280" v-slot="{ row }">
+            <input type="number" v-model="(row as any).storeId" />
+            <input type="number" v-model="(row as any).spuId" data-testid="spu-row-input" />
           </DynRowTable>
-        </template>
+          <template v-else>
+            <div class="hint">填商品池 ID (demo 种子池为 1)，保存时后端按池规则圈选并自动绑定。</div>
+            <DynRowTable :rows="dr.pool" :headers="['Pool ID']" :make-row="() => ({ poolId: '' })" label="商品池" :min-width="160" v-slot="{ row }">
+              <input type="number" v-model="(row as any).poolId" />
+            </DynRowTable>
+          </template>
+        </Section>
 
         <!-- ⑤ 条件树 -->
-        <div class="sec-title">⑤ 资格条件 (白名单条件树)</div>
-        <div class="hint">空条件树 = 所有用户恒通过。字段/运算符只能从后端白名单选，服务端翻译成受控 Drools，不接受裸 DRL。</div>
-        <ConditionGroup v-if="dictData" :node="dr.tree" :fields="dictData.fields" :operators="dictData.operators" :depth="0" :root="true" :errors="treeErrors" />
-        <div class="preview-bar">
-          <button class="mini" data-testid="preview-btn" @click="doPreview">预览条件 (试编译)</button>
-          <span v-if="previewState.kind !== 'idle'" class="pv-status" :class="'pv-' + previewState.kind" data-testid="preview-status">{{ previewState.msg }}</span>
-        </div>
-        <div v-if="previewState.drl" class="mono-box">{{ previewState.drl }}</div>
+        <Section :num="5" title="资格条件 (白名单条件树)" desc="空条件树 = 所有用户恒通过。字段/运算符只能从后端白名单选，服务端翻译成受控 Drools，不接受裸 DRL。">
+          <ConditionGroup v-if="dictData" :node="dr.tree" :fields="dictData.fields" :operators="dictData.operators" :depth="0" :root="true" :errors="treeErrors" />
+          <div class="preview-bar">
+            <button class="mini" data-testid="preview-btn" @click="doPreview">预览条件 (试编译)</button>
+            <span v-if="previewState.kind !== 'idle'" class="pv-status" :class="'pv-' + previewState.kind" data-testid="preview-status">{{ previewState.msg }}</span>
+          </div>
+          <div v-if="previewState.drl" class="mono-box">{{ previewState.drl }}</div>
+        </Section>
 
         <!-- ⑥ 合并策略 -->
-        <div class="sec-title">⑥ 多活动合并策略</div>
-        <div class="seg">
-          <button v-for="s in strategies" :key="s" class="chip" :class="{ 'chip-active': dr.strategy === s }" @click="dr.strategy = s; dirty = true">{{ s }}</button>
-        </div>
-        <div class="hint">注意：策略按 bizLine 生效，会影响同业务线其它活动。</div>
+        <Section :num="6" title="多活动合并策略" desc="注意：策略按 bizLine 生效，会影响同业务线其它活动。">
+          <div class="seg">
+            <button v-for="s in strategies" :key="s" class="chip" :class="{ 'chip-active': dr.strategy === s }" @click="dr.strategy = s; dirty = true">{{ s }}</button>
+          </div>
+        </Section>
       </div>
 
       <!-- 右栏：校验 & 提交 -->
@@ -315,7 +318,9 @@ onBeforeRouteLeave(async () => {
           <Kv k="版本">v{{ saved.version }}</Kv>
           <Kv k="自动圈选绑定">{{ saved.autoBoundCount }} 个</Kv>
           <div v-if="saved.idempotentHit" class="tag-gold" data-testid="idempotent-hit">幂等命中：重复提交返回首次结果</div>
-          <button class="ghost back" @click="router.push({ name: 'activities' })">← 返回列表</button>
+          <Button variant="subtle" size="sm" class="back" @click="router.push({ name: 'activities' })">
+            <Icon name="arrow-left" :size="15" /><span>返回列表</span>
+          </Button>
         </Card>
         <Banner v-if="submitErr" kind="err" data-testid="conflict-hint">{{ submitErr }}</Banner>
       </aside>
@@ -325,15 +330,14 @@ onBeforeRouteLeave(async () => {
 
 <style scoped>
 .layout { display: grid; grid-template-columns: 1fr 300px; gap: var(--sp-4); }
-.sec-title { font-weight: 600; font-size: 13px; margin: var(--sp-4) 0 var(--sp-2); color: var(--accent); }
 .fg { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
-.fg label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: 12px; color: var(--text-soft); }
+.fg label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--text-soft); }
 .fg .full { grid-column: 1 / -1; }
-.fg input, .fg select, .fg textarea, .seg { }
 .fg input, .fg select, .fg textarea { padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-family: inherit; }
-.seg { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: var(--sp-1) 0; }
-.chip { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: 999px; background: var(--bg-elev); color: var(--text); font-size: 12.5px; cursor: pointer; }
-.chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.seg { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: 0 0 var(--sp-2); }
+.chip { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg-elev); color: var(--text); font-size: 12.5px; cursor: pointer; transition: background .12s ease; }
+.chip:hover { background: var(--bg-hover); }
+.chip-active, .chip-active:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
 .hint { font-size: 12px; color: var(--text-faint); margin: var(--sp-1) 0; }
 .preview-bar { display: flex; align-items: center; gap: var(--sp-2); margin: var(--sp-2) 0; }
 .mini { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); cursor: pointer; font-size: 12px; }
@@ -342,10 +346,10 @@ onBeforeRouteLeave(async () => {
 .mono-box { font-family: var(--mono); font-size: 12px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--sp-2); white-space: pre-wrap; word-break: break-all; margin: var(--sp-2) 0; }
 .rail { align-self: start; position: sticky; top: var(--sp-4); }
 .col-label { font-weight: 600; font-size: 13px; margin-bottom: var(--sp-2); }
-.primary { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: var(--sp-3); cursor: pointer; font-size: 14px; }
+.primary { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm); padding: var(--sp-3); cursor: pointer; font-size: 14px; font-weight: var(--fw-medium); transition: background .12s ease; }
+.primary:hover:not(:disabled) { background: var(--accent-hover); }
 .primary:disabled { opacity: .5; cursor: not-allowed; }
 .tag-gold { background: var(--gold-soft); color: var(--gold); font-size: 12px; padding: var(--sp-1) var(--sp-2); border-radius: var(--radius-sm); margin-top: var(--sp-2); }
-.ghost { border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-3); cursor: pointer; }
 .back { margin-top: var(--sp-3); width: 100%; }
-@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } .rail { position: static; } .fg { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .layout { grid-template-columns: 1fr; } .rail { position: static; } .fg { grid-template-columns: 1fr; } }
 </style>

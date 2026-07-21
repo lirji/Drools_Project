@@ -124,5 +124,6 @@ async function run(kind: 'discount' | 'gifts'): Promise<void> {
 .seq { color: var(--accent); font-family: var(--mono); }
 .muted { color: var(--text-faint); font-size: 13px; }
 .idle { padding: var(--sp-4); }
-@media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .grid { grid-template-columns: 1fr; } }
+@media (max-width: 767px) { .fg { grid-template-columns: 1fr; } }
 </style>
