@@ -29,7 +29,7 @@ function remove(i: number): void {
       </div>
       <div v-if="!rows.length" class="empty">暂无，点下方添加</div>
       <div v-for="(row, i) in rows" :key="i" class="row" data-testid="dyn-row">
-        <span class="idx mono">{{ i + 1 }}</span>
+        <span class="idx">{{ i + 1 }}</span>
         <slot :row="row" :index="i" />
         <button type="button" class="del" :aria-label="'删除第' + (i + 1) + '行'" @click="remove(i)"><Icon name="trash" :size="14" /></button>
       </div>
@@ -46,9 +46,8 @@ function remove(i: number): void {
 .row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) 0; }
 .row + .row:not(.head) { border-top: 1px solid var(--border); }
 .row.head { color: var(--text-faint); font-size: 10px; font-weight: var(--fw-bold); letter-spacing: .03em; text-transform: uppercase; }
-.idx { width: 24px; text-align: center; }
+.idx { width: 24px; font-variant-numeric: tabular-nums; text-align: center; }
 .act { width: 32px; }
-.mono { font-family: var(--mono); }
 .empty { color: var(--text-faint); font-size: 11px; padding: var(--sp-3); text-align: center; }
 .del { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); background: var(--bg-elev); color: var(--red); border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-2); cursor: pointer; }
 .del:hover { border-color: var(--red); background: var(--red-soft); }
