@@ -31,6 +31,25 @@ try {
   await page.locator('[data-testid="submit"]').click()
   await page.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('手机 390：表单可完整填写并提交成功')
+
+  await page.goto(`${BASE}/ui/console/validate`)
+  await page.waitForSelector('[data-testid="validate-view"]', { timeout: 10000 })
+  await page.fill('[data-testid="v-spu"]', '990011')
+  await page.locator('[data-testid="v-discount"]').click()
+  await page.waitForSelector('[data-testid="validate-result"]', { timeout: 15000 })
+  const validateOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  validateOverflow <= 4 ? ok(`手机优惠验证无横向溢出（body 溢出 ${validateOverflow}px）`) : no(`手机优惠验证横向溢出 ${validateOverflow}px`)
+
+  // 规则能力中心：分组目录可搜索，详情页在 390 下不横向溢出。
+  await page.goto(`${BASE}/ui/demos`)
+  await page.waitForSelector('[data-testid="demo-home"]', { timeout: 10000 })
+  await page.fill('[data-testid="demo-search"]', 'CEP')
+  await page.waitForSelector('[data-testid="demo-home-fraud-check"]', { timeout: 5000 })
+  ok('手机 390：规则能力目录可搜索')
+  await page.locator('[data-testid="demo-home-fraud-check"]').click()
+  await page.waitForSelector('[data-testid="demo-panel-fraud-check"]', { timeout: 10000 })
+  const demoOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  demoOverflow <= 4 ? ok(`手机规则能力详情无横向溢出（body 溢出 ${demoOverflow}px）`) : no(`手机规则能力详情横向溢出 ${demoOverflow}px`)
 } catch (e) {
   no(`手机 smoke 异常: ${e.message}`)
   await page.screenshot({ path: `${process.env.SHOTDIR || '.'}/e2e-phone-fail.png` }).catch(() => {})

@@ -17,7 +17,8 @@ try {
   await page.locator('[data-testid="tab-new"]').click()
   await page.waitForSelector('[data-testid="form-name"]', { timeout: 10000 })
   // 表单单列下仍可填写提交
-  await page.fill('[data-testid="form-name"]', `TABLET-${Date.now().toString(36)}`)
+  const activityName = `TABLET-${Date.now().toString(36)}`
+  await page.fill('[data-testid="form-name"]', activityName)
   await page.fill('[data-testid="form-amount"]', '30')
   await page.locator('[data-testid="spu-row-input"]').first().fill('990012')
   // 无横向溢出（body scrollWidth 不超 viewport 太多）
@@ -26,6 +27,33 @@ try {
   await page.locator('[data-testid="submit"]').click()
   await page.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('平板 768：表单可完整填写并提交成功')
+
+  // 列表 → 详情 → 优惠验证三条控制台主路径。
+  await page.goto(`${BASE}/ui/console/activities`)
+  await page.waitForSelector('[data-testid="list-view"]', { timeout: 10000 })
+  await page.fill('[data-testid="list-search"]', activityName)
+  const activityRow = page.locator('[data-testid^="activity-row-"]').filter({ hasText: activityName }).first()
+  await activityRow.waitFor({ timeout: 10000 })
+  await activityRow.getByRole('button', { name: '详情', exact: true }).click()
+  await page.waitForSelector('[data-testid="detail-loaded"]', { timeout: 10000 })
+  const detailOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  detailOverflow <= 4 ? ok(`平板活动详情无横向溢出（body 溢出 ${detailOverflow}px）`) : no(`平板活动详情横向溢出 ${detailOverflow}px`)
+
+  await page.goto(`${BASE}/ui/console/validate`)
+  await page.waitForSelector('[data-testid="validate-view"]', { timeout: 10000 })
+  await page.fill('[data-testid="v-spu"]', '990011')
+  await page.locator('[data-testid="v-discount"]').click()
+  await page.waitForSelector('[data-testid="validate-result"]', { timeout: 15000 })
+  ok('平板 768：优惠验证可执行并展示决策结果')
+
+  // 规则能力详情：二级菜单与工作区在 768 下纵向布局，仍可直接执行。
+  await page.goto(`${BASE}/ui/demos/discount-calculate`)
+  await page.waitForSelector('[data-testid="demo-panel-discount-calculate"]', { timeout: 10000 })
+  const demoOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  demoOverflow <= 4 ? ok(`平板规则能力详情无横向溢出（body 溢出 ${demoOverflow}px）`) : no(`平板规则能力详情横向溢出 ${demoOverflow}px`)
+  await page.locator('[data-testid="demo-run"]').click()
+  await page.waitForSelector('[data-testid="demo-status"]', { timeout: 15000 })
+  ok('平板 768：规则能力可执行并展示响应')
 } catch (e) {
   no(`平板 smoke 异常: ${e.message}`)
   await page.screenshot({ path: `${process.env.SHOTDIR || '.'}/e2e-tablet-fail.png` }).catch(() => {})

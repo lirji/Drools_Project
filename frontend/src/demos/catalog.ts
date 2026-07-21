@@ -1,4 +1,4 @@
-// 演示台目录 —— 由 static/assets/examples.js 机械转写（F2）。纯数据，无逻辑。
+// 规则能力目录 —— 由原端点清单迁移生成。纯数据，无逻辑。
 // 结构见下方类型；examples[].body 为 null 表示无请求体。改后端端点时同步此文件 + dev proxy 前缀清单。
 export interface DemoExample { label: string; pathParams?: Record<string, string>; body: unknown | null }
 export interface DemoDef {
@@ -12,38 +12,38 @@ export interface DemoGroup { id: string; title: string; subtitle: string; extern
 export const GROUPS: DemoGroup[] = [
   {
     "id": "basics",
-    "title": "入门：一条数据命中多条规则",
-    "subtitle": "Step 1–3 · facts / salience / accumulate"
+    "title": "基础规则执行",
+    "subtitle": "事实匹配 · 优先级 · 聚合计算"
   },
   {
     "id": "reasoning",
-    "title": "推理：多步骤流水线决策",
-    "subtitle": "Step 4–6 · not/exists / agenda-group / 审计"
+    "title": "组合推理与流程编排",
+    "subtitle": "否定与存在判断 · 议程编排 · 执行审计"
   },
   {
     "id": "table",
-    "title": "决策表：用 Excel 表格配规则",
-    "subtitle": "Step 7 · 11 · 决策表 / StatelessKieSession"
+    "title": "决策表与批量决策",
+    "subtitle": "Excel 决策表 · 无状态批处理"
   },
   {
     "id": "event",
-    "title": "事件流：滑动窗口实时风控",
-    "subtitle": "Step 8 · 13 · CEP 滑窗 / query"
+    "title": "实时事件与风险识别",
+    "subtitle": "CEP 滑动窗口 · 查询分析"
   },
   {
     "id": "hot",
-    "title": "热更新：规则不停机上线",
-    "subtitle": "Step 9 · 16 · 运行时编译 / KieScanner"
+    "title": "规则动态发布",
+    "subtitle": "运行时编译 · 制品热更新"
   },
   {
     "id": "ops",
-    "title": "运维：持久化 · 安全护栏 · 指标",
-    "subtitle": "Step 10 · 12 · 14 · 15"
+    "title": "运行保障与可观测性",
+    "subtitle": "状态管理 · 安全护栏 · 运行指标"
   },
   {
     "id": "model",
-    "title": "决策模型：DMN 与营销活动落地",
-    "subtitle": "Step 17 · 18 · FEEL 决策链 / 资格判定"
+    "title": "标准决策模型",
+    "subtitle": "DMN 决策链 · 营销资格判定"
   },
   {
     "id": "activity",
@@ -58,7 +58,7 @@ export const DEMOS: DemoDef[] = [
     "id": "hello",
     "group": "basics",
     "step": 1,
-    "title": "Hello World",
+    "title": "客户规则匹配",
     "method": "POST",
     "path": "/hello",
     "summary": "generic",
@@ -476,7 +476,7 @@ export const DEMOS: DemoDef[] = [
     "desc": "复用 discountKBase 但走无状态 ksession，同输入结果跟 stateful 完全等价；API 一行 execute。",
     "examples": [
       {
-        "label": "VIP2 老用户（同 Step 2）",
+        "label": "VIP2 老用户（标准折扣策略）",
         "body": {
           "orderId": "o1",
           "customer": {
@@ -1151,7 +1151,7 @@ export const DEMOS: DemoDef[] = [
     "method": "POST",
     "path": "/metrics/discount",
     "summary": "metrics",
-    "desc": "跟 Step 2 同折扣逻辑，但挂 MeteredRuleListener + Timer，把 fire/match/fact/耗时打进 Micrometer。",
+    "desc": "复用标准折扣逻辑，并挂载 MeteredRuleListener + Timer，将 fire/match/fact/耗时写入 Micrometer。",
     "examples": [
       {
         "label": "打一次点（可多打几次）",

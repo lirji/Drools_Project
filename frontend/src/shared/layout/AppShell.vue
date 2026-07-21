@@ -30,7 +30,9 @@ watch(() => route.fullPath, closeDrawer)
 watch(
   () => auth.authEnabled && !auth.loggedIn,
   (loggedOut) => {
-    if (loggedOut && route.name !== 'login' && route.name !== 'callback') router.push({ name: 'login' })
+    if (loggedOut && route.name !== 'login' && route.name !== 'callback') {
+      router.replace({ name: 'login', query: { returnTo: route.fullPath } })
+    }
   },
 )
 

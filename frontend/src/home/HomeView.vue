@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 概览首页（UX 重设计 Phase C）：着陆页，一眼说清两大区域（控制台 / 演示台）+ 快捷入口 + 最近活动。
+ * 概览首页（UX 重设计 Phase C）：着陆页，一眼说清两大区域（活动控制台 / 规则能力中心）+ 快捷入口 + 最近活动。
  * 数据源全复用现成 API：listActivities（按租户 header 隔离）取前 8 条 + useDictStore 出类型/状态标签。
  * 边界：介绍卡/快捷入口为静态，不依赖请求；最近活动区自带 loading/empty/error 三态，后端不可达时降级不白屏。
  */
@@ -63,7 +63,7 @@ onUnmounted(() => ctrl?.abort())
   <section data-testid="home-view">
     <PageHeader
       title="概览"
-      subtitle="多租户活动引擎平台 · 配套 Drools 规则引擎学习台"
+      subtitle="多租户活动与规则决策平台"
     />
 
     <!-- 两大区域介绍 + 快捷入口 -->
@@ -93,13 +93,13 @@ onUnmounted(() => ctrl?.abort())
         <div class="head">
           <span class="area-ic demos"><Icon name="flask" :size="22" /></span>
           <div>
-            <h2 class="area-title">Drools 演示台</h2>
-            <p class="area-desc">18 个可运行 Step，从 Hello World 到 CEP 滑窗 / DMN / 规则热加载，浏览器直接发请求看规则触发。</p>
+            <h2 class="area-title">规则能力中心</h2>
+            <p class="area-desc">统一调用并验证规则执行、决策表、实时事件、动态发布与可观测能力。</p>
           </div>
         </div>
         <div class="entries">
           <Button variant="subtle" :to="{ name: 'demos' }" data-testid="home-go-demos">
-            <Icon name="flask" :size="16" /><span>打开演示台</span>
+            <Icon name="flask" :size="16" /><span>进入能力中心</span>
           </Button>
         </div>
       </article>

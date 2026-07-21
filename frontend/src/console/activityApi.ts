@@ -13,22 +13,22 @@ export function getDetail(id: string, signal?: AbortSignal): Promise<ApiResult<R
   return api('marketing', 'GET', '/' + encodeURIComponent(id), undefined, { signal })
 }
 
-export function createActivity(body: ActivityCreateRequest): Promise<ApiResult<ActivityCreateResult>> {
-  return api<ActivityCreateResult>('marketing', 'POST', '/create', body)
+export function createActivity(body: ActivityCreateRequest, signal?: AbortSignal): Promise<ApiResult<ActivityCreateResult>> {
+  return api<ActivityCreateResult>('marketing', 'POST', '/create', body, { signal })
 }
 
 export function changeStatus(id: string, version: number, targetStatus: number): Promise<ApiResult> {
   return api('marketing', 'POST', '/' + encodeURIComponent(id) + '/status', { version, targetStatus })
 }
 
-export function previewTree(tree: ConditionNode): Promise<ApiResult<{ ok: boolean; message?: string; drl?: string }>> {
-  return api('marketing', 'POST', '/preview', tree)
+export function previewTree(tree: ConditionNode, signal?: AbortSignal): Promise<ApiResult<{ ok: boolean; message?: string; drl?: string }>> {
+  return api('marketing', 'POST', '/preview', tree, { signal })
 }
 
-export function spuDiscount(body: SpuDiscountRequest): Promise<ApiResult<Record<string, unknown>>> {
-  return api('marketing', 'POST', '/spu-discount', body)
+export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<Record<string, unknown>>> {
+  return api('marketing', 'POST', '/spu-discount', body, { signal })
 }
 
-export function queryGifts(body: SpuDiscountRequest): Promise<ApiResult<Record<string, unknown>>> {
-  return api('marketing', 'POST', '/gifts', body)
+export function queryGifts(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<Record<string, unknown>>> {
+  return api('marketing', 'POST', '/gifts', body, { signal })
 }

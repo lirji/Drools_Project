@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 通用结构化响应渲染：把 JSON 美化 + 顶层键值高亮。覆盖全部 33 demo 的诚实兜底。
-// 旧原生页保留了 21 个 per-Step 定制可视化（作为教学展品与回退），此处走统一结构化视图。
+// 旧原生页保留了 21 个定制可视化；当前能力中心统一使用结构化视图兜底。
 defineProps<{ data: unknown }>()
 
 function pretty(v: unknown): string {

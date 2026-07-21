@@ -10,7 +10,7 @@
 |---|---|---|
 | `theme-btn` | TopBar | 主题切换（迁自 App.vue） |
 | `nav-toggle` | TopBar | 汉堡按钮（<768 出现），phone-smoke 用它开抽屉 |
-| `nav-home` / `nav-console` / `nav-demos` | SidebarNav | 概览 / 控制台 / 演示台 一级入口（无 e2e 点击，仅登记） |
+| `nav-home` / `nav-console` / `nav-demos` | SidebarNav | 概览 / 控制台 / 规则能力中心一级入口（无 e2e 点击，仅登记） |
 | `tab-list` / `tab-new` / `tab-validate` | SidebarNav | 控制台三个子导航项 |
 | `tenant-bar` | IdentityBar（dev 档） | dev 档租户栏容器 |
 | `tenant-input` | IdentityBar | X-Tenant-Id 输入 |

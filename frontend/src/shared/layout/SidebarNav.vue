@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
- * 全局主导航（UX 重设计）：收编原 App.vue 顶部 nav（工作台/演示台）+ ConsoleShell 三 tab（列表/新建/验证）为单一持久左侧栏。
+ * 全局主导航（UX 重设计）：收编原 App.vue 顶部 nav（活动控制台/规则能力中心）+ ConsoleShell 三 tab（列表/新建/验证）为单一持久左侧栏。
  * 「一眼可懂」增强：每项加图标 + 一句说明；active 态＝soft 填充 + 左 3px accent 条。
- * testid 逐字保留：nav-console / nav-demos / tab-list / tab-new / tab-validate。演示台的 18-Step 目录（DemoNav）
- * 仍留在 demos 内容区做次级导航（保懒加载、防 catalog.ts 进主包），本侧栏只放「演示台」入口。
+ * testid 逐字保留：nav-console / nav-demos / tab-list / tab-new / tab-validate。规则能力目录（DemoNav）
+ * 仍留在 demos 内容区做次级导航（保懒加载、防 catalog.ts 进主包），本侧栏只放「规则能力中心」入口。
  * nav-home 入口在 Phase C 随 /home 路由注册后加入（避免指向未注册路由）。
  */
 import { computed } from 'vue'
@@ -90,7 +90,7 @@ const inHome = computed(() => route.name === 'home')
         :to="{ name: 'demos' }"
         data-testid="nav-demos"
         @click="emit('navigate')"
-      >演示台</router-link>
+      >决策能力</router-link>
       <div class="items">
         <router-link
           class="nav-item item"
@@ -99,7 +99,7 @@ const inHome = computed(() => route.name === 'home')
           @click="emit('navigate')"
         >
           <span class="ic"><Icon name="flask" :size="18" /></span>
-          <span class="txt"><span class="label">Drools 18 Step</span><span class="desc">可运行规则引擎示例</span></span>
+          <span class="txt"><span class="label">规则能力中心</span><span class="desc">规则场景 · 在线验证</span></span>
         </router-link>
       </div>
     </div>

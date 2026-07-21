@@ -1,5 +1,5 @@
 // API 客户端 —— 服务注册表式（继承旧 activity.js 的教训：API base 不散写）。
-// 现有两个 service：root（18 Step 散点端点）、marketing（/activity-marketing）。
+// 现有两个 service：root（规则能力端点）、marketing（/activity-marketing）。
 // 后端拆微服务后只在此加 decision/console 条目 + 改 base 映射，页面代码零改动（决策 D3 对齐点）。
 
 import type { ApiResult } from './types'

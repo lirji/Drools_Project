@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 定制摘要示例（registry 模式演示）：订单折扣。展示原价→折后 + 命中折扣原因。
+// 订单折扣定制摘要：展示原价→折后 + 命中折扣原因。
 import { computed } from 'vue'
 const props = defineProps<{ data: unknown }>()
 const d = computed(() => (props.data || {}) as Record<string, any>)

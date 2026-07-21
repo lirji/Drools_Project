@@ -1,4 +1,4 @@
-// F2 演示台 E2E（G2）：用 catalog 当数据源循环全部 33 个 demo 面板 —— 每个都：导航→加载→发请求→
+// 规则能力中心 E2E：用 catalog 当数据源循环全部 33 个能力面板 —— 每个都：导航→加载→发请求→
 //   断言状态非「网络错误」(catalog 驱动使测试免维护)。另抽 3 个代表面板断言摘要/文本渲染。
 // GET demo 直接发；POST demo 用默认示例 body 发。部分 demo 有副作用（建活动/热加载/scanner），
 //   dev 档 in-mem H2 下均可跑；只断言"请求发出且非前端网络错误/非 5xx"，不校验业务结果（那是后端测试的事）。
@@ -19,7 +19,7 @@ const ok = (m) => { results.push(['PASS', m]); }
 const no = (m) => { results.push(['FAIL', m]); console.log('  ❌', m) }
 
 // 下限守卫（评审 M7）：catalog.ts 若被重排/改格式导致抽取为空，ran===ids.length 会是 0===0 静默假绿。
-if (ids.length >= 30) ok(`catalog 抽取到 ${ids.length} 个 demo id（≥30 下限）`)
+if (ids.length >= 30) ok(`能力目录抽取到 ${ids.length} 个能力 id（≥30 下限）`)
 else no(`catalog 只抽到 ${ids.length} 个 id（<30，疑似格式漂移导致抽取失效）`)
 
 const browser = await chromium.launch()
@@ -52,8 +52,8 @@ try {
     if (/HTTP 5\d\d/.test(status)) { no(`${id}: ${status}（5xx）`); continue }
     ran++
   }
-  ran === ids.length ? ok(`全部 ${ids.length} 个 demo 面板发请求成功（无前端错误/无 5xx）`)
-    : ok(`${ran}/${ids.length} demo 面板通过`)
+  ran === ids.length ? ok(`全部 ${ids.length} 个能力面板发请求成功（无前端错误/无 5xx）`)
+    : ok(`${ran}/${ids.length} 个能力面板通过`)
 
   // 代表面板 1：discount-calculate（order 定制摘要，应有原价→折后）
   await page.goto(`${BASE}/ui/demos/discount-calculate`)
@@ -65,7 +65,8 @@ try {
 
   // 代表面板 2：prometheus 文本响应
   await page.goto(`${BASE}/ui/demos/metrics-prometheus`).catch(() => {})
-  const hasMetricsPanel = await page.locator('[data-testid="demo-panel-metrics-prometheus"]').count()
+  const metricsPanel = await page.waitForSelector('[data-testid="demo-panel-metrics-prometheus"]', { timeout: 10000 }).catch(() => null)
+  const hasMetricsPanel = !!metricsPanel
   if (hasMetricsPanel) {
     await page.locator('[data-testid="demo-run"]').click()
     await page.waitForSelector('[data-testid="demo-status"]', { timeout: 15000 })
@@ -81,7 +82,7 @@ try {
     await page.goto(`${BASE}/ui/demos/${getDemo}`)
     await page.waitForSelector(`[data-testid="demo-panel-${getDemo}"]`, { timeout: 10000 })
     const noBody = await page.locator('.no-body').count()
-    ok(`GET demo ${getDemo} ${noBody ? '正确显示无请求体' : '面板可用'}`)
+    ok(`GET 能力 ${getDemo} ${noBody ? '正确显示无请求体' : '面板可用'}`)
   }
 
   if (pageErrors.length) no(`控制台 pageerror: ${pageErrors.slice(0, 3).join(' | ')}`)
