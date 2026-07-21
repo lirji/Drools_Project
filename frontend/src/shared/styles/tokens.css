@@ -1,47 +1,53 @@
-/* 设计 token —— 忠实平移自后端 static/assets/styles.css:3-65（明/暗双主题）。
- * 保持变量名与色值不变，让既有组件语汇可无损复用；data-theme 手动覆盖 + prefers-color-scheme 自动跟随。
+/* 设计 token —— Calm Precision 视觉方向（UX 重设计 0721，FINAL_PLAN §2/§3）。
+ * 变量名一律不删不改（只改值 + 只加新名），既有组件语汇无损复用；data-theme 手动覆盖 + prefers-color-scheme 自动跟随。
  *
- * 2026-07 重设计扩展（DECISION_RECORD D4，只加不改；唯一例外：浅色 --bg 压深一档以拉开卡片/内容/侧栏三层分离）：
- * 新增 排版 scale（fs/lh/fw）+ 纵深（radius-lg/pill、shadow-md/lg、focus-ring、z 序）+ 布局尺寸（shell 系列、content-max、page-gutter、sp-7/8）。
+ * 换代要点：中性冷灰阶（拉开 bg/soft/elev/hover 四层）+ 单一 indigo 强调 + 4 档语义化阴影 + 圆角收紧 14→10。
+ * 对比度（评审 S1，已用 WCAG 精算按实际底色核）：
+ *   浅色 --text-faint #667085 = elev 4.97 / soft 4.68 / bg 4.56（全 ≥4.5 ✓；v2 计划抄的 #757c8a 仅 4.19 不达标）
+ *   暗色 --text-faint #868ea3 = bg 5.76 / elev 5.31 / soft 4.98（全 ≥4.5 ✓；原 #6b7488 仅 3.48 不达标）
+ *   --accent #4f46e5 作文字 on white 6.29:1 ✓
  *
  * 断点正典（字面量约定；CSS var 不能用于 @media 条件，故各 @media 用下列数值）：
- *   ≥1024 桌面（侧栏常驻） / 768–1023 平板（侧栏 docked 收窄、身份条内联） / <768 手机（侧栏 off-canvas 抽屉） / ≤560（身份条收 popover）。
+ *   ≥1024 桌面（侧栏常驻、多栏） / 768–1023 平板（侧栏 docked、多栏塌单列、列表卡片化） / <768 手机（侧栏 off-canvas 抽屉） / ≤560（身份条收 popover）。
  *   —— 抽屉阈值 <768（非 768–1023）：e2e-tablet-smoke 在 768 直接点 tab-new/等 tenant-bar，docked-768 使其零改保持绿。
  */
 :root {
-  --bg: #e9ecf5;          /* 重设计：由 #f4f5fb 压深一档，拉开与 --bg-soft/--bg-elev 的明度差 */
-  --bg-elev: #ffffff;
-  --bg-soft: #f7f8fc;
-  --bg-hover: #eef0f7;    /* 新增：hover 面 */
-  --border: #e6e8f0;
-  --border-strong: #d3d7e6;
-  --text: #1d2333;
-  --text-soft: #5b6478;
-  --text-faint: #98a0b3;
-  --accent: #6366f1;
-  --accent-2: #8b5cf6;
-  --accent-soft: #eef0ff;
-  --ok: #16a34a;
-  --ok-soft: #e7f7ec;
-  --warn: #d97706;
-  --err: #dc2626;
-  --err-soft: #fdecec;
-  --blue: #2563eb;
-  --blue-soft: #e8f0fe;
+  --bg: #f4f5f7;          /* 中性冷灰底 */
+  --bg-elev: #ffffff;     /* 卡片/面板抬升面 */
+  --bg-soft: #f7f8fa;     /* 次级面（工具条/表头/代码盒） */
+  --bg-hover: #eef0f4;    /* hover 面 */
+  --border: #e2e5ea;      /* 可辨边框（比旧 #e6e8f0 更清晰） */
+  --border-strong: #cdd2db;
+  --text: #1a1d26;
+  --text-soft: #59606e;   /* muted-foreground，白底 6.32:1 */
+  --text-faint: #667085;  /* 次要/提示文字，按实际底色 ≥4.56:1（评审 S1 精算） */
+  --accent: #4f46e5;      /* indigo-600（假设，可换 cobalt #2563eb / violet #7c3aed） */
+  --accent-2: #7c74ec;
+  --accent-soft: #eef2ff;
+  --accent-hover: #4338ca;/* 新增：强调色按压/悬停深一档 */
+  --accent-line: #c7d2fe; /* 新增：强调色描边/分隔 */
+  --ok: #15803d;
+  --ok-soft: #dcfce7;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;   /* 新增：warn 软底（旧仅有 --warn 无软底） */
+  --err: #b91c1c;
+  --err-soft: #fee2e2;
+  --blue: #1d4ed8;
+  --blue-soft: #dbeafe;
   --green: #15803d;
-  --green-soft: #e6f6ec;
+  --green-soft: #dcfce7;
   --gold: #b45309;
-  --gold-soft: #fdf0da;
+  --gold-soft: #fef3c7;
   --red: #b91c1c;
-  --red-soft: #fdeaea;
-  --shadow: 0 1px 2px rgba(20, 25, 50, .04), 0 8px 24px rgba(20, 25, 50, .06);
-  --shadow-sm: 0 1px 2px rgba(20, 25, 50, .06);
-  --shadow-md: 0 2px 6px rgba(20, 25, 50, .08), 0 12px 28px rgba(20, 25, 50, .08);  /* 新增 */
-  --shadow-lg: 0 8px 24px rgba(20, 25, 50, .12), 0 24px 60px rgba(20, 25, 50, .14); /* 新增：弹层/抽屉 */
-  --radius: 14px;
-  --radius-sm: 9px;
-  --radius-lg: 18px;      /* 新增 */
-  --radius-pill: 999px;   /* 新增 */
+  --red-soft: #fee2e2;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+  --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);  /* 弹层/悬浮卡 */
+  --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);/* 抽屉/模态 */
+  --radius: 10px;         /* 收紧 14→10，更方正精密 */
+  --radius-sm: 7px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
   /* spacing scale（4 的倍数） */
@@ -51,23 +57,25 @@
   --sp-4: 16px;
   --sp-5: 24px;
   --sp-6: 32px;
-  --sp-7: 40px;          /* 新增：页级留白 */
-  --sp-8: 48px;          /* 新增 */
+  --sp-7: 40px;
+  --sp-8: 48px;
   /* 触控命中区（(pointer:coarse) 下用，平板/移动 ≥44px） */
   --touch-min: 44px;
 
-  /* ---- 重设计新增：排版 scale（主题无关） ---- */
+  /* ---- 排版 scale（主题无关） ---- */
   --fs-xs: 12px;
   --fs-sm: 13px;
   --fs-md: 14px;
   --fs-lg: 16px;
   --fs-xl: 20px;
   --fs-2xl: 26px;
+  --fs-3xl: 30px;        /* 新增：首页 hero / 大标题 */
   --lh-tight: 1.25;
   --lh-normal: 1.5;
   --lh-relaxed: 1.7;
   --fw-medium: 500;
   --fw-semibold: 600;
+  --fw-bold: 700;        /* 新增：页面标题一等字重 */
 
   /* ---- 布局尺寸（主题无关） ---- */
   --shell-topbar-h: 52px;
@@ -75,10 +83,11 @@
   --content-max: 1280px;
   --page-gutter: var(--sp-5);
 
-  /* ---- z-index 数值序（主题无关）：抽屉 900 < ToastHost 硬编码 1000 → ToastHost 零改仍在最上层 ---- */
+  /* ---- z-index 数值序（主题无关）：抽屉 900 < 模态 950 < ToastHost 硬编码 1000 ---- */
   --z-sticky: 100;
   --z-dropdown: 200;
   --z-drawer: 900;
+  --z-modal: 950;        /* 新增：ConfirmDialog，在抽屉之上、toast 之下 */
   --z-toast: 1000;
 
   /* 焦点环（用 accent-soft，随主题变） */
@@ -88,38 +97,40 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --bg-hover: #222634; --border: #262b38;
-    --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
-    --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
-    --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
+    --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #868ea3;
+    --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130; --accent-hover: #a5b4fc; --accent-line: #3730a3;
+    --ok: #4ade80; --ok-soft: #16281c; --warn: #fbbf24; --warn-soft: #2a2110; --err: #f87171; --err-soft: #2a1717;
     --blue: #60a5fa; --blue-soft: #16233b; --green: #4ade80; --green-soft: #14251a;
     --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
-    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
     --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
-    --shadow-md: 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.4);
-    --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 24px 60px rgba(0,0,0,.55);
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.3);
+    --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 4px 10px rgba(0,0,0,.4);
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1117; --bg-elev: #171a23; --bg-soft: #1c2029; --bg-hover: #222634; --border: #262b38;
-  --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #6b7488;
-  --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130;
-  --ok: #4ade80; --ok-soft: #16281c; --err: #f87171; --err-soft: #2a1717;
+  --border-strong: #333a4a; --text: #e6e9f2; --text-soft: #9aa3b8; --text-faint: #868ea3;
+  --accent: #818cf8; --accent-2: #a78bfa; --accent-soft: #1e2130; --accent-hover: #a5b4fc; --accent-line: #3730a3;
+  --ok: #4ade80; --ok-soft: #16281c; --warn: #fbbf24; --warn-soft: #2a2110; --err: #f87171; --err-soft: #2a1717;
   --blue: #60a5fa; --blue-soft: #16233b; --green: #4ade80; --green-soft: #14251a;
   --gold: #fbbf24; --gold-soft: #2a2110; --red: #f87171; --red-soft: #2a1717;
-  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
   --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
-  --shadow-md: 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.4);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 24px 60px rgba(0,0,0,.55);
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.3);
+  --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 4px 10px rgba(0,0,0,.4);
 }
 :root[data-theme="light"] {
-  --bg: #e9ecf5; --bg-elev: #ffffff; --bg-soft: #f7f8fc; --bg-hover: #eef0f7; --border: #e6e8f0;
-  --border-strong: #d3d7e6; --text: #1d2333; --text-soft: #5b6478; --text-faint: #98a0b3;
-  --accent: #6366f1; --accent-2: #8b5cf6; --accent-soft: #eef0ff;
-  --ok: #16a34a; --ok-soft: #e7f7ec; --err: #dc2626; --err-soft: #fdecec;
-  --blue: #2563eb; --blue-soft: #e8f0fe; --green: #15803d; --green-soft: #e6f6ec;
-  --gold: #b45309; --gold-soft: #fdf0da; --red: #b91c1c; --red-soft: #fdeaea;
-  --shadow-md: 0 2px 6px rgba(20, 25, 50, .08), 0 12px 28px rgba(20, 25, 50, .08);
-  --shadow-lg: 0 8px 24px rgba(20, 25, 50, .12), 0 24px 60px rgba(20, 25, 50, .14);
+  --bg: #f4f5f7; --bg-elev: #ffffff; --bg-soft: #f7f8fa; --bg-hover: #eef0f4; --border: #e2e5ea;
+  --border-strong: #cdd2db; --text: #1a1d26; --text-soft: #59606e; --text-faint: #667085;
+  --accent: #4f46e5; --accent-2: #7c74ec; --accent-soft: #eef2ff; --accent-hover: #4338ca; --accent-line: #c7d2fe;
+  --ok: #15803d; --ok-soft: #dcfce7; --warn: #b45309; --warn-soft: #fef3c7; --err: #b91c1c; --err-soft: #fee2e2;
+  --blue: #1d4ed8; --blue-soft: #dbeafe; --green: #15803d; --green-soft: #dcfce7;
+  --gold: #b45309; --gold-soft: #fef3c7; --red: #b91c1c; --red-soft: #fee2e2;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+  --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);
+  --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);
 }
 
 * { box-sizing: border-box; }
@@ -134,15 +145,14 @@ body {
 }
 a { color: var(--accent); }
 
-/* 全局键盘焦点环（重设计：全站原本零 :focus-visible）。用 outline 不占布局、不被 overflow 裁剪。 */
+/* 全局键盘焦点环（全站原本零 :focus-visible）。用 outline 不占布局、不被 overflow 裁剪。 */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-/* 触控兜底（重设计）：coarse 指针下所有可交互件 ≥44px，一处堵住各组件手写 (pointer:coarse) 的缺口
- * （EditorView chip/mini、theme-btn、tabs、pager 等原先漏放大）。桌面（fine 指针）不受影响。 */
+/* 触控兜底：coarse 指针下所有可交互件 ≥44px，一处堵住各组件手写 (pointer:coarse) 的缺口。桌面（fine 指针）不受影响。 */
 @media (pointer: coarse) {
   button,
   select,
@@ -154,6 +164,11 @@ a { color: var(--accent); }
     min-height: var(--touch-min);
   }
 }
+
+/* 页面路由过渡（Phase G）：默认淡入+微位移，被下方 reduced-motion 全局兜底自动灭掉。 */
+.page-enter-active, .page-leave-active { transition: opacity .16s ease, transform .16s ease; }
+.page-enter-from { opacity: 0; transform: translateY(6px); }
+.page-leave-to { opacity: 0; transform: translateY(-4px); }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
