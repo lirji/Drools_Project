@@ -35,7 +35,7 @@ defineProps<{
 .crumb.link:hover { color: var(--accent); }
 .sep { color: var(--text-faint); }
 .row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
-.title { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-semibold); line-height: var(--lh-tight); }
-.subtitle { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--text-soft); line-height: var(--lh-normal); }
+.title { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: -.02em; }
+.subtitle { margin: var(--sp-2) 0 0; font-size: var(--fs-md); color: var(--text-soft); line-height: var(--lh-normal); }
 .actions { display: flex; align-items: center; gap: var(--sp-2); }
 </style>

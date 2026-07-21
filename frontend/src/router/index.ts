@@ -3,7 +3,8 @@ import { useAuthStore } from '@/auth/useAuthStore'
 
 // 路由在 base /ui/ 下（createWebHistory(import.meta.env.BASE_URL)），实际 URL 为 /ui/console 等。
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/console' },
+  { path: '/', redirect: '/home' },
+  { path: '/home', name: 'home', component: () => import('@/home/HomeView.vue') },
   { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
   { path: '/auth/callback', name: 'callback', component: () => import('@/views/CallbackView.vue') },
   {
@@ -26,12 +27,16 @@ const routes: RouteRecordRaw[] = [
       { path: ':demoId', name: 'demo', component: () => import('@/demos/DemoPanel.vue') },
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: '/console' },
+  { path: '/:pathMatch(.*)*', redirect: '/home' },
 ]
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes,
+  // 切页滚顶；浏览器后退/前进恢复原滚动位（配合 Phase G 路由过渡，避免长页切换后停在旧位）。
+  scrollBehavior(_to, _from, saved) {
+    return saved || { top: 0 }
+  },
 })
 
 // 路由守卫：auth 档未登录 → /login（记 returnTo）；每跳前 silent refresh。

@@ -23,10 +23,24 @@ const consoleTab = computed(() => {
 })
 const inConsole = computed(() => typeof route.path === 'string' && route.path.startsWith('/console'))
 const inDemos = computed(() => typeof route.path === 'string' && route.path.startsWith('/demos'))
+const inHome = computed(() => route.name === 'home')
 </script>
 
 <template>
   <nav class="side">
+    <div class="section">
+      <router-link
+        class="nav-item item solo"
+        :class="{ active: inHome }"
+        :to="{ name: 'home' }"
+        data-testid="nav-home"
+        @click="emit('navigate')"
+      >
+        <span class="ic"><Icon name="home" :size="18" /></span>
+        <span class="txt"><span class="label">概览</span><span class="desc">两大区域 · 最近活动</span></span>
+      </router-link>
+    </div>
+
     <div class="section">
       <router-link
         class="group-link"
@@ -102,6 +116,7 @@ const inDemos = computed(() => typeof route.path === 'string' && route.path.star
 }
 .group-link.current { color: var(--accent); }
 .items { display: flex; flex-direction: column; gap: 2px; }
+.item.solo { margin: 0; }
 .item {
   position: relative; display: flex; align-items: center; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm);

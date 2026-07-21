@@ -14,7 +14,7 @@ onMounted(async () => {
 })
 
 async function doLogin(clientId: string): Promise<void> {
-  const returnTo = (route.query.returnTo as string) || '/console'
+  const returnTo = (route.query.returnTo as string) || '/home'
   try {
     await auth.beginLogin(clientId, returnTo)
   } catch (e) {

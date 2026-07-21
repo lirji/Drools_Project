@@ -32,10 +32,10 @@ function toggleTheme(): void {
       <button class="hamburger" aria-label="打开导航" data-testid="nav-toggle" @click="$emit('toggle-nav')">
         <Icon name="menu" :size="20" />
       </button>
-      <span class="brand-link">
+      <router-link class="brand-link" :to="{ name: 'home' }" aria-label="返回概览首页">
         <span class="logo"><Icon name="logo" :size="22" /></span>
         <span class="brand">活动引擎控制台</span>
-      </span>
+      </router-link>
     </div>
     <div class="right">
       <IdentityBar />
@@ -68,6 +68,7 @@ function toggleTheme(): void {
   display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0;
   color: var(--text); text-decoration: none; border-radius: var(--radius-sm);
 }
+.brand-link:hover .brand { color: var(--accent); }
 .logo {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; border-radius: var(--radius-sm);

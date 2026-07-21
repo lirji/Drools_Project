@@ -167,7 +167,7 @@ export async function handleCallback(cfg: AuthConfig, search: string): Promise<C
   const t = (await res.json()) as { access_token?: string; expires_in?: number; refresh_token?: string }
   if (!t.access_token) throw new Error('换 token 失败: ' + JSON.stringify(t))
   const token = storeToken(t.access_token, t.expires_in ?? 3600, t.refresh_token)
-  const returnTo = sessionStorage.getItem(SS_RETURN) || '/console'
+  const returnTo = sessionStorage.getItem(SS_RETURN) || '/home'
   try {
     sessionStorage.removeItem(SS_VERIFIER)
     sessionStorage.removeItem(SS_STATE)
