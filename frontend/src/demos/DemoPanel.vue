@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
 .endpoint-bar code { overflow: hidden; flex: 1; margin-left: var(--sp-2); color: var(--text-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .endpoint-bar button { display: inline-flex; padding: 5px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
 .endpoint-bar button:hover { color: var(--accent); }
-.endpoint-bar .step { flex: 0 0 auto; margin-left: var(--sp-2); padding-left: var(--sp-3); border-left: 1px solid var(--border); color: var(--text-faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
+.endpoint-bar .step { flex: 0 0 auto; margin-left: var(--sp-2); padding-left: var(--sp-3); border-left: 1px solid var(--border); color: var(--text-faint); font-size: 9px; letter-spacing: .08em; }
 .learning-note { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); margin-top: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; background: linear-gradient(90deg, var(--accent-soft), transparent); }
 .learning-note > span { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: var(--bg-elev); color: var(--accent); }
 .learning-note strong { font-size: var(--fs-xs); }
@@ -322,7 +322,7 @@ onBeforeUnmount(() => {
 .example-section { padding: var(--sp-4); }
 .section-title, .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 .section-title > div, .card-title { display: flex; align-items: center; gap: var(--sp-3); }
-.section-number { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: var(--fw-bold); }
+.section-number { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
 .section-title h2, .card-title h2 { margin: 0; font-size: var(--fs-md); }
 .section-title p, .card-title p { margin: 1px 0 0; color: var(--text-faint); font-size: 10px; }
 .section-title > span { color: var(--text-faint); font-size: 10px; }

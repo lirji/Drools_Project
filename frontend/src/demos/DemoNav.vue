@@ -4,6 +4,9 @@ import { useRoute } from 'vue-router'
 import { GROUPS, DEMOS, type DemoDef } from './catalog'
 import Icon from '@/shared/ui/Icon.vue'
 
+defineProps<{ embedded?: boolean }>()
+const emit = defineEmits<{ (event: 'navigate'): void }>()
+
 const route = useRoute()
 const query = ref('')
 const expanded = ref(new Set<string>())
@@ -52,10 +55,10 @@ function toggle(groupId: string): void {
 </script>
 
 <template>
-  <nav class="nav" data-testid="demo-nav" aria-label="规则能力导航">
-    <router-link class="catalog-link" :to="{ name: 'demos' }" :class="{ active: route.name === 'demos' }">
+  <component :is="embedded ? 'div' : 'nav'" class="nav" :class="{ embedded }" data-testid="demo-nav" :aria-label="embedded ? undefined : '规则能力导航'">
+    <router-link class="catalog-link" :to="{ name: 'demos' }" :class="{ active: route.name === 'demos' }" @click="emit('navigate')">
       <span class="catalog-icon"><Icon name="flask" :size="18" /></span>
-      <span><strong>规则能力中心</strong><small>返回能力目录</small></span>
+      <span><strong>{{ embedded ? '能力目录' : '规则能力中心' }}</strong><small>{{ embedded ? '全部能力分组' : '返回能力目录' }}</small></span>
       <Icon name="chevron-right" :size="16" />
     </router-link>
 
@@ -99,6 +102,7 @@ function toggle(groupId: string): void {
             :class="{ active: activeId === demo.id }"
             :to="{ name: 'demo', params: { demoId: demo.id } }"
             :data-testid="'demo-nav-' + demo.id"
+            @click="emit('navigate')"
           >
             <span class="rail-dot" />
             <span class="item-copy">
@@ -115,11 +119,12 @@ function toggle(groupId: string): void {
       <Icon name="search" :size="20" />
       <span>没有匹配的能力</span>
     </div>
-  </nav>
+  </component>
 </template>
 
 <style scoped>
 .nav { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.nav.embedded { gap: var(--sp-2); padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
 .catalog-link { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border-radius: var(--radius-sm); color: var(--text); text-decoration: none; }
 .catalog-link:hover, .catalog-link.active { background: var(--accent-soft); color: var(--accent); }
 .catalog-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
@@ -161,7 +166,7 @@ function toggle(groupId: string): void {
 .item-copy small { margin-top: 1px; color: var(--text-faint); font-family: var(--mono); font-size: 8px; }
 .item-copy b { font-weight: var(--fw-bold); }
 .item-copy b.get { color: var(--blue); } .item-copy b.post { color: var(--accent); }
-.item-step { color: var(--text-faint); font-family: var(--mono); font-size: 9px; }
+.item-step { color: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
 .nav-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); padding: var(--sp-5); color: var(--text-faint); font-size: var(--fs-xs); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 @media (max-width: 1023px) {
@@ -171,6 +176,9 @@ function toggle(groupId: string): void {
   .nav-search { grid-column: 2; grid-row: 1; }
   .nav-caption { display: none; }
   .group-list, .nav-empty { grid-column: 2; grid-row: 2 / span 2; max-height: 220px; overflow-y: auto; }
+  .nav.embedded { display: flex; }
+  .nav.embedded .catalog-link, .nav.embedded .now-running, .nav.embedded .nav-search, .nav.embedded .group-list, .nav.embedded .nav-empty { grid-column: auto; grid-row: auto; }
+  .nav.embedded .group-list, .nav.embedded .nav-empty { max-height: none; overflow: visible; }
 }
 @media (max-width: 640px) {
   .nav { display: flex; }
