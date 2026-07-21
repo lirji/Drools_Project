@@ -4,6 +4,7 @@ import type { GroupNode, DictField, DictOperator } from '@/shared/types'
 import { isGroup } from '@/shared/types'
 import { emptyLeaf, emptyGroup } from '../logic'
 import ConditionLeaf from './ConditionLeaf.vue'
+import Icon from '@/shared/ui/Icon.vue'
 
 const props = defineProps<{
   node: GroupNode
@@ -11,6 +12,7 @@ const props = defineProps<{
   operators: DictOperator[]
   depth: number
   root?: boolean
+  errors?: Map<string, string>
 }>()
 const emit = defineEmits<{ remove: [] }>()
 
@@ -43,9 +45,9 @@ function removeChild(i: number): void {
         </button>
       </div>
       <span class="spacer" />
-      <button class="mini" data-testid="add-cond" @click="addCond">+ 条件</button>
-      <button class="mini" :disabled="depth >= MAX_DEPTH" data-testid="add-group" @click="addGroup">+ 分组</button>
-      <button v-if="!root" class="mini danger" data-testid="del-group" @click="emit('remove')">🗑 删组</button>
+      <button class="mini" data-testid="add-cond" @click="addCond"><Icon name="plus" :size="14" /><span>条件</span></button>
+      <button class="mini" :disabled="depth >= MAX_DEPTH" data-testid="add-group" @click="addGroup"><Icon name="plus" :size="14" /><span>分组</span></button>
+      <button v-if="!root" class="mini danger" data-testid="del-group" @click="emit('remove')"><Icon name="trash" :size="14" /><span>删组</span></button>
     </div>
 
     <div class="children">
@@ -57,6 +59,7 @@ function removeChild(i: number): void {
           :fields="fields"
           :operators="operators"
           :depth="depth + 1"
+          :errors="errors"
           @remove="removeChild(i)"
         />
         <ConditionLeaf
@@ -64,6 +67,7 @@ function removeChild(i: number): void {
           :node="child"
           :fields="fields"
           :operators="operators"
+          :errors="errors"
           @remove="removeChild(i)"
         />
       </template>
@@ -78,9 +82,11 @@ function removeChild(i: number): void {
 .spacer { flex: 1; }
 .chip { padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 999px; background: var(--bg-elev); color: var(--text); font-size: 12px; cursor: pointer; }
 .chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.mini { padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-size: 12px; cursor: pointer; }
+.mini { display: inline-flex; align-items: center; gap: 3px; padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-size: 12px; cursor: pointer; transition: background .12s ease; }
+.mini:hover:not(:disabled) { background: var(--bg-hover); }
 .mini:disabled { opacity: .5; cursor: not-allowed; }
-.mini.danger { color: var(--red); }
+.mini.danger { color: var(--err); }
+.mini.danger:hover { background: var(--err-soft); }
 .children { border-left: 2px solid var(--border); margin-left: var(--sp-2); padding-left: var(--sp-3); margin-top: var(--sp-2); }
 .empty { color: var(--text-faint); font-size: 12px; padding: var(--sp-1) 0; }
 @media (pointer: coarse) { .mini, .chip { min-height: var(--touch-min); } }

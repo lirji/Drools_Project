@@ -126,6 +126,38 @@ export interface ValidationError {
   msg: string
 }
 
+/** 单叶校验原因：无效返回一句人话，有效返回 ''（供条件树逐叶行内定位，纯函数可单测）。 */
+export function leafErrorReason(leaf: LeafNode, operators: DictOperator[]): string {
+  if (!leaf.field) return '未选字段'
+  if (!leaf.op) return '未选运算符'
+  const operand = operandOf(leaf.op, operators)
+  if (operand === 'RANGE') {
+    const v = Array.isArray(leaf.value) ? leaf.value : ['', '']
+    if (v[0] === '' || v[1] === '') return '区间需填上下界'
+  } else if (operand === 'LIST') {
+    if (!Array.isArray(leaf.value) || leaf.value.length === 0) return '列表需至少一个值'
+  } else if (leaf.value === '' || leaf.value == null) {
+    return '需填值'
+  }
+  return ''
+}
+
+/** 遍历原始树（保留 id），收集无效叶子的 id→原因，供 EditorView 提交后逐叶显红。空组不计（提交时自动剪除=恒通过）。 */
+export function invalidLeafReasons(node: ConditionNode | null, operators: DictOperator[]): Map<string, string> {
+  const map = new Map<string, string>()
+  function walk(n: ConditionNode): void {
+    if (isGroup(n)) {
+      n.children.forEach(walk)
+      return
+    }
+    const leaf = n as LeafNode
+    const reason = leafErrorReason(leaf, operators)
+    if (reason && leaf.id) map.set(leaf.id, reason)
+  }
+  if (node) walk(node)
+  return map
+}
+
 /** 条件树值校验：RANGE 需 2 非空、LIST 需非空、SCALAR 需非空（对齐后端白名单，先于 /preview 挡） */
 export function validateTree(node: ConditionNode | null, operators: DictOperator[], path = 'root'): ValidationError[] {
   if (!node) return []

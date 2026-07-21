@@ -8,7 +8,7 @@ import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import {
   uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder, parseLadder,
-  pruneTree, assignIds, emptyGroup, validateTree, type LadderRow,
+  pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons, type LadderRow,
 } from '../logic'
 import type { ActivityCreateRequest, GroupNode } from '@/shared/types'
 import ConditionGroup from '../condition-tree/ConditionGroup.vue'
@@ -70,6 +70,11 @@ const submitErr = ref('')
 const saved = ref<{ activityId: string; version: number; autoBoundCount: number; idempotentHit: boolean } | null>(null)
 const dirty = ref(false)
 const previewState = ref<{ kind: 'idle' | 'pending' | 'ok' | 'err'; msg: string; drl?: string }>({ kind: 'idle', msg: '' })
+// 条件树逐叶行内错误：预览/提交尝试后才显（避免打字中闪红），之后随修复实时收敛。
+const showTreeErrors = ref(false)
+const treeErrors = computed(() =>
+  showTreeErrors.value ? invalidLeafReasons(dr.tree, dictData.value?.operators || []) : undefined,
+)
 
 const dictData = computed(() => dict.cache['__default__'] || null)
 const enabledTypes = computed(() => (dictData.value?.activityTypes || []).filter((t) => t.code === 1 || t.code === 5))
@@ -125,6 +130,7 @@ async function loadForEdit(id: string): Promise<void> {
 }
 
 async function doPreview(): Promise<void> {
+  showTreeErrors.value = true // 预览即暴露逐叶错误定位
   const pruned = pruneTree(dr.tree)
   if (!pruned) { previewState.value = { kind: 'ok', msg: '空条件树：所有用户恒通过' }; return }
   previewState.value = { kind: 'pending', msg: '编译中…' }
@@ -279,7 +285,7 @@ onBeforeRouteLeave(async () => {
         <!-- ⑤ 条件树 -->
         <div class="sec-title">⑤ 资格条件 (白名单条件树)</div>
         <div class="hint">空条件树 = 所有用户恒通过。字段/运算符只能从后端白名单选，服务端翻译成受控 Drools，不接受裸 DRL。</div>
-        <ConditionGroup v-if="dictData" :node="dr.tree" :fields="dictData.fields" :operators="dictData.operators" :depth="0" :root="true" />
+        <ConditionGroup v-if="dictData" :node="dr.tree" :fields="dictData.fields" :operators="dictData.operators" :depth="0" :root="true" :errors="treeErrors" />
         <div class="preview-bar">
           <button class="mini" data-testid="preview-btn" @click="doPreview">预览条件 (试编译)</button>
           <span v-if="previewState.kind !== 'idle'" class="pv-status" :class="'pv-' + previewState.kind" data-testid="preview-status">{{ previewState.msg }}</span>

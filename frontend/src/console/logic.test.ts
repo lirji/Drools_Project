@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   pruneTree, cleanLadder, parseLadder, validateTree, emptyValue, operandOf,
   toEpoch, isoToLocal, splitNums, splitStrs, assignIds, nodeId,
+  invalidLeafReasons, leafErrorReason,
 } from './logic'
 import type { ConditionNode, DictOperator, GroupNode, LeafNode } from '@/shared/types'
 
@@ -87,6 +88,35 @@ describe('validateTree', () => {
   })
   it('空树无错', () => {
     expect(validateTree(null, OPS)).toEqual([])
+  })
+})
+
+describe('leafErrorReason / invalidLeafReasons（逐叶行内定位）', () => {
+  it('leafErrorReason 各 operand 的原因文案', () => {
+    expect(leafErrorReason({ field: '', op: 'eq', value: '' }, OPS)).toBe('未选字段')
+    expect(leafErrorReason({ field: 'age', op: '', value: '' }, OPS)).toBe('未选运算符')
+    expect(leafErrorReason({ field: 'age', op: 'eq', value: '' }, OPS)).toBe('需填值')
+    expect(leafErrorReason({ field: 'age', op: 'between', value: ['1', ''] }, OPS)).toBe('区间需填上下界')
+    expect(leafErrorReason({ field: 'tag', op: 'in', value: [] }, OPS)).toBe('列表需至少一个值')
+    expect(leafErrorReason({ field: 'age', op: 'eq', value: '18' }, OPS)).toBe('')
+  })
+
+  it('invalidLeafReasons 收集无效叶子 id→原因，有效不计', () => {
+    const bad: LeafNode = { id: 'L1', field: 'age', op: 'eq', value: '' }
+    const good: LeafNode = { id: 'L2', field: 'age', op: 'eq', value: '18' }
+    const tree: GroupNode = {
+      id: 'g', logic: 'AND',
+      children: [bad, good, { id: 'g2', logic: 'OR', children: [{ id: 'L3', field: 'tag', op: 'in', value: [] }] }],
+    }
+    const m = invalidLeafReasons(tree, OPS)
+    expect(m.get('L1')).toBe('需填值')
+    expect(m.get('L3')).toBe('列表需至少一个值')
+    expect(m.has('L2')).toBe(false)
+    expect(m.size).toBe(2)
+  })
+
+  it('空树返回空 Map', () => {
+    expect(invalidLeafReasons(null, OPS).size).toBe(0)
   })
 })
 

@@ -4,10 +4,13 @@ import { computed } from 'vue'
 import type { LeafNode, DictField, DictOperator } from '@/shared/types'
 import { operandOf, fieldByKey, emptyValue } from '../logic'
 import ValueControl from './ValueControl.vue'
+import Icon from '@/shared/ui/Icon.vue'
 
-const props = defineProps<{ node: LeafNode; fields: DictField[]; operators: DictOperator[] }>()
+// errors 可选（默认 undefined=不显红）：提交后由 EditorView 下发 id→原因；单元测试不传即零错误态。
+const props = defineProps<{ node: LeafNode; fields: DictField[]; operators: DictOperator[]; errors?: Map<string, string> }>()
 const emit = defineEmits<{ remove: [] }>()
 
+const myError = computed(() => (props.node.id ? props.errors?.get(props.node.id) : '') || '')
 const curField = computed(() => fieldByKey(props.node.field, props.fields) || props.fields[0])
 const opsForField = computed(() => curField.value?.operators || [])
 const operand = computed(() => operandOf(props.node.op, props.operators))
@@ -33,27 +36,37 @@ function onOpChange(e: Event): void {
 </script>
 
 <template>
-  <div class="leaf" data-testid="cond-leaf">
-    <select class="sel" :value="node.field" aria-label="字段" data-testid="leaf-field" @change="onFieldChange">
-      <option v-for="f in fields" :key="f.key" :value="f.key">{{ f.label }}</option>
-    </select>
-    <select class="sel" :value="node.op" aria-label="运算符" data-testid="leaf-op" @change="onOpChange">
-      <option v-for="c in opsForField" :key="c" :value="c">{{ opLabel(c) }}</option>
-    </select>
-    <ValueControl :operand="operand" v-model="node.value" />
-    <button class="del" aria-label="删除条件" data-testid="leaf-del" @click="emit('remove')">✕</button>
+  <div class="leaf-wrap">
+    <div class="leaf" :class="{ 'has-error': !!myError }" data-testid="cond-leaf">
+      <select class="sel" :value="node.field" aria-label="字段" data-testid="leaf-field" @change="onFieldChange">
+        <option v-for="f in fields" :key="f.key" :value="f.key">{{ f.label }}</option>
+      </select>
+      <select class="sel" :value="node.op" aria-label="运算符" data-testid="leaf-op" @change="onOpChange">
+        <option v-for="c in opsForField" :key="c" :value="c">{{ opLabel(c) }}</option>
+      </select>
+      <ValueControl :operand="operand" v-model="node.value" />
+      <button class="del" aria-label="删除条件" data-testid="leaf-del" @click="emit('remove')">
+        <Icon name="x" :size="15" />
+      </button>
+    </div>
+    <span v-if="myError" class="leaf-err">{{ myError }}</span>
   </div>
 </template>
 
 <style scoped>
-.leaf { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-1) 0; }
+.leaf-wrap { padding: var(--sp-1) 0; }
+.leaf { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.leaf.has-error .sel { border-color: var(--err); }
+.leaf-err { display: block; font-size: var(--fs-xs); color: var(--err); margin-top: 2px; }
 .sel {
   padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text);
 }
 .del {
-  border: 1px solid var(--border); background: var(--bg-soft); color: var(--red);
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); background: var(--bg-soft); color: var(--err);
   border-radius: var(--radius-sm); padding: var(--sp-1) var(--sp-2); cursor: pointer;
 }
+.del:hover { background: var(--err-soft); }
 @media (pointer: coarse) { .del { min-width: var(--touch-min); min-height: var(--touch-min); } }
 </style>
