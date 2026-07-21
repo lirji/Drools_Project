@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { createActivity, getDetail, previewTree } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
 import { useToast } from '@/shared/useToast'
+import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import {
   uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder, parseLadder,
@@ -22,6 +23,7 @@ const route = useRoute()
 const router = useRouter()
 const dict = useDictStore()
 const toast = useToast()
+const { confirm } = useConfirm()
 const editId = computed(() => (route.name === 'activity-edit' ? (route.params.id as string) : null))
 
 interface Draft {
@@ -178,9 +180,15 @@ async function submit(): Promise<void> {
   }
 }
 
-onBeforeRouteLeave(() => {
+onBeforeRouteLeave(async () => {
   if (dirty.value && !saved.value) {
-    return window.confirm('有未保存的改动，确定离开？')
+    return await confirm({
+      title: '放弃未保存的改动？',
+      body: '当前表单有未保存的编辑，离开后这些改动将丢失。',
+      confirmText: '放弃并离开',
+      cancelText: '继续编辑',
+      danger: true,
+    })
   }
   return true
 })

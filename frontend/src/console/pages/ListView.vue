@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { listActivities, changeStatus } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
 import { useToast } from '@/shared/useToast'
+import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import type { ActivityListRow } from '@/shared/types'
 import Skeleton from '@/shared/ui/Skeleton.vue'
@@ -16,6 +17,7 @@ import EmptyState from '@/shared/ui/EmptyState.vue'
 const router = useRouter()
 const dict = useDictStore()
 const toast = useToast()
+const { confirm } = useConfirm()
 
 const rows = ref<ActivityListRow[]>([])
 const loading = ref(false)
@@ -68,6 +70,16 @@ async function load(): Promise<void> {
 
 async function toggleStatus(row: ActivityListRow): Promise<void> {
   const target = row.activityStatus === 1 ? 2 : 1
+  const goOffline = target === 2
+  const ok = await confirm({
+    title: goOffline ? `下线「${row.activityName}」？` : `上线「${row.activityName}」？`,
+    body: goOffline
+      ? '下线后该活动立即停止参与决策命中，可再次上线恢复。'
+      : '上线后该活动立即参与线上优惠决策。',
+    confirmText: goOffline ? '下线' : '上线',
+    danger: goOffline,
+  })
+  if (!ok) return
   const r = await changeStatus(row.activityId, row.version, target)
   if (!r.ok) {
     toast.err(errText(r))

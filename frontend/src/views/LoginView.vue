@@ -2,11 +2,13 @@
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/auth/useAuthStore'
+import Icon from '@/shared/ui/Icon.vue'
 
 const auth = useAuthStore()
 const route = useRoute()
 const clients = ref<Array<{ tenant: string; clientId: string }>>([])
 const err = ref('')
+const pending = ref('') // 正在跳转的 clientId（防重复点击）
 
 onMounted(async () => {
   await auth.ensureConfig()
@@ -14,11 +16,16 @@ onMounted(async () => {
 })
 
 async function doLogin(clientId: string): Promise<void> {
+  if (pending.value) return
+  pending.value = clientId
+  err.value = ''
   const returnTo = (route.query.returnTo as string) || '/home'
   try {
     await auth.beginLogin(clientId, returnTo)
+    // 成功时页面已跳转 Casdoor，不复位 pending
   } catch (e) {
     err.value = (e as Error).message
+    pending.value = ''
   }
 }
 </script>
@@ -36,10 +43,12 @@ async function doLogin(clientId: string): Promise<void> {
           v-for="w in clients"
           :key="w.clientId"
           class="run-btn"
+          :disabled="!!pending"
           :data-testid="'login-' + w.tenant"
           @click="doLogin(w.clientId)"
         >
-          🔐 登录 {{ w.tenant }}
+          <Icon name="log-in" :size="16" />
+          <span>{{ pending === w.clientId ? '跳转中…' : '登录 ' + w.tenant }}</span>
         </button>
       </div>
       <p v-if="!clients.length" class="err">auth-config 未配置 web-client-map，无可用登录应用。</p>
@@ -59,9 +68,13 @@ async function doLogin(clientId: string): Promise<void> {
 .hint, .pick { font-size: 13px; color: var(--text-soft); line-height: 1.6; }
 .btns { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin-top: var(--sp-4); }
 .run-btn {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
   min-height: var(--touch-min); padding: 0 var(--sp-5);
   border: none; border-radius: var(--radius-sm);
   background: var(--accent); color: #fff; font-size: 14px; cursor: pointer;
+  transition: background .12s ease;
 }
+.run-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.run-btn:disabled { opacity: .6; cursor: progress; }
 .err { color: var(--err); font-size: 13px; margin-top: var(--sp-3); }
 </style>

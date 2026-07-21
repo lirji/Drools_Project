@@ -11,6 +11,7 @@ import AppLayout from './AppLayout.vue'
 import SidebarNav from './SidebarNav.vue'
 import TopBar from './TopBar.vue'
 import { useAuthStore } from '@/auth/useAuthStore'
+import { lockScroll, unlockScroll } from '@/shared/useScrollLock'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,18 +33,20 @@ watch(
   },
 )
 
-// 抽屉开时锁 body 滚动
+// 抽屉开时锁 body 滚动（计数式，与 ConfirmDialog 共用不互踩）
 watch(drawerOpen, (open) => {
-  document.body.style.overflow = open ? 'hidden' : ''
+  if (open) lockScroll()
+  else unlockScroll()
 })
 
 function onKey(e: KeyboardEvent): void {
-  if (e.key === 'Escape') closeDrawer()
+  // 抽屉开着才响应 Esc 关抽屉；否则让位给上层（ConfirmDialog 自己 addEventListener 处理 Esc）
+  if (e.key === 'Escape' && drawerOpen.value) closeDrawer()
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onUnmounted(() => {
   window.removeEventListener('keydown', onKey)
-  document.body.style.overflow = ''
+  if (drawerOpen.value) unlockScroll()
 })
 </script>
 

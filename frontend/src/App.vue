@@ -8,6 +8,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppShell from '@/shared/layout/AppShell.vue'
 import ToastHost from '@/shared/ui/ToastHost.vue'
+import ConfirmDialog from '@/shared/ui/ConfirmDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,4 +29,5 @@ const isBare = computed(() => route.name === 'login' || route.name === 'callback
     <router-view v-else />
   </template>
   <ToastHost />
+  <ConfirmDialog />
 </template>
