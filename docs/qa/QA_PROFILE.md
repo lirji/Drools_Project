@@ -11,9 +11,8 @@
   - ⚠️ **坑1**：本机 8081/8082 常被 Docker 容器占用 → 换端口：`-Dspring-boot.run.arguments="--server.port=8097"`。
   - ⚠️ **坑2**：`h2` profile 用 **file 库**（console `./data/drools-demo` / decision `./data/decision`，单连接锁）→ **同一 file 库不能两个 app 同开**。QA 起干净实例请覆盖内存库：`--spring.datasource.url=jdbc:h2:mem:qadev;DB_CLOSE_DELAY=-1;MODE=MySQL --spring.jpa.hibernate.ddl-auto=create-drop`。
   - **前端 SPA 需先构建**：`-Pfrontend`（`./mvnw -pl activity-console -Pfrontend spring-boot:run …`）把 Vue 产物拷进 `static/ui/`，或本地 `cd frontend && npm run dev`（Vite :5173）。不构建时 `/ui/` 404、根 `/` 只是落地页。
-  - **整套微服务编排**（两 app + nginx 网关 host `:8095` + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）：`docker compose -f deploy/docker-compose.yml up --build` → 网关 `http://localhost:8095/ui/console`。
-- **Casdoor 档（auth 开，决策 API 端到端）**：加 `--activity.tenant.auth.enabled=true --activity.tenant.dev-default-enabled=false`；
-  真 token 端到端由用户 `!` 跑 `scratchpad/casdoor-m2m-verify.sh`（涉及 IdP secret，auto-mode 拦，须用户授权）。
+  - **整套微服务编排**（两 app + frontend nginx 网关 host `:8095` + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）：`./deploy.sh --provision-auth` → 网关 `http://localhost:8095/ui/console`。Compose 默认 auth 开、dev-default 关。
+- **Casdoor 档（auth 开，console + decision API 端到端）**：本机 Casdoor `:8000` 启动后用 `./deploy.sh --provision-auth` 幂等登记 8095 callback；真实浏览器回归为 `BASE=http://localhost:8095 npm --prefix frontend run e2e:oidc`。
 
 ## 入口 / 健康检查
 - 健康：`GET /actuator/health` → 200（console 8081 / decision 8082 各一个）。
@@ -23,14 +22,14 @@
 
 ## 多租户测试要点（本项目特有）
 - **租户来源**：dev 档从 `X-Tenant-Id` header；auth 档从 JWT 的 `aud` 解析。
-- **前端**：活动台顶部「租户 (X-Tenant-Id)」切换条（输入 + acme/beta/__dev__ 快捷，localStorage 记忆），切租户即换数据视图。
+- **前端**：dev 档显示 `X-Tenant-Id` 切换条；auth 档显示 token tenant/actor 与退出按钮，并使用 PKCE + sessionStorage Bearer。
 - **隔离断言**：A（X-Tenant-Id: acme）建的活动，B（beta）列表/详情/优惠查询都看不到；detail 越权 → 400。
 - **保留值**：`X-Tenant-Id: __no_tenant__` → 400（保留哨兵不可冒充）；非法字符 → 400；无 header + dev-default → 回落 `__dev__`。
 
 ## 凭据
-- dev 档无需凭据（header 即身份，仅本地）。Casdoor 档：admin/123（Casdoor 后台，`localhost:8000`）；机器 token 由 provision 脚本铸。
+- dev 档无需凭据（header 即身份，仅本地）。浏览器 Casdoor 档：`acme/act-alice`（`act-alice-dev-pass-01`）、`beta/act-bob`（`act-bob-dev-pass-02`）；机器 token 由 M2M provision 脚本铸。
 
 ## 测试素材
 - 接口 + curl 示例：`docs/activity-marketing.md`。
-- 回归单测：`./mvnw test`（全 reactor **111 绿** 3 skip：common 63 / console 40 / decision 8；含 `TenantIsolationTest`/`AudienceTenantResolutionTest`/`ActivityAuthIntegrationTest`/`RoleGateDecisionTest`/`GenerationWarmPollerTest` 等）。
-- UI：**本环境无 Playwright MCP**，交互式 UI 用例暂只能人工或结构性验证。
+- 回归单测：`./mvnw package`（全 reactor **115 绿**、3 skip：common 63 / console 40 / decision 12；含 `DecisionAuthIntegrationTest` 的 decision 401/403/200 边界）。
+- UI：仓库 Playwright OIDC E2E 已在 `:8095` + 真 Casdoor 运行，**12/12**（登录、Bearer console/decision、租户冒充 403、创建、登出、新 context、beta 隔离）。

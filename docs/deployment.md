@@ -27,9 +27,11 @@ h2 profile 用 file 库（console `./data/drools-demo`、decision `./data/decisi
 ## 容器编排（`deploy/docker-compose.yml`）
 
 ```bash
-docker compose -f deploy/docker-compose.yml up --build
+./deploy.sh --provision-auth
 # 网关：http://localhost:8095/ui/console
 ```
+
+`--provision-auth` 只用于本机 dev Casdoor：它幂等登记 acme/beta public SPA client、`http://localhost:8095/ui/auth/callback` 与测试用户，不把 client secret 写入浏览器或 Compose。若 Casdoor 资源已存在，可直接运行 `./deploy.sh`。
 
 服务与宿主端口：
 
@@ -43,6 +45,39 @@ docker compose -f deploy/docker-compose.yml up --build
 | `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
 
 **镜像构建**：单个 `deploy/Dockerfile`，一个 build 阶段构建整个 reactor，运行阶段 `ARG MODULE` 选装某 app 的 jar；compose 用不同 `--build-arg MODULE` 出两镜像（build 阶段共享层缓存）。`.dockerignore` 排除 `node_modules`/`target`/`deploy`/`docs` 等，保持上下文精简、避免无谓 rebuild。
+
+## Casdoor 认证档（默认）
+
+Compose 对 console 与 decision 同时启用 JWT resource server；控制台路径 `/activity-marketing/**` 和决策路径 `/decision/v1/**` 都会验签，并从已验证 token 的 `aud` 解析 tenant。公开 UI、health 与 `GET /activity-marketing/auth-config` 不要求登录。
+
+| 环境变量 | 本地默认值 | 用途 |
+| --- | --- | --- |
+| `DROOLS_AUTH_ENABLED` | `true` | 同时启停两个后端的 auth |
+| `DROOLS_DEV_DEFAULT_ENABLED` | `false` | auth 档必须保持 false |
+| `DROOLS_CASDOOR_ISSUER` | `http://localhost:8000` | JWT `iss` 与浏览器可见 issuer |
+| `DROOLS_CASDOOR_JWK_SET_URI` | `http://host.docker.internal:8000/.well-known/jwks` | 容器访问 Casdoor JWKS |
+| `DROOLS_CASDOOR_AUTHORIZE_ENDPOINT` | `http://localhost:8000/login/oauth/authorize` | 浏览器 authorize 地址 |
+| `DROOLS_CASDOOR_TOKEN_ENDPOINT` | `http://localhost:8000/api/login/oauth/access_token` | PKCE 换 token 地址 |
+| `DROOLS_REDIRECT_URI` | `http://localhost:8095/ui/auth/callback` | 须精确登记在 Casdoor SPA client |
+
+生产环境应把浏览器可见的 issuer/authorize/token/redirect 全部覆盖为同一套 HTTPS 公网域名；JWK URI 可以使用容器内部可达地址，但 issuer 校验值必须与 token 中的 `iss` 完全一致。
+
+最小验收：
+
+```bash
+curl http://localhost:8095/activity-marketing/auth-config  # 200, authEnabled=true，无 secret
+curl -i http://localhost:8095/activity-marketing/list      # 401
+curl -i -X POST http://localhost:8095/api/decision/spu-discount \
+  -H 'Content-Type: application/json' \
+  -d '{"spuIdList":[9001],"userId":1,"userTags":[],"orderAmount":200,"quantity":1}' # 401
+BASE=http://localhost:8095 npm --prefix frontend run e2e:oidc
+```
+
+本地紧急回滚到 header-only 档（不改镜像、不迁移数据）：
+
+```bash
+DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
+```
 
 ## 网关前缀分流（`deploy/nginx.conf`）
 
@@ -67,6 +102,8 @@ docker compose -f deploy/docker-compose.yml up --build
 - Grafana 面板 **Activity Services · console / decision**：HTTP 速率/时延、JVM heap、NonHeap(Metaspace = KieBase 缓存足迹)、CPU、线程——按 `application` tag 区分 `drools-demo`(console) / `drools-decision`(decision)。数据源 + 面板由 `deploy/grafana/provisioning` 自动装配。
 
 ## 容灾行为（kill-gate，已 live 实证）
+
+下表在 auth 档下调用 decision 时需携带有效 Bearer；匿名请求固定为 401，不能用于判断服务存活。
 
 | 场景 | decision `/api/decision/*` | console `/hello` 等 | 结论 |
 | ---- | :--: | :--: | ---- |

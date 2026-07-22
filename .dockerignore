@@ -4,13 +4,14 @@
 .idea
 **/node_modules
 frontend/node
-frontend/dist
+frontend/.env*.local
 **/data
 data
 *.log
 scratchpad
 # 这些不参与 maven 构建；排除后改它们不会使 `COPY . .` 层缓存失效（避免无谓重跑 maven）
-deploy
+deploy/*
+!deploy/nginx.conf
 docs
 *.md
 .dockerignore

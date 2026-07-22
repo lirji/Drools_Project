@@ -1,17 +1,18 @@
 # 微服务化本地编排（M2.1/M2.2）—— 读写平面**物理拆分**为两个 Spring Boot 应用 + nginx 网关 + MySQL 单库双账号。
-# 两个独立镜像：activity-console(写面 + Step1-18 + SPA) / activity-decision(只读决策，甩掉 kie-ci/dmn，jar 轻 37MB)。
+# 三个独立镜像：activity-console(写面 + Step1-18) / activity-decision(只读决策) / activity-frontend(Vue + nginx 网关)。
 # （M1.3 那版是"同一镜像按 activity.role 扮演两角色"；M2.1 后改为真物理拆分，各自独立镜像/依赖集/进程。）
 #
-#   docker compose -f deploy/docker-compose.yml up --build
+#   ./deploy.sh --provision-auth
 #   浏览器开 http://localhost:8095/ui/console
 #
 # 拆分价值演示（gate：kill console 决策仍服务 / kill decision 不伤 console）：
 #   docker compose -f deploy/docker-compose.yml stop console
 #   curl -s -XPOST http://localhost:8095/api/decision/spu-discount -H 'Content-Type: application/json' \
-#        -H 'X-Tenant-Id: acme' -d '{"spuIdList":[9001],"userId":1,"userTags":[],"orderAmount":200,"quantity":1}'
+#        -H 'Authorization: Bearer <valid-acme-token>' -d '{"spuIdList":[9001],"userId":1,"userTags":[],"orderAmount":200,"quantity":1}'
 #   （console 挂了，decision 独立存活并决策；反之 stop decision 不影响 /ui 与 Step1~18）
 #
-# auth 档（Casdoor）：默认走 dev 档（无鉴权，X-Tenant-Id 即身份）。要接本机 Casdoor 见 application-mysql.yml。
+# auth 档（Casdoor）：本编排默认启用 OIDC/JWT；可临时用 DROOLS_AUTH_ENABLED=false 回到 header-only dev 档。
+# 浏览器访问 localhost:8000，容器拉 JWKS 走 host.docker.internal；生产请用环境变量覆盖为真实 HTTPS 域名。
 services:
   mysql:
     image: mysql:8.0
@@ -28,7 +29,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # 控制台服务：写面 + Step1~18 + SPA 托管 + 唯一 DDL 执行者。用 root（读写 + 建表）。
+  # 控制台服务：写面 + Step1~18 + 唯一 DDL 执行者。用 root（读写 + 建表）；JAR 内 SPA 仅作后备。
   console:
     build:
       context: ..
@@ -45,6 +46,15 @@ services:
       DB_USERNAME: root
       DB_PASSWORD: rootpass
       SPRING_JPA_HIBERNATE_DDL_AUTO: update   # console 是唯一 DDL 执行者
+      ACTIVITY_TENANT_AUTH_ENABLED: "${DROOLS_AUTH_ENABLED:-true}"
+      ACTIVITY_TENANT_DEV_DEFAULT_ENABLED: "${DROOLS_DEV_DEFAULT_ENABLED:-false}"
+      ACTIVITY_TENANT_AUTH_ISSUER: "${DROOLS_CASDOOR_ISSUER:-http://localhost:8000}"
+      ACTIVITY_TENANT_AUTH_JWK_SET_URI: "${DROOLS_CASDOOR_JWK_SET_URI:-http://host.docker.internal:8000/.well-known/jwks}"
+      ACTIVITY_TENANT_AUTH_AUTHORIZE_ENDPOINT: "${DROOLS_CASDOOR_AUTHORIZE_ENDPOINT:-http://localhost:8000/login/oauth/authorize}"
+      ACTIVITY_TENANT_AUTH_TOKEN_ENDPOINT: "${DROOLS_CASDOOR_TOKEN_ENDPOINT:-http://localhost:8000/api/login/oauth/access_token}"
+      ACTIVITY_TENANT_AUTH_REDIRECT_URI: "${DROOLS_REDIRECT_URI:-http://localhost:8095/ui/auth/callback}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mysql: { condition: service_healthy }
     # 健康 = 已连库 + 建好 schema（actuator health 含 db 探针）。decision 据此等 console 建表完成再 validate。
@@ -72,16 +82,32 @@ services:
       DECISION_DB_USERNAME: decision_ro       # 只读账号（mysql-init 建）；应用层再叠 validate 双保险
       DECISION_DB_PASSWORD: decision_ro_pass
       SPRING_JPA_HIBERNATE_DDL_AUTO: validate  # 决策不碰 DDL；只读账号建表也会被 MySQL 拒
+      ACTIVITY_TENANT_AUTH_ENABLED: "${DROOLS_AUTH_ENABLED:-true}"
+      ACTIVITY_TENANT_DEV_DEFAULT_ENABLED: "${DROOLS_DEV_DEFAULT_ENABLED:-false}"
+      ACTIVITY_TENANT_AUTH_ISSUER: "${DROOLS_CASDOOR_ISSUER:-http://localhost:8000}"
+      ACTIVITY_TENANT_AUTH_JWK_SET_URI: "${DROOLS_CASDOOR_JWK_SET_URI:-http://host.docker.internal:8000/.well-known/jwks}"
+      ACTIVITY_TENANT_AUTH_AUTHORIZE_ENDPOINT: "${DROOLS_CASDOOR_AUTHORIZE_ENDPOINT:-http://localhost:8000/login/oauth/authorize}"
+      ACTIVITY_TENANT_AUTH_TOKEN_ENDPOINT: "${DROOLS_CASDOOR_TOKEN_ENDPOINT:-http://localhost:8000/api/login/oauth/access_token}"
+      ACTIVITY_TENANT_AUTH_REDIRECT_URI: "${DROOLS_REDIRECT_URI:-http://localhost:8095/ui/auth/callback}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       mysql: { condition: service_healthy }
       console: { condition: service_healthy }  # 等 console **健康**（schema 已建），decision 才 validate 通过（service_started 不够，会撞 missing table）
 
+  # 独立前端 nginx：直接托管 Vue /ui/，并将 API / 旧演示端点代理到两个后端。
   gateway:
-    image: nginx:1.27-alpine
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    image: activity-frontend:latest
     ports: ["8095:80"]   # 8090 常被本机其它服务占用，用 8095；网关内部仍 :80
     depends_on: [console, decision]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   # M2.3 · Prometheus 抓取 console + decision 的 /actuator/prometheus（两独立进程各自指标端点）
   prometheus:

@@ -2,11 +2,12 @@
 //   /ui/auth/callback 换 token → 列表(Bearer) → UI 建活动 → 登出 → 换租户 → 跨租户隔离浏览器可见。
 // 断言继承旧 e2e-oidc.mjs 9 条 + 多 tab 1 条。选择器走 data-testid 契约表。
 // 前置：① Casdoor :8000 且已跑 casdoor-spa-provision.sh（redirectUris 含 /ui/auth/callback）
-//      ② 后端 auth 档起在 :8099 且 static/ui 已 bundle（./mvnw -Pfrontend ... auth 参数，见文件尾）
-//      ③ npm i playwright。用法：BASE=http://localhost:8099 node frontend/e2e/e2e-oidc-v2.mjs
+//      ② 后端 auth 档通过网关提供（默认 :8095）且 /ui/ 已 bundle
+//      ③ npm i playwright。用法：BASE=http://localhost:8095 node frontend/e2e/e2e-oidc-v2.mjs
 import { chromium } from 'playwright'
 
-const BASE = process.env.BASE || 'http://localhost:8099'
+const BASE = process.env.BASE || 'http://localhost:8095'
+const BASE_URL = new URL(BASE)
 const SHOT = (n) => `${process.env.SHOTDIR || '.'}/e2e-oidc-v2-${n}.png`
 const results = []
 const ok = (m) => { results.push(['PASS', m]); console.log('  ✅', m) }
@@ -27,10 +28,14 @@ async function casdoorLogin(page, user, pass) {
 async function loginAs(page, tenant, user, pass) {
   await page.goto(`${BASE}/ui/console`) // 未登录 → 守卫弹 /ui/login
   await page.waitForSelector('[data-testid="login-page"]', { timeout: 15000 })
-  await page.locator(`[data-testid="login-${tenant}"]`).click()
+  await page.locator('#login-tenant').fill(tenant)
+  await page.locator('[data-testid="login-submit"]').click()
   await page.waitForURL(/localhost:8000/, { timeout: 20000 })
   await casdoorLogin(page, user, pass)
-  await page.waitForURL(/localhost:8099\/ui/, { timeout: 20000 })
+  await page.waitForURL(
+    (url) => url.origin === BASE_URL.origin && url.pathname.startsWith('/ui/'),
+    { timeout: 20000 },
+  )
   await page.waitForSelector('[data-testid="auth-bar"]', { timeout: 20000 })
 }
 
@@ -56,6 +61,31 @@ try {
   await page.waitForSelector('[data-testid="list-view"]', { timeout: 10000 })
   ok('活动列表加载（Bearer 通过后端验签）')
   await page.screenshot({ path: SHOT('02-acme-list') })
+
+  // 3b. 同一真实 Casdoor token 必须能访问独立 decision 服务；伪造租户信封必须 403。
+  const decisionAuth = await page.evaluate(async () => {
+    const token = JSON.parse(sessionStorage.getItem('actOidcTok') || '{}').token || ''
+    const body = JSON.stringify({
+      spuIdList: [9001], userId: 1, userDistrictId: null, userTags: [], orderAmount: 200, quantity: 1,
+    })
+    const call = (tenant) => fetch('/api/decision/spu-discount', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(tenant ? { 'X-Tenant-Id': tenant } : {}),
+      },
+      body,
+    })
+    const [valid, mismatch] = await Promise.all([call(null), call('beta')])
+    return { valid: valid.status, mismatch: mismatch.status }
+  })
+  decisionAuth.valid === 200
+    ? ok('真实 acme Bearer 可访问独立 decision 服务')
+    : no(`decision 合法 token 状态异常: ${decisionAuth.valid}`)
+  decisionAuth.mismatch === 403
+    ? ok('decision 拒绝 token tenant 与 X-Tenant-Id 不一致（403）')
+    : no(`decision tenant 冒充未按预期拒绝: ${decisionAuth.mismatch}`)
 
   // 4. UI 建活动
   await page.locator('[data-testid="tab-new"]').click()

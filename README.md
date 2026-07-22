@@ -11,7 +11,7 @@ Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 
 - Java 21 / Spring Boot 3.3.5
 - Drools 8.44.2.Final (kie-api, drools-core/compiler/mvel/decisiontables)
-- **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–18 + 前端；`activity-decision`(8082) 只读决策热路径。本地可用 `deploy/` 下的 docker-compose 起 nginx 网关一把托管。
+- **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–18；`activity-decision`(8082) 只读决策热路径。Docker 部署另有独立 `activity-frontend` nginx 镜像，可单独发布 Vue 并统一代理 API。
 
 ## 项目结构
 
@@ -41,8 +41,8 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
             ├── application.yml / -mysql.yml / -h2.yml    端口 8082；H2 落 ./data/decision.mv.db
             └── （默认 mysql profile 单跑仍是 ddl-auto=update + root；只有 docker-compose 部署叠**只读账号** decision_ro + validate，物理上不建表/不写库）
 
-frontend/                        Vue3 + Vite + TS 的 SPA 源码（构建产物拷进 console 的 static/ui/）
-deploy/                          docker-compose（mysql + console + decision + nginx 网关 + Prometheus + Grafana）
+frontend/                        Vue3 + Vite + TS 的 SPA 源码（Docker 由独立 nginx 托管；Maven profile 仍嵌入 console 作后备）
+deploy/                          docker-compose（mysql + console + decision + frontend nginx + Prometheus + Grafana）
 ```
 
 ## 运行
@@ -93,10 +93,23 @@ cd frontend && npm install && npm run dev
 ./mvnw -pl activity-console -Pfrontend spring-boot:run -Dspring-boot.run.profiles=h2
 # 浏览器打开 http://localhost:8081/ui/
 
-# ③ 生产样式：docker-compose（mysql + console + decision + nginx 网关 + Prometheus + Grafana）
-docker compose -f deploy/docker-compose.yml up --build   # 网关 http://localhost:8095/ui/console
+# ③ 生产样式：Casdoor :8000 已启动时，一键配置 dev 登录资源并部署整栈
+./deploy.sh --provision-auth                               # 网关 http://localhost:8095/ui/console
+# 完整交付：先 mvn clean package（含测试 + Vue），再构建镜像并启动上述全部服务
+./deploy.sh --full
+# 只发布 Vue + nginx，不重启 console / decision / MySQL / 监控
+./deploy.sh --frontend-only
+# 可选：./deploy.sh --core-only / --pull / --no-cache；离线恢复可用 --skip-build；完整参数见 ./deploy.sh --help
 # 网关按前缀分流：/api/decision/* → decision 服务、/api/console/* 与 /ui/、Step1-18 → console。
 # 附带 Prometheus http://localhost:9090、Grafana http://localhost:3001（两服务指标对比看板）。
+```
+
+Docker Compose 默认启用 Casdoor auth：console 的 `/activity-marketing/**` 与 decision 的 `/decision/v1/**` 都要求有效 Bearer；`/ui/**`、`/actuator/health` 和公开的 `auth-config` 保持匿名。浏览器使用 `http://localhost:8000`，容器拉 JWKS 使用 `host.docker.internal:8000`。本地测试账号为 `acme/act-alice`（`act-alice-dev-pass-01`）与 `beta/act-bob`（`act-bob-dev-pass-02`）。
+
+如需回滚到原 header-only 开发档：
+
+```bash
+DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 ```
 
 - **同源托管、零后端 CORS**：dev 靠 Vite proxy、生产靠 nginx 网关同源（决策 D3）。
@@ -105,6 +118,20 @@ docker compose -f deploy/docker-compose.yml up --build   # 网关 http://localho
   审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
 - **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
 - **明/暗主题** + 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+
+### 公开能力门户与 Casdoor 租户入口
+
+auth 档开启后，统一门户可链接到目标前端自己的 `/ui/login`：
+
+```text
+https://rules.example.com/ui/login?returnTo=%2Fhome
+```
+
+本机统一门户使用 `http://localhost:8095/ui/login?...`，目标前端建立 PKCE verifier/state 后再跳 Casdoor；门户本身不接触 token。
+
+正式入口先停在 Drools 登录页。登录页读取后端 `/activity-marketing/auth-config`，用户输入的 tenant 必须精确命中 `webClients` allowlist，随后才把它映射为 public clientId，并复用既有 `beginLogin` 生成 PKCE 后跳 Casdoor。未知 tenant 和 auth-config 错误都不会发起 OIDC；`returnTo` 只接受站内单斜杠路径。登录页提供与其他能力平台一致的双栏品牌卡、移动端紧凑头、可用租户快捷选择，以及配置加载/失败、表单校验和跳转中的独立状态。
+
+兼容旧书签的 `source=portal&auto=1&clientId=...` 分支仍保留，也同样要求 clientId 精确命中后端 allowlist，但统一门户的新 catalog 不再使用该分支。聚焦回归：`cd frontend && npm test -- --run src/auth/portalLaunch.test.ts src/views/LoginView.test.ts src/auth/authClient.test.ts`。
 
 > 提示：演示台是学习/本地用途，热加载（`/hot/*`、`/scanner/*`）能运行时编译任意 DRL，**不要把它裸露到公网**。
 

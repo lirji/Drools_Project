@@ -1,0 +1,7 @@
+**
+!activity-console/
+!activity-console/target/
+!activity-console/target/activity-console-*.jar
+!activity-decision/
+!activity-decision/target/
+!activity-decision/target/activity-decision-*.jar

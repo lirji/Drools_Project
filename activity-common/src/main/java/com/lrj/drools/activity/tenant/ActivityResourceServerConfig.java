@@ -26,9 +26,9 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * P0-3 Casdoor 决策鉴权（仅 {@code activity.tenant.auth.enabled=true} 时生效）。
+ * Casdoor 控制台与决策平面鉴权（仅 {@code activity.tenant.auth.enabled=true} 时生效）。
  *
- * <p>只护 {@code /activity-marketing/**}（决策 + 控制台接口）：需带 Casdoor 验签 JWT；其余（Step1~18、
+ * <p>保护 {@code /activity-marketing/**}（控制台接口）和 {@code /decision/v1/**}（决策接口）：需带 Casdoor 验签 JWT；其余（Step1~18、
  * 静态页、actuator、h2-console）一律放行——加 Spring Security 不锁死整个 demo。验签后 {@link JwtTenantFilter}
  * 从 token 的 {@code aud} 解析租户落进 {@link TenantContext}，接上 P0-4 的 {@code @TenantId} 隔离机制。
  *
@@ -40,7 +40,7 @@ import java.util.List;
 public class ActivityResourceServerConfig {
 
     /**
-     * 链一（@Order 1）：**只匹配 {@code /activity-marketing/**}**——需 JWT 验签，且 {@link JwtTenantFilter} 只挂在此链，
+     * 链一（@Order 1）：匹配控制台与决策平面——需 JWT 验签，且 {@link JwtTenantFilter} 只挂在此链，
      * 故其 fail-closed(403) 不波及 health/其它 Step/静态页（那些走链二）。
      */
     @Bean
@@ -49,7 +49,7 @@ public class ActivityResourceServerConfig {
                                                            TenantProperties props) throws Exception {
         String writeAuthority = props.getAuth().getConsoleWriteAuthority();
         http
-                .securityMatcher("/activity-marketing/**")
+                .securityMatcher("/activity-marketing/**", "/decision/v1/**")
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
@@ -70,7 +70,7 @@ public class ActivityResourceServerConfig {
 
     /**
      * 链二（@Order 2，兜底匹配其余全部）：health / actuator / Step1~18 / 静态页 / h2-console 一律放行。
-     * 加 Spring Security 不锁死整个 demo（auth 开时非活动端点仍开放）。
+     * 加 Spring Security 不锁死整个 demo（auth 开时非控制台、非决策端点仍开放）。
      */
     @Bean
     @Order(2)

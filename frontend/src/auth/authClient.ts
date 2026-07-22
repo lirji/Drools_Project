@@ -7,6 +7,7 @@
 //   - auth 档只发 Authorization: Bearer，绝不发 X-Tenant-Id（发了≠aud 后端 403）
 //   - sessionStorage 四件套 key 名沿用旧值，可平滑接续已登录会话
 import type { AuthConfig } from '@/shared/types'
+import { sanitizeInternalPath } from './portalLaunch'
 
 const SS_TOKEN = 'actOidcTok'
 const SS_VERIFIER = 'actPkceV'
@@ -122,7 +123,8 @@ export async function login(cfg: AuthConfig, clientId: string, returnTo: string)
     sessionStorage.setItem(SS_VERIFIER, verifier)
     sessionStorage.setItem(SS_STATE, st)
     sessionStorage.setItem(SS_CID, clientId)
-    sessionStorage.setItem(SS_RETURN, returnTo)
+    // LoginView 已清洗；此处再 fail-closed，防未来调用方绕过 UI 把外部地址带进 callback。
+    sessionStorage.setItem(SS_RETURN, sanitizeInternalPath(returnTo) ?? '/home')
   } catch {
     throw new Error('sessionStorage 不可用，无法登录（隐私模式？）')
   }

@@ -92,16 +92,17 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 curl -X POST localhost:8082/decision/v1/spu-discount -H 'X-Tenant-Id: acme' \
   -H 'Content-Type: application/json' -d '{"spuIdList":[1001],"orderAmount":200}'
 # 经网关：POST localhost:8095/api/decision/spu-discount（同 body）
+# Compose 默认 auth=true，需再带 Authorization: Bearer <valid-token>
 ```
 
 ## 多租户隔离（P0-4，Track B）
 
 活动数据按租户隔离，**靠机制不靠纪律**：10 张实体表都加了 `tenant_id` 列（Hibernate `@TenantId` 判别式多租户），引擎对**每条 SQL 自动追加 `tenant_id = ?` 谓词**、insert 自动落租户——业务代码不手动拼 where、不手动 set 租户，漏不掉。
 
-- **租户来源（可插拔接缝，两档）**：`activity.tenant.auth.enabled=false`（默认）时从 HTTP 头 `X-Tenant-Id` 取（dev/本地）；`=true`（P0-3 接 Casdoor）时 `/activity-marketing/**` 需带 Casdoor 验签 JWT，**租户从 `aud`(client_id) 解析**（命脉实测：Casdoor client_credentials 的 `owner`=admin 非组织；`aud` 由 Casdoor 绑定到已认证 client + 独立 secret → 不可伪造，比 owner 更实在），信封 `X-Tenant-Id` 只校验（≠解析出的租户→403）、绝不作来源。两档都写进同一个 `TenantContext`(ThreadLocal)，下游 `@TenantId` 隔离机制一行不动。
+- **租户来源（可插拔接缝，两档）**：`activity.tenant.auth.enabled=false` 时从 HTTP 头 `X-Tenant-Id` 取（仅 dev/header 档）；`=true`（Compose 默认）时 `/activity-marketing/**` 与 `/decision/v1/**` 都需带 Casdoor 验签 JWT，**租户从 `aud`(client_id) 解析**（命脉实测：Casdoor client_credentials 的 `owner`=admin 非组织；`aud` 由 Casdoor 绑定到已认证 client + 独立 secret → 不可伪造，比 owner 更实在），信封 `X-Tenant-Id` 只校验（≠解析出的租户→403）、绝不作来源。两档都写进同一个 `TenantContext`(ThreadLocal)，下游 `@TenantId` 隔离机制一行不动。
   - **aud→tenant 解析**：`AudienceTenantResolver` —— `client-tenant-map` 显式映射优先（生产推荐），`activity-{tenant}-cid` 家族反解兜底；`AudienceTenantValidator` 常开，aud 解析不到租户即拒（401）。
-  - **开 Casdoor 档前必做**：跑 `scratchpad/casdoor-m2m-verify.sh` 为每租户建独立 client_credentials 应用（唯一 secret）+ 验命脉 + 跨租户 secret 互斥冒烟 + 打 :8099 端到端。
-- **前端（dev 档）**：活动配置台顶部有「租户 (X-Tenant-Id)」切换条（输入 + acme/beta/__dev__ 快捷，localStorage 记忆）；切租户即换数据视图，浏览器里直接看隔离。Casdoor 档需前端接登录换 token（后续）。
+  - **浏览器 Casdoor 档**：`./deploy.sh --provision-auth` 幂等创建 acme/beta public SPA client 与 8095 callback；M2M 调用方仍使用 `scratchpad/casdoor-m2m-verify.sh` 的独立 client_credentials。
+- **前端**：dev 档显示 `X-Tenant-Id` 切换条；Casdoor 档使用 Authorization Code + PKCE、state、sessionStorage token 和 Bearer，登录回调为 `/ui/auth/callback`，统一门户只跳目标 `/ui/login` 而不接触 token。
 - **fail-closed**：`/activity-marketing/*` 上的 `TenantContextFilter` 是面向用户的闸——无 `X-Tenant-Id` 且 dev-default 关时直接 **403**；`X-Tenant-Id` 含非法字符（非 `[A-Za-z0-9_-]{1,64}`）**400**。其它 Step（1~18）不挂此过滤器、不受影响。
 - **dev-only 默认租户**：`activity.tenant.dev-default-enabled=true` 时，不带头的请求回落到单租户 `__dev__`，方便本地/前端手点；**生产必须关**（默认就是关 = 无头即 403）。
 - **只做数据行隔离**：字段 schema（`/field-dict` 白名单）当前仍全租户共享（`RuleSchemaRegistry` 仍走 `DEFAULT_TENANT`）；按租户定制字段元数据属后续（P0-1 的 Track B 扩展），不在 P0-4。
