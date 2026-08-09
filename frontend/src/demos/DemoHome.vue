@@ -229,7 +229,7 @@ function clearFilters(): void {
    backdrop-filter 一并去掉：它是「滚动容器内的大面积 sticky」，正是性能红线要防的形态，
    且 /demos 上同屏已有顶栏 + hero-stats 两处，配额（≤2）没有余量给它。 */
 .catalog-tools { position: sticky; top: var(--shell-topbar-h); z-index: var(--z-sticky); display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-4); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
-.search-box { flex: 0 1 320px; display: flex; align-items: center; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
+.search-box { flex: 0 1 320px; display: flex; align-items: center; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
 .search-box:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
 .search-box button { display: inline-flex; padding: 3px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }

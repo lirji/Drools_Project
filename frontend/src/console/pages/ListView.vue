@@ -656,7 +656,7 @@ onUnmounted(() => {
 .workspace-head h2 { margin: 2px 0 0; font-size: var(--fs-lg); }
 .result-count { color: var(--text-faint); font-size: var(--fs-xs); }
 .toolbar { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg-soft); }
-.search-box, .status-select { display: flex; align-items: center; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text-faint); }
+.search-box, .status-select { display: flex; align-items: center; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text-faint); }
 .search-box { flex: 0 1 360px; }
 .search-box:focus-within, .status-select:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }

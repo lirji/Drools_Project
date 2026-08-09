@@ -47,7 +47,7 @@ const scalar = computed({
 <style scoped>
 .value-ctl { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; }
 .inp {
-  padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border);
+  padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border-ctl);
   border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); min-width: 80px;
 }
 .inp.wide { flex: 1; min-width: 140px; }

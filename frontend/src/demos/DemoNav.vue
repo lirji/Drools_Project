@@ -136,7 +136,7 @@ function toggle(groupId: string): void {
 .now-running .pulse { grid-row: span 2; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
 .now-running span:not(.pulse) { color: var(--accent); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .08em; text-transform: uppercase; }
 .now-running strong { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.nav-search { display: flex; align-items: center; gap: var(--sp-2); min-height: 36px; padding: 0 var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
+.nav-search { display: flex; align-items: center; gap: var(--sp-2); min-height: 36px; padding: 0 var(--sp-2); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
 .nav-search:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .nav-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
 .nav-search button { display: inline-flex; padding: 2px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }

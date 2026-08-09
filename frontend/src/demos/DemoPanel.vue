@@ -363,7 +363,7 @@ onBeforeUnmount(() => {
 .path-field { padding: var(--sp-3) var(--sp-4) 0; }
 .path-field label { display: flex; justify-content: space-between; margin-bottom: var(--sp-1); color: var(--text-soft); font-size: 11px; font-weight: var(--fw-semibold); }
 .path-field label span { color: var(--text-faint); font-size: var(--fs-2xs); font-weight: var(--fw-medium); }
-.path-input { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); }
+.path-input { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); }
 .path-input:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .path-input span { padding-left: var(--sp-3); color: var(--text-faint); font-family: var(--mono); }
 .path-input input { width: 100%; min-width: 0; padding: var(--sp-2); border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
