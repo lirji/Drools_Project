@@ -35,11 +35,25 @@ try {
   const note = await p.locator('[data-testid="playbooks-note"]').innerText()
   check(/不新增后端能力/.test(note), '说明卡讲清「这些模板不新增后端能力」', brief(note))
 
-  const blockedCard = await p.locator('[data-testid="playbook-card-second-half"]').innerText()
-  check(/缺什么/.test(blockedCard) && /单价/.test(blockedCard),
-    '「第二件半价」标灰并写明缺行项单价', brief(blockedCard))
-  const blockedBtn = await p.locator('[data-testid="playbook-use-second-half"]').count()
-  check(blockedBtn === 0, '不可用的玩法不给「用它新建」按钮', `仍有 ${blockedBtn} 个按钮`)
+  // 「第二件半价」原本标灰（决策入口没有逐行单价）。2026-08 决策入口补了 lines + 新增
+  // NTH_ZHE 形态后已解锁——断言随之翻面：不该再标灰，且必须给「用它新建」。
+  const nthCard = await p.locator('[data-testid="playbook-card-second-half"]').innerText()
+  check(!/暂不支持|缺什么/.test(nthCard), '「第二件半价」已不再标灰', brief(nthCard))
+  const nthUse = await p.locator('[data-testid="playbook-use-second-half"]').count()
+  check(nthUse === 1, '「第二件半价」可以「用它新建」', `按钮数 ${nthUse}`)
+
+  // 标灰机制本身仍要活着——将来再出现做不到的玩法时还得靠它。
+  // 现在没有 blocked 玩法，故只断言「若存在 blocked 卡，则必须写明缺什么且不给按钮」。
+  const blockedCards = await p.locator('[data-testid^="playbook-card-"]').evaluateAll(
+    (els) => els.filter((e) => /暂不支持/.test(e.innerText)).map((e) => e.getAttribute('data-testid')))
+  let blockedOk = true
+  for (const testid of blockedCards) {
+    const text = await p.locator(`[data-testid="${testid}"]`).innerText()
+    const id = testid.replace('playbook-card-', '')
+    const useBtn = await p.locator(`[data-testid="playbook-use-${id}"]`).count()
+    if (!/缺什么/.test(text) || useBtn !== 0) blockedOk = false
+  }
+  check(blockedOk, `标灰机制完好（当前 ${blockedCards.length} 个不可用玩法）`, '有标灰卡未写明缺什么或仍给了按钮')
 
   // 折扣券自 2026-08 引擎加了按比例形态后已可用——卡上不该再写「不支持」
   const discountCard = await p.locator('[data-testid="playbook-card-discount"]').innerText()
@@ -87,13 +101,25 @@ try {
   await p.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('折扣券可保存 —— 写平面强制封顶，能存下来就说明封顶真的提交了')
 
-  // ---- ⑤ 未实现的「随机金额」置灰 ----
+  // ---- ⑤ 「随机金额」已接入决策链路：可选，且选中后换成区间输入 ----
+  // 原断言是「保留但禁用」——那编码的是 redPackageTakeType 全链路零读取的旧现实，
+  // 已被 BenefitEvaluator.drawRandom 推翻。断言随之翻面。
   await p.goto(`${BASE}/ui/console/activities/new?playbook=flat`)
   await p.waitForSelector('[data-testid="form-take-type"]', { timeout: 10000 })
   const disabled = await p.$$eval('[data-testid="form-take-type"] option',
     (os) => os.filter((o) => o.textContent.includes('随机金额')).map((o) => o.disabled))
-  check(disabled.length === 1 && disabled[0] === true,
-    '「随机金额」保留在下拉里但禁用（标明未实现，而不是偷偷删掉）', JSON.stringify(disabled))
+  check(disabled.length === 1 && disabled[0] === false,
+    '「随机金额」已可选（决策链路已接入）', JSON.stringify(disabled))
+
+  await p.selectOption('[data-testid="form-take-type"]', '2')
+  await p.waitForSelector('[data-testid="form-range-min"]', { timeout: 10000 })
+  const hasRange = await p.locator('[data-testid="form-range-max"]').count()
+  const hasFixed = await p.locator('[data-testid="form-amount"]').count()
+  check(hasRange === 1 && hasFixed === 0,
+    '选中随机后固定金额输入让位给区间两端', `range=${hasRange} fixed=${hasFixed}`)
+  // 必须写明它不是真抽奖——否则运营会以为多刷几次能拿到不同金额
+  const takeHint = await p.locator('[data-testid="form-take-type"]').locator('xpath=..').innerText()
+  check(/确定性随机/.test(takeHint), '写明是确定性随机（刷新不变价）', brief(takeHint))
 
   // ---- ⑥ 零横向溢出 ----
   await p.goto(`${BASE}/ui/console/playbooks`)
