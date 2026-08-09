@@ -112,15 +112,22 @@ describe('EditorView 玩法模板预填', () => {
     expect(wrapper.findAll('[data-testid="cond-leaf"]').length).toBeGreaterThan(0)
   })
 
-  it('未实现的「随机金额」在下拉里是禁用的，且写明配了也不生效', async () => {
+  it('「随机金额」已可选，选中后换成区间输入并说明是确定性随机', async () => {
     dictOk()
     const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
 
-    const opts = wrapper.get('[data-testid="form-take-type"]').findAll('option')
-    const random = opts.find((o) => o.text().includes('随机金额'))
-    expect(random, '随机金额选项应存在（不是删掉，是标明未实现）').toBeTruthy()
-    expect(random!.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('随机金额尚未实现')
+    const select = wrapper.get('[data-testid="form-take-type"]')
+    const random = select.findAll('option').find((o) => o.text().includes('随机金额'))
+    expect(random, '随机金额选项应存在').toBeTruthy()
+    expect(random!.attributes('disabled'), '决策链路已接入，不该再禁用').toBeUndefined()
+
+    // 选中随机 → 固定金额输入让位给区间两端
+    await select.setValue(2)
+    expect(wrapper.find('[data-testid="form-range-min"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="form-range-max"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="form-amount"]').exists()).toBe(false)
+    // 必须写明它不是真抽奖——否则运营会以为同一用户多刷几次能拿到不同金额
+    expect(wrapper.text()).toContain('确定性随机')
   })
 
   it('不带 playbook 参数时不显示模板提示，行为与改造前一致', async () => {

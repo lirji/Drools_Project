@@ -53,6 +53,9 @@ interface Draft {
   amount: number | string
   maxDiscount: number | string
   takeType: number
+  /** 随机金额区间（元）。仅 takeType=2 时有意义；存进 redPackageRangeAmount 的 {"min","max"} 对象 */
+  rangeMin: number | string
+  rangeMax: number | string
   unit: string
   strategy: string
   ladder: LadderRow[]
@@ -68,7 +71,7 @@ function newDraft(): Draft {
     activityType: 1, redMode: 'fixed', bindMode: 'manual', areaType: 1,
     name: '', bizLine: 'mall', rule: '', priority: 1, inventory: 100,
     startLocal: toLocalInput(Date.now() - 3600000), endLocal: toLocalInput(Date.now() + 7 * 86400000),
-    districtIds: '', amount: '', maxDiscount: '', takeType: 1, unit: '元', strategy: 'MAX',
+    districtIds: '', amount: '', maxDiscount: '', takeType: 1, rangeMin: '', rangeMax: '', unit: '元', strategy: 'MAX',
     ladder: [], gifts: [], spu: [{ storeId: 1, spuId: '' }], pool: [{ poolId: '' }],
     tree: emptyGroup(),
   }
@@ -273,7 +276,17 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   dr.startLocal = isoToLocal(m.activityStartTime); dr.endLocal = isoToLocal(m.activityEndTime)
   if (rule) {
     dr.takeType = rule.redPackageTakeType || 1; dr.unit = rule.redPackageAmountUnit || '元'
-    if (rule.redPackageRangeAmount) { dr.redMode = 'ladder'; dr.ladder = parseLadder(rule.redPackageRangeAmount) }
+    // 随机区间是对象、阶梯是数组。原来这里无条件当阶梯，会把随机活动的区间误读成分档
+    // （parseLadder 拿到对象返回空 → 编辑一次就把区间丢了，静默降级成"没配区间的阶梯"）。
+    if (dr.takeType === 2 && rule.redPackageRangeAmount?.trim().startsWith('{')) {
+      dr.redMode = 'fixed'
+      try {
+        const r = JSON.parse(rule.redPackageRangeAmount)
+        dr.rangeMin = r?.min ?? ''
+        dr.rangeMax = r?.max ?? ''
+      } catch { /* 脏数据：留空，让必填校验拦住 */ }
+    }
+    else if (rule.redPackageRangeAmount) { dr.redMode = 'ladder'; dr.ladder = parseLadder(rule.redPackageRangeAmount) }
     else if (dr.unit === '折') {
       // 折扣型：amount 是折数，还要把封顶带回来——不带回来的话，一次「改个错别字」的编辑
       // 就会提交一个没有封顶的折扣券，被写平面拒成 400，而运营完全不知道少了什么
@@ -341,7 +354,14 @@ async function submit(): Promise<void> {
     redPackageAmount: dr.activityType === 1 && dr.redMode !== 'ladder' ? numOrNull(dr.amount) : null,
     redPackageAmountUnit: dr.activityType === 1 && dr.redMode === 'ratio' ? '折' : '元',
     redPackageMaxDiscount: dr.activityType === 1 && dr.redMode === 'ratio' ? numOrNull(dr.maxDiscount) : null,
-    redPackageRangeAmount: dr.activityType === 1 && dr.redMode === 'ladder' ? JSON.stringify(cleanLadder(dr.ladder)) : null,
+    // redPackageRangeAmount 是双用途列：**数组 = 阶梯分档，对象 = 随机区间**。
+    // 后端 LadderRangeParser 只认数组、RandomRangeParser 只认对象，靠 JSON 顶层类型互斥，
+    // 所以这里绝不能把随机区间写成数组，否则两条解析路径会同时认领同一份数据。
+    redPackageRangeAmount:
+      dr.activityType === 1 && dr.redMode === 'ladder' ? JSON.stringify(cleanLadder(dr.ladder))
+      : dr.activityType === 1 && dr.redMode === 'fixed' && dr.takeType === 2
+        ? JSON.stringify({ min: Number(dr.rangeMin), max: Number(dr.rangeMax) })
+      : null,
     discountStrategy: dr.strategy,
     eligibilityConditionTree: pruneTree(dr.tree),
     spuBindings: dr.bindMode === 'manual'
@@ -468,18 +488,20 @@ onBeforeRouteLeave(async () => {
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ratio' }" :aria-pressed="dr.redMode === 'ratio'" data-testid="mode-ratio" @click="dr.redMode = 'ratio'; markDirty()">折扣</button>
           </div>
           <div v-if="dr.redMode === 'fixed'" class="fg">
-            <label>红包金额<input v-model="dr.amount" type="number" placeholder="0 ~ 999999" data-testid="form-amount" /></label>
+            <label v-if="dr.takeType !== 2">红包金额<input v-model="dr.amount" type="number" placeholder="0 ~ 999999" data-testid="form-amount" /></label>
+            <template v-else>
+              <label>随机下限 *<input v-model="dr.rangeMin" type="number" min="0" placeholder="如 5" data-testid="form-range-min" /></label>
+              <label>随机上限 *<input v-model="dr.rangeMax" type="number" min="0" placeholder="如 20" data-testid="form-range-max" /></label>
+            </template>
             <label>发放方式
-              <!-- 「随机金额」(code 2) 置灰：redPackageTakeType 全链路只被搬运，
-                   BenefitEvaluator.computeAmounts 直接把 redPackageAmount 抄给 computedAmount，
-                   从不看它——配成随机，线上照样发固定值。与 inventory 同族的声明式字段，
-                   按库存红线 B 的先例「置灰 + 明示」，而不是留着让运营配了以为生效。 -->
+              <!-- 随机金额已接入决策链路（BenefitEvaluator.drawRandom → BenefitMath.randomAmount）。
+                   它是**确定性随机**：同一活动+用户+购物车永远抽到同一个数。
+                   不是真抽奖——决策接口会被刷新/重试/重放，真随机会让同一笔单每次报价不同，
+                   且无法对账。要做真抽奖需要先有发放流水表。 -->
               <select v-model.number="dr.takeType" data-testid="form-take-type">
-                <option v-for="m in distModes" :key="m.code" :value="m.code" :disabled="m.code !== 1">
-                  {{ m.label }}{{ m.code === 1 ? '' : '（未实现）' }}
-                </option>
+                <option v-for="m in distModes" :key="m.code" :value="m.code">{{ m.label }}</option>
               </select>
-              <small>随机金额尚未实现：决策链路不读取该字段，配了仍按固定金额发</small>
+              <small v-if="dr.takeType === 2">确定性随机：同一用户同一购物车金额固定，刷新不变价</small>
             </label>
           </div>
           <div v-else-if="dr.redMode === 'ratio'" class="fg">

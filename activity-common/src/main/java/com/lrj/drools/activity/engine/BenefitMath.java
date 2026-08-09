@@ -65,4 +65,79 @@ public final class BenefitMath {
         }
         return off;
     }
+
+    // ================================================================ 随机红包
+
+    /**
+     * 随机红包金额——**确定性随机**：同一个 {@code seedKey} 永远算出同一个金额。
+     *
+     * <p><b>为什么不能真随机</b>：决策接口是可被重复调用的（用户刷新购物车、前端重试、
+     * 网关重放、对账复算）。真随机意味着同一笔订单每次调用给出不同的价格——
+     * 用户刷新一次价格就变，客诉直接成立；而且 golden set 无法断言金额、决策不可重放、
+     * 对账时无法回答「当时为什么发了 12 块」。要做真抽奖必须先有发放流水表把结果落库，
+     * 当前没有那张表，所以**在决策侧只能给确定性随机**。
+     *
+     * <p>随机性的来源是 seedKey 的散列，不是时间——因此它对同一上下文可复现，
+     * 对不同用户/不同订单又充分打散（SHA-256 的雪崩效应保证相邻 key 的结果不相关）。
+     *
+     * <p><b>为什么用 SHA-256 而不是 {@code String.hashCode()}</b>：后者虽然在 JDK 规范里
+     * 是固定算法（跨 JVM 稳定），但只有 32 位且分布差，相邻字符串容易落进相近桶——
+     * 表现是「同一用户在几笔金额接近的订单上总是抽到差不多的钱」，看起来就不像随机。
+     *
+     * <p>算术在**分**上做，不碰浮点：区间 [min,max] 折算成 [minCents,maxCents]，
+     * 取 {@code floorMod(hash, span)} 落点。结果天然是整分，无需再取整。
+     *
+     * @param min     区间下界（元，含）
+     * @param max     区间上界（元，含）
+     * @param seedKey 决定性种子。必须包含「活动 + 用户 + 订单」三要素，否则同一用户
+     *                在所有订单上都会抽到同一个数（见 {@link #randomSeedKey}）
+     * @return 金额（2 位小数），或 null 表示不可计算（区间缺失/非法/种子为空）
+     */
+    public static BigDecimal randomAmount(BigDecimal min, BigDecimal max, String seedKey) {
+        if (min == null || max == null || seedKey == null || seedKey.isBlank()) return null;
+        if (min.signum() < 0 || max.signum() < 0) return null;
+        if (min.compareTo(max) > 0) return null;
+
+        long minCents = min.movePointRight(MONEY_SCALE).setScale(0, MONEY_ROUNDING).longValueExact();
+        long maxCents = max.movePointRight(MONEY_SCALE).setScale(0, MONEY_ROUNDING).longValueExact();
+        long span = maxCents - minCents + 1;          // 闭区间，+1 让上界可被抽中
+        if (span <= 0) return null;
+        if (span == 1) return BigDecimal.valueOf(minCents, MONEY_SCALE);
+
+        long offset = Math.floorMod(hash64(seedKey), span);
+        return BigDecimal.valueOf(minCents + offset, MONEY_SCALE);
+    }
+
+    /**
+     * 组装种子。三要素缺一不可：
+     * <ul>
+     *   <li><b>活动 + 版本</b>：同一用户同一单命中两个随机活动时要抽出不同的钱；
+     *       带版本是为了运营改了区间后重新抽（否则改了配置金额纹丝不动，像是没生效）</li>
+     *   <li><b>用户</b>：不同用户必须抽到不同的钱，否则"随机"退化成"全场同一个数"</li>
+     *   <li><b>订单标识</b>：同一用户的不同订单应各抽各的</li>
+     * </ul>
+     *
+     * <p><b>订单标识目前是购物车指纹而非订单号</b>——决策入口没有订单号（见
+     * {@code SpuDiscountRequest}）。后果是「同一用户、同样的商品与金额」会稳定拿到同一个数，
+     * 这正是「刷新不变价」想要的；代价是它无法区分该用户先后下的两笔完全相同的单。
+     * 入口若将来补上订单号，把它加进来即可，无需改算法。
+     */
+    public static String randomSeedKey(String activityId, Integer version, Object userId, Object orderFingerprint) {
+        return String.valueOf(activityId) + '|' + version + '|' + userId + '|' + orderFingerprint;
+    }
+
+    /** SHA-256 前 8 字节当 64 位散列。跨 JVM / 跨机器稳定，是"可复现"的前提。 */
+    private static long hash64(String s) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            long h = 0;
+            for (int i = 0; i < 8; i++) h = (h << 8) | (d[i] & 0xFFL);
+            return h;
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // SHA-256 是 JDK 强制实现，走不到这里；真走到了也不能静默换算法——
+            // 换算法 = 所有历史金额改变，属于"悄悄改钱"。
+            throw new IllegalStateException("SHA-256 不可用", e);
+        }
+    }
 }

@@ -4,6 +4,7 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.DistributionMode;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderTier;
@@ -93,6 +94,20 @@ public class BenefitEvaluator {
         for (ActivityCandidate c : candidates) {
             if (!c.isEligible()) continue;
             if (c.isAmountComputed()) continue;
+
+            // 随机红包必须排在 `redPackageAmount == null` 那道 guard **之前**：
+            // 它的金额来自区间（redPackageRangeAmount），而不是 redPackageAmount 那个字段，
+            // 放在 guard 之后的话「只配了区间、没配固定金额」的随机活动会被静默跳过。
+            if (DistributionMode.RANDOM_AMOUNT == distributionOf(c)) {
+                BigDecimal drawn = drawRandom(ctx, c);
+                // 算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 ratioDiscount 的规矩：
+                // 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
+                if (drawn == null) continue;
+                c.setComputedAmount(drawn);
+                c.setAmountComputed(true);
+                continue;
+            }
+
             if (c.getRedPackageAmount() == null) continue;
 
             // 形态判别必须在最前面。漏了它，「打 8 折」会被当成「减 8 元」原样发出去——
@@ -172,6 +187,44 @@ public class BenefitEvaluator {
             }
         }
         return result;
+    }
+
+    // ================================================================ 随机红包
+
+    /**
+     * 发放方式判别。**未知 code 一律回落固定金额**，与 {@code BenefitForm.of} 的取向一致：
+     * 脏数据的表现是「按旧行为发」，而不是「按某种猜出来的方式发」。
+     *
+     * <p>注意不能直接用 {@code DistributionMode.fromCode}——它对未知 code 抛异常，
+     * 那会让一条脏数据打断整批候选的算额。
+     */
+    private static DistributionMode distributionOf(ActivityCandidate c) {
+        Integer code = c.getRedPackageTakeType();
+        if (code == null) return DistributionMode.FIXED_AMOUNT;
+        return code == DistributionMode.RANDOM_AMOUNT.code()
+                ? DistributionMode.RANDOM_AMOUNT
+                : DistributionMode.FIXED_AMOUNT;
+    }
+
+    /**
+     * 抽随机金额。**确定性**：同一 (活动+版本, 用户, 购物车) 永远抽到同一个数，
+     * 理由见 {@link BenefitMath#randomAmount}（决策要可重放、可对账、刷新不变价）。
+     *
+     * <p>购物车指纹用 orderAmount + quantity + spuId 三者拼装——它们是入口契约里
+     * 唯一能标识「这一单」的东西（没有订单号）。三者都缺时指纹为 "null|null|null"，
+     * 此时同一用户在该活动上恒定拿同一个数；这是缺字段下唯一可确定的行为，
+     * 且比"每次不同"更安全。
+     */
+    private static BigDecimal drawRandom(ActivityRuleContext ctx, ActivityCandidate c) {
+        RandomRangeParser.Range range = RandomRangeParser.parse(c.getRedPackageRangeAmount());
+        if (range == null) return null;
+
+        Object userId = ctx == null ? null : ctx.textAttr("userId");
+        String fingerprint = ctx == null ? "null|null|null"
+                : ctx.textAttr("orderAmount") + "|" + ctx.textAttr("quantity") + "|" + ctx.textAttr("spuId");
+
+        String seed = BenefitMath.randomSeedKey(c.getActivityId(), c.getVersion(), userId, fingerprint);
+        return BenefitMath.randomAmount(range.min(), range.max(), seed);
     }
 
     /** MAX：金额最大者（并列取第一个，见类注释关于平局的说明）。 */
