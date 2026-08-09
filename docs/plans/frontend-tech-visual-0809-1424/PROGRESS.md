@@ -2,7 +2,7 @@
 
 > 分支 `feat/visual-tech-refresh`（从 `main` 的 `2c1f49d` 切出）。
 > 计划见同目录 `FINAL_PLAN.md`；评审处置见 `REVIEW.md`；样板屏 `style-tile.html`。
-> **当前停在计划里的「⏸ 中途确认点」（步骤 5 之后），等用户看过实屏再决定是否继续。**
+> **进度：步骤 0/1/2/2b/3/5(部分)/6 已完成；下一步是 7（Tier B 展示页）。**
 
 ## 用户已批准的四项裁决（2026-08-09）
 
@@ -22,8 +22,18 @@
 | **2** 令牌换代（dark-first） | `70cd3c0` | ✅ 90 个既有名保留原名改值 + 新增 13 名 |
 | **2b** 硬编码深色面收编 | `7fa8795` | ✅ 全仓硬编码颜色归零（A-1 达成） |
 | **3** effects.css 收敛动效 | `9880b5a` | ✅ 3 组重复 keyframes 合一 |
-| **5** 共享组件形制（部分） | `9880b5a` | ⚠️ Button/Card/Icon/Skeleton/AppLayout/AppShell 已改；**Hero.vue / Stat.vue / useReveal.ts 未建**，评审 Y5 点名的 9 个漏网组件未改 |
+| **5** 共享组件形制（部分） | `9880b5a` | ⚠️ Button/Card/Icon/Skeleton/AppLayout/AppShell 已改；评审 Y5 点名的 9 个漏网组件（DemoNav / ConsoleShell / DemoShell / BulkBar / BulkConfirm / DynRowTable / condition-tree 三件）**未改** |
 | **8** 的 F3（提前做） | `9880b5a` | ✅ 手机端搜索框 316×240 → 316×46 |
+| **6** 门面三屏 | `64b4088` | ✅ 新建 `Hero.vue` / `Stat.vue`；HomeView 加 hero + 真数统计 + **修 F6**；**修 F5**（根因是 `top:0` 盖住顶栏，不是 backdrop-filter）+ EditorView rail 同源漏网；CallbackView 补加载态；新增主题无关的 `--on-deep-accent`（原用 `--accent-2` 在浅色档只有 2.9:1） |
+
+### 步骤 6 里两个**刻意没做**的决定
+
+1. **`useReveal.ts` 未建**。滚动进场用纯 CSS 的 `.u-stagger`（effects.css）已经够用，
+   再加一个 IntersectionObserver 抽象只会多一个零引用文件——`Field.vue` 就是前车之鉴。
+   若后续 Tier B/C 真需要滚动触发再补。
+2. **LoginView 未重排**。它在步骤 2b 收编硬编码色后已与新体系一致（实拍确认），
+   结构本身（双栏品牌 + 玻璃卡）也没有问题。因此 A5 授权的
+   `LoginView.test.ts` 修改**至今未动用**，四条 class 断言仍然原样通过。
 
 ## 验收现状
 
@@ -45,8 +55,7 @@
 | 步骤 | 内容 | 阻塞 / 备注 |
 |---|---|---|
 | **4** 字体自托管 | Inter var latin + JetBrains Mono Regular/Bold 放 `src/assets/fonts/` + `@font-face` + mono/tabular-nums 铺开 | ⚠️ **需要拿到 3 个 woff2 子集文件**（本机无现成字体资源）。`--font-ui`/`--font-code` 的字族名已在 tokens.css 就位，字体文件到位即生效，不到位则自动 fallback 系统栈，**不会破相** |
-| **5 余** | `Hero.vue` / `Stat.vue` / `useReveal.ts`；评审 Y5 的 9 个漏网组件（DemoNav / ConsoleShell / DemoShell / BulkBar / BulkConfirm / DynRowTable / condition-tree 三件） | |
-| **6** Tier A 门面 | HomeView 加 hero + 修 F6（mergeRows/排序/`:key` 去重）、DemoHome、LoginView（+ 同步 `LoginView.test.ts` 全文，A5 已授权）、CallbackView 补 loading、修 F5（`.catalog-tools` 的 `top:0` 盖住顶栏） | |
+| **5 余** | 评审 Y5 的 9 个漏网组件（DemoNav / ConsoleShell / DemoShell / BulkBar / BulkConfirm / DynRowTable / condition-tree 三件） | |
 | **7** Tier B 展示页 | DetailView（修 F4 缺 `v-else`）/ ValidateView / PlaybooksView / DemoPanel + viz 语汇 | |
 | **8** Tier C 密度屏 | ListView / EditorView 余下部分（消灭 ≤10px 字号 80 处、EditorView rail sticky 偏移被顶栏遮 40px） | |
 | **9** 补 e2e 断言 | A-6/A-8/A-9 目前只有我手跑的一次性脚本，没进仓库 | |
