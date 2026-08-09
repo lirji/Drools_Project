@@ -1,58 +1,82 @@
-/* 设计 token —— Calm Precision 视觉方向（UX 重设计 0721，FINAL_PLAN §2/§3）。
- * 变量名一律不删不改（只改值 + 只加新名），既有组件语汇无损复用；data-theme 手动覆盖 + prefers-color-scheme 自动跟随。
+/* 设计 token —— **深空遥测 Deep Space Telemetry** 视觉方向
+ * （视觉换代 0809，见 docs/plans/frontend-tech-visual-0809-1424/{DECISION_RECORD,FINAL_PLAN,REVIEW}.md）
  *
- * 换代要点（PR-1 颜色换代 · 票券工学）：中性由冷灰改为 168° 青绿偏置的"纸"色阶；强调色由 indigo 改为
- * 复写紫红 #a4256b；新增 seam / rule / rule-faint / grain / bg-sunken / dv-* / ramp-* 等 token。
- * **本次只改颜色值与新增变量名，radius / 尺寸 / 字号一律不动**——形制换代是 PR-2，
- * 与颜色换代不得混在同一个 diff，否则任何视觉回归都无法归因。
- * 旧别名 --green/--gold/--red 转发到 --ok/--warn/--err，既有组件零改动。
- * 对比度（评审 S1，已用 WCAG 精算按实际底色核）：
- *   浅色 --text-faint #667085 = elev 4.97 / soft 4.68 / bg 4.56（全 ≥4.5 ✓；v2 计划抄的 #757c8a 仅 4.19 不达标）
- *   暗色 --text-faint #868ea3 = bg 5.76 / elev 5.31 / soft 4.98（全 ≥4.5 ✓；原 #6b7488 仅 3.48 不达标）
- *   --accent #4f46e5 作文字 on white 6.29:1 ✓
+ * 变量名一律不删不改（只改值 + 只加新名），既有组件语汇无损复用。
  *
- * 断点正典（字面量约定；CSS var 不能用于 @media 条件，故各 @media 用下列数值）：
- *   ≥1024 桌面（侧栏常驻、多栏） / 768–1023 平板（侧栏 docked、多栏塌单列、列表卡片化） / <768 手机（侧栏 off-canvas 抽屉） / ≤560（身份条收 popover）。
+ * ── 本次换代要点 ──
+ * ① **dark-first**：裸 `:root` 从「纸色浅底」翻成深空暗底，浅色档退到 media/属性块。
+ *    理由：科技感的全部手法（辉光 / 网格 / 玻璃）只在暗色下成立；浅色下辉光会变脏晕、网格变方格纸。
+ *    因此浅色档的正确做法是**主动放弃特效**、退回干净描边 + 极轻投影，而不是把暗色效果调低透明度硬移植。
+ * ② 中性由「168° 青绿的纸」改为 **232° 蓝紫偏置的深空**（不是纯黑：#000 在 OLED 上会黑色涂抹、LCD 上漏光发灰）。
+ * ③ 强调色由复写紫红 #a4256b 改为 **靛紫 #8B7BFF**（暗）/ #5B4BE8（浅）——取自 LoginView 已有的品牌面板
+ *    #4f46e5，是把「已经存在于登录页的科技感」升到令牌层，不是另起炉灶；`--accent-2` 改为**青 #22D3EE**
+ *    作数据/遥测色。**accent 仍然永不用于状态编码**——状态一律走 ok/warn/err/blue 且同时带形状。
+ * ④ **暗色下 elevation 靠面色亮度阶 + 1px 内高光，不靠投影**：黑投影打在 #0A0B10 上物理不可见，
+ *    旧暗色档四档阴影全是 rgba(0,0,0,.35~.55)，等于没有层次。
+ * ⑤ 「票据语义」的 5 个名（--seam / --rule / --rule-faint / --grain / --notch）**就地改语义、不改名**：
+ *    seam→栅格/扫描线、rule→高亮基准线、grain→网格线色、notch→0 熄灭齿孔（Seam 自动退化成点线，
+ *    点线是 .seam 自身的 background，独立于 ::before/::after 齿孔，viz.test.ts 只断言 role=separator）。
+ *
+ * ── 对比度（按 sRGB 相对亮度精算，非目测；独立评审复算 23 组、20 组差值 ≤0.01）──
+ *   暗色 --text-faint #8A93AC = bg 6.41 / elev 6.00 / soft 5.67（全 ≥4.5 ✓）
+ *   浅色 --text-faint #5F677F = bg 5.17 / elev 5.63 / soft 5.35（全 ≥4.5 ✓）
+ *   暗色 --accent #8B7BFF on bg 5.97 / elev 5.58 / hover 4.75 ✓；--text-invert on accent 6.06 ✓
+ *   浅色 --accent #5B4BE8 on bg 5.33 / elev 5.81 / hover 5.06 ✓
+ *   --accent-2 青：暗 on bg 10.89 / elev 10.32；浅 #0C6B85 on bg 5.58 / elev 6.07 / hover 5.29 ✓
+ *   --border-ctl（新增·输入控件边界专用）暗 3.11/3.32、浅 3.29/3.03，均 ≥3.0 ✓
+ *   **已知且刻意的例外**：--border / --border-strong 均 <3:1（与换代前一致，不是新引入的缺陷）。
+ *   把装饰性分隔线拉到 3:1 会丑；正确修法是新增 --border-ctl 专供控件边界——即本次做法。
+ *   --ramp-1/-2 同样 <3:1 属设计意图（最浅两档本就该融进底色），故占比条必须有描边或最小可见宽度。
+ *
+ * ── 断点正典（字面量约定；CSS var 不能用于 @media 条件，故各 @media 用下列数值）──
+ *   ≥1024 桌面（侧栏常驻、多栏） / 768–1023 平板（侧栏 docked、多栏塌单列、列表卡片化）
+ *   / <768 手机（侧栏 off-canvas 抽屉） / ≤560（身份条收 popover；ListView 工具条转 column）。
  *   —— 抽屉阈值 <768（非 768–1023）：e2e-tablet-smoke 在 768 直接点 tab-new/等 tenant-bar，docked-768 使其零改保持绿。
+ *   **正典外的既有偏离（待后续收敛，新写样式一律只用正典四档）**：460 / 640 / 680 / 700 / 760 / 820 / 1100 / 1180(×4)。
  */
+
+/* ═══════════ 暗色：主场基线 ═══════════ */
 :root {
-  /* ─── 中性：纸。色相偏置 168°（票据防伪底纹的浅青绿），饱和 3–8%。
-         比冷灰更"纸"，且与复写紫红 accent 近似互补，accent 落在纸上跳度最大。 ─── */
-  --bg: #edf1f0;          /* 页底：未印刷的纸垛 */
-  --bg-elev: #ffffff;     /* 券面：卡片 / 表格 / 侧板 */
-  --bg-soft: #f4f7f6;     /* 副面：工具条 / 表头 / 票据明细底 */
-  --bg-hover: #e4eae8;    /* 悬停面 */
-  --bg-sunken: #e8edec;   /* 新增·凹陷面：量具与刻度尺的轨道底（须比 bg 还暗才读成"槽"） */
-  --border: #d8e0de;      /* 常规裁切边 */
-  --border-strong: #b6c3c0;
-  --seam: #8fa19d;        /* 新增·齿孔/撕线专用。≥3:1，否则廉价屏上等于普通虚线 */
-  --rule: #2b3937;        /* 新增·票据实线：会计双线 / 量具临界线 / 当前时刻游标（全站权重最高的线） */
-  --rule-faint: #e3e5ea;  /* 新增·表格行线。**不许更浅**——#eff0f3 on #fff 仅 1.03:1，办公 TN 屏直接看不见 */
-  --grain: rgba(16,45,42,.028); /* 新增·安全底纹网纹，只铺 body */
-  --text: #0e1917;        /* 墨黑带青 */
-  --text-soft: #43514e;   /* 白底 8.31:1 */
-  --text-faint: #5f6d6a;  /* 白底 5.41 / bg 4.75 / bg-soft 4.92 —— 全 ≥4.5 */
-  --text-invert: #ffffff; /* 新增·压在 accent 上的字 */
-  /* ─── 强调（签名色）：复写紫红，取自复写纸第二联的油墨，与"凭证"同源。白底 6.87:1。
-         **永不用于状态编码**——状态一律走 ok/warn/err/blue 且同时带形状。 ─── */
-  --accent: #a4256b;
-  --accent-2: #c2528d;
-  --accent-soft: #fbe9f2;
-  --accent-hover: #86164f;
-  --accent-line: #edbcd5;
+  /* 原生控件（select 弹层、search 清除键、滚动条）跟随主题；缺了它们会是浅色 UA 样式压在深空底上。 */
+  color-scheme: dark;
+
+  /* ─── 中性：深空。色相 232°，饱和 4–10%。层次靠这四档亮度阶，不靠投影。 ─── */
+  --bg: #0A0B10;          /* 页底 */
+  --bg-elev: #12141B;     /* 面：卡片 / 表格 / 侧板 */
+  --bg-soft: #171A22;     /* 副面：工具条 / 表头 */
+  --bg-hover: #1F2330;    /* 悬停面 */
+  --bg-sunken: #06070C;   /* 凹陷面：量具轨道底 / 终端面（须比 bg 更暗才读成"槽"） */
+  --border: #272B38;
+  --border-strong: #3A4054;
+  --border-ctl: #5C6478;  /* 新增·输入控件边界专用，≥3:1。装饰性分隔线不必达标，控件边界必须 */
+  --seam: #2F3546;        /* 改义：栅格 / 扫描线 */
+  --rule: #C9D0E4;        /* 改义：高亮基准线（量具临界线 / 当前时刻游标，全站权重最高的线） */
+  --rule-faint: #1C2029;  /* 表格行线。**不许更浅**——办公 TN 屏上会直接看不见 */
+  --grain: rgba(150,165,220,.055); /* 改义：网格线色 */
+  --text: #E8EAF2;
+  --text-soft: #A9B0C4;
+  --text-faint: #8A93AC;
+  --text-invert: #0A0713; /* 压在 accent 上的字 */
+  /* ─── 强调（签名色）：靛紫。**永不用于状态编码** ─── */
+  --accent: #8B7BFF;
+  --accent-2: #22D3EE;    /* 青：数据 / 遥测 / 二级强调 */
+  --accent-soft: #191631;
+  --accent-hover: #A594FF;
+  --accent-line: #3B3470;
+  --accent-ink: color-mix(in srgb, var(--accent) 14%, transparent); /* 新增·TierRuler 档位底纹（此前全仓无定义，缺陷 F2） */
   /* ─── 图表 5 序列：明度阶梯 + 每序列自带纹样，不靠色相区分（色盲可读） ─── */
-  --dv-1: #a4256b; --dv-2: #1a4fbe; --dv-3: #0f6f68; --dv-4: #8a5300; --dv-5: #465b58;
+  --dv-1: #8B7BFF; --dv-2: #22D3EE; --dv-3: #3DDC97; --dv-4: #F5B544; --dv-5: #94A1BF;
   /* ─── 中性明度阶：占比条/分布条专用。**绝不用 accent 编码数据量** ─── */
-  --ramp-1: #c7d0ce; --ramp-2: #a8b6b3; --ramp-3: #8a9c98; --ramp-4: #6d817d; --ramp-5: #516663;
+  --ramp-1: #2B3044; --ramp-2: #3A4054; --ramp-3: #4B5268; --ramp-4: #5F6780; --ramp-5: #78819C;
   /* ─── 语义色：只用于状态 ─── */
-  --ok: #1a7040;
-  --ok-soft: #dcf0e3;
-  --warn: #8a5300;
-  --warn-soft: #f8ecd3;
-  --err: #b3261e;
-  --err-soft: #fae3e1;
-  --blue: #1a4fbe;
-  --blue-soft: #dee8fb;
+  --ok: #3DDC97;
+  --ok-soft: #0C2A1D;
+  --warn: #F5B544;
+  --warn-soft: #2A2009;
+  --err: #FF7A72;
+  --err-soft: #2E1512;
+  --blue: #5AA9FF;
+  --blue-soft: #0E1E38;
   /* 旧别名转发到语义色，既有组件（如 Badge.warn 走 --gold*）零改动 */
   --green: var(--ok);
   --green-soft: var(--ok-soft);
@@ -60,29 +84,35 @@
   --gold-soft: var(--warn-soft);
   --red: var(--err);
   --red-soft: var(--err-soft);
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
-  --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);  /* 弹层/悬浮卡 */
-  --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);/* 抽屉/模态 */
-  /* 遮罩：原先硬编码在 AppLayout.vue 里（全仓唯一一处硬编码颜色），提成 token 并按主题各定义一次。 */
-  --scrim: rgba(16, 24, 40, .40);
-  /* PR-2 形制换代：券是"裁"出来的、不是"压"出来的 —— 圆角再收一档 10→6。
-     只有真正的胶囊（状态徽章）才用 pill。 */
-  --radius: 6px;
-  --radius-sm: 4px;
-  --radius-lg: 10px;
+  /* ─── 立体：暗色下 elevation = 面色亮度阶 + 1px 内高光。黑投影只用于"隔断"，不用于"抬起"。 ─── */
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,.055);
+  --shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 1px 2px rgba(0,0,0,.5);
+  --shadow-md: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 24px rgba(0,0,0,.55);
+  /* blur 上限 40px（性能红线）。**辉光已拆成独立的 --shadow-lg-glow**：--shadow-lg 的使用点包含
+     <768 的 off-canvas 导航抽屉，不拆的话「小屏关闭辉光」在全局令牌上物理做不到。 */
+  --shadow-lg: inset 0 1px 0 rgba(255,255,255,.08), 0 24px 40px rgba(0,0,0,.66);
+  --shadow-lg-glow: 0 0 40px color-mix(in srgb, var(--accent) 8%, transparent); /* 新增·仅模态/侧板叠加 */
+  --glow: 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent);          /* 新增·收编此前 4 处各写各的手写发光 */
+  --glow-strong: 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent);
+  --surface-glass: color-mix(in srgb, var(--bg-elev) 72%, transparent);         /* 新增·玻璃面底色 */
+  --scrim: rgba(4, 5, 10, .72);
+
+  /* ─── 形制：券是"裁"出来的那一套已作废。面大圆角、控件小圆角，两者差 ≥3px 才读得出层级。 ─── */
+  --radius: 10px;
+  --radius-sm: 7px;       /* 85 处引用——全站按钮/输入/Banner/chip 的观感就靠这一个值 */
+  --radius-lg: 14px;
   --radius-pill: 999px;
-  --notch: 13px;          /* 新增·齿孔直径（撕线两端咬进纸边的半圆） */
-  /* 发丝线：高 DPI 下取 0.5px。整站 1px 分隔线改用它，两行成本换一档质感。
-     注意国内办公 Windows 常见 125%/150% 缩放是 DPR 1.25/1.5，不进这个分支——
-     所以基准值必须是干净的 1px，不能指望 0.5px 生效。 */
+  --notch: 0px;           /* 熄灭票券齿孔（改值不改名，Seam 自动退化成点线） */
+  /* 发丝线：高 DPI 下取 0.5px。注意国内办公 Windows 常见 125%/150% 缩放是 DPR 1.25/1.5，
+     不进这个分支——所以基准值必须是干净的 1px，不能指望 0.5px 生效。 */
   --hairline: 1px;
-  /* 全站字体：界面统一使用系统无衬线，等宽字体只用于代码与技术数据。保留旧变量名兼容现有组件。 */
-  --font-ui: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif;
-  --font-code: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* 字体：拉丁自托管（@font-face 见下方 §字体），**拉丁字族必须排在中文前**——浏览器逐字符 fallback，
+     这样英文数字走 Inter、汉字走苹方，混排自然。中文一律吃系统栈（CJK web font 3–10MB，内网部署不划算）。 */
+  --font-ui: "Inter var", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "HarmonyOS Sans SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif;
+  --font-code: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: var(--font-ui);
   --mono: var(--font-code);
-  /* 留白四值语义化（PR-2）：块级间距只准用这四个。
+  /* 留白四值语义化：块级间距只准用这四个。
      配套定律——一条 1px 线可以替代 32px 留白，但替代不了 64px：
      组与组之间二选一，区与区之间必须留空。 */
   --gap-inline: 8px;
@@ -108,45 +138,128 @@
   --fs-lg: 16px;
   --fs-xl: 20px;
   --fs-2xl: 26px;
-  --fs-3xl: 30px;        /* 新增：首页 hero / 大标题 */
+  --fs-3xl: 36px;        /* 大标题（原 30px） */
+  --fs-4xl: 44px;        /* 新增·仅 Tier A 门面三屏（/login、/home、/demos）的 h1 */
   --lh-tight: 1.25;
   --lh-normal: 1.5;
   --lh-relaxed: 1.7;
   --fw-medium: 500;
   --fw-semibold: 600;
-  --fw-bold: 700;        /* 新增：页面标题一等字重 */
+  --fw-bold: 700;
+
+  /* ---- 动效（主题无关）：此前全仓零 cubic-bezier、48 次裸 ease，各页各写各的 ---- */
+  --dur-fast: 120ms;
+  --dur-mid: 180ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(.2, .7, .3, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);  /* 仅入场，不用于 hover（回弹会让点击反馈发飘） */
 
   /* ---- 布局尺寸（主题无关） ---- */
-  --shell-topbar-h: 52px;
-  /* PR-2：侧栏收窄 248→212，把 36px 让给表格 —— 工作台是本产品密度最高的屏 */
+  --shell-topbar-h: 56px;  /* 原 52px，给玻璃条留厚度。全部消费点走令牌，全仓无为顶栏硬编码的 52px */
   --shell-sidebar-w: 212px;
   --content-max: 1280px;
-  --content-max-wide: 1440px;  /* 新增·工作台等"表格 + 侧板同屏"的宽屏页用 */
+  --content-max-wide: 1440px;
   --page-gutter: var(--sp-5);
 
-  /* ---- z-index 数值序（主题无关）：侧板 880 < 抽屉 900 < 模态 950 < ToastHost 硬编码 1000 ---- */
+  /* ---- z-index 数值序（主题无关）：侧板 880 < 抽屉 900 < 模态 950 < ToastHost 1000 ---- */
   --z-sticky: 100;
   --z-dropdown: 200;
-  /* 新增：右侧详情侧板。**刻意低于 --z-drawer**——若与 <768 的 off-canvas 侧栏同为 900，
+  /* 右侧详情侧板。**刻意低于 --z-drawer**——若与 <768 的 off-canvas 侧栏同为 900，
      两者同时打开时只能由 DOM 顺序决胜负（.shell-content 在 .shell-sidebar 之后 → 侧板会反压导航抽屉）。 */
   --z-panel: 880;
   --z-drawer: 900;
-  --z-modal: 950;        /* 新增：ConfirmDialog，在抽屉之上、toast 之下 */
+  --z-modal: 950;
   --z-toast: 1000;
 
-  /* 焦点环（用 accent-soft，随主题变） */
-  --focus-ring: 0 0 0 3px var(--accent-soft);
+  /* 焦点环（输入容器用的 box-shadow 变体）。
+     **第一层用 --bg-elev 不是 --bg**：8 个使用点全部是坐在 --bg-elev/--bg-soft 上的输入容器，
+     用页底色会在卡内画出一圈可见暗环。全局键盘环仍走下方的 outline + outline-offset。 */
+  --focus-ring: 0 0 0 2px var(--bg-elev), 0 0 0 4px var(--accent);
 
-  /* ---- 表格密度两档（PR-5，主题无关）：舒适 ---- */
+  /* ---- 表格密度两档（主题无关）：舒适 ---- */
   --row-h: 48px;
   --row-pad-y: 10px;
   --tbl-fs: 13px;
   --meter-h: 22px;      /* 甘特条 / 量筒的行内高度 */
-  /* ---- 右侧详情板宽度（PR-5） ---- */
+  /* ---- 右侧详情板宽度 ---- */
   --panel-w: clamp(360px, 32vw, 458px);
 }
 
-/* 密度切换挂在 <html data-density> 而不是 `body:has(#d-compact:checked)`（评审 X2）：
+/* ═══════════ 浅色：备选档，主动放弃特效 ═══════════
+   写法上必须让「显式选深色」压过「系统偏好浅色」，故 media 块用 :not([data-theme="dark"])
+   且 [data-theme="dark"] 块写在最后。 */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #F4F5FA; --bg-elev: #FFFFFF; --bg-soft: #F8F9FD; --bg-hover: #EDEFF7; --bg-sunken: #E9EBF4;
+    --border: #E1E4F0; --border-strong: #C3C8DC; --border-ctl: #868DA6;
+    --seam: #CBD1E2; --rule: #1B1F33; --rule-faint: #E7E9F2;
+    --grain: rgba(40, 50, 110, .035);
+    --text: #0D1020; --text-soft: #4A5169; --text-faint: #5F677F; --text-invert: #FFFFFF;
+    --accent: #5B4BE8; --accent-2: #0C6B85; --accent-soft: #EEECFF; --accent-hover: #4A3AD4; --accent-line: #C7C2FA;
+    --dv-1: #5B4BE8; --dv-2: #0C6B85; --dv-3: #0F7A48; --dv-4: #8A5300; --dv-5: #5A6076;
+    --ramp-1: #D5D9E8; --ramp-2: #B9BFD4; --ramp-3: #9BA2BC; --ramp-4: #7D85A2; --ramp-5: #5F6784;
+    --ok: #0F7A48; --ok-soft: #DCF0E3; --warn: #8A5300; --warn-soft: #F8ECD3;
+    --err: #B3261E; --err-soft: #FAE3E1; --blue: #1A4FBE; --blue-soft: #DEE8FB;
+    --green: var(--ok); --green-soft: var(--ok-soft);
+    --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
+    /* 浅色档退回中性黑投影（数值沿用换代前，未动）——白底上内高光不可见，硬移植暗色写法只会丢层次 */
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+    --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
+    --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);
+    --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);
+    --shadow-lg-glow: 0 0 32px color-mix(in srgb, var(--accent) 6%, transparent);
+    --surface-glass: color-mix(in srgb, var(--bg-elev) 78%, transparent);
+    --scrim: rgba(13, 16, 32, .44);
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #F4F5FA; --bg-elev: #FFFFFF; --bg-soft: #F8F9FD; --bg-hover: #EDEFF7; --bg-sunken: #E9EBF4;
+  --border: #E1E4F0; --border-strong: #C3C8DC; --border-ctl: #868DA6;
+  --seam: #CBD1E2; --rule: #1B1F33; --rule-faint: #E7E9F2;
+  --grain: rgba(40, 50, 110, .035);
+  --text: #0D1020; --text-soft: #4A5169; --text-faint: #5F677F; --text-invert: #FFFFFF;
+  --accent: #5B4BE8; --accent-2: #0C6B85; --accent-soft: #EEECFF; --accent-hover: #4A3AD4; --accent-line: #C7C2FA;
+  --dv-1: #5B4BE8; --dv-2: #0C6B85; --dv-3: #0F7A48; --dv-4: #8A5300; --dv-5: #5A6076;
+  --ramp-1: #D5D9E8; --ramp-2: #B9BFD4; --ramp-3: #9BA2BC; --ramp-4: #7D85A2; --ramp-5: #5F6784;
+  --ok: #0F7A48; --ok-soft: #DCF0E3; --warn: #8A5300; --warn-soft: #F8ECD3;
+  --err: #B3261E; --err-soft: #FAE3E1; --blue: #1A4FBE; --blue-soft: #DEE8FB;
+  --green: var(--ok); --green-soft: var(--ok-soft);
+  --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
+  --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);
+  --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);
+  --shadow-lg-glow: 0 0 32px color-mix(in srgb, var(--accent) 6%, transparent);
+  --surface-glass: color-mix(in srgb, var(--bg-elev) 78%, transparent);
+  --scrim: rgba(13, 16, 32, .44);
+}
+/* 显式选深色必须压过系统偏好浅色，故写在最后。 */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0A0B10; --bg-elev: #12141B; --bg-soft: #171A22; --bg-hover: #1F2330; --bg-sunken: #06070C;
+  --border: #272B38; --border-strong: #3A4054; --border-ctl: #5C6478;
+  --seam: #2F3546; --rule: #C9D0E4; --rule-faint: #1C2029;
+  --grain: rgba(150, 165, 220, .055);
+  --text: #E8EAF2; --text-soft: #A9B0C4; --text-faint: #8A93AC; --text-invert: #0A0713;
+  --accent: #8B7BFF; --accent-2: #22D3EE; --accent-soft: #191631; --accent-hover: #A594FF; --accent-line: #3B3470;
+  --dv-1: #8B7BFF; --dv-2: #22D3EE; --dv-3: #3DDC97; --dv-4: #F5B544; --dv-5: #94A1BF;
+  --ramp-1: #2B3044; --ramp-2: #3A4054; --ramp-3: #4B5268; --ramp-4: #5F6780; --ramp-5: #78819C;
+  --ok: #3DDC97; --ok-soft: #0C2A1D; --warn: #F5B544; --warn-soft: #2A2009;
+  --err: #FF7A72; --err-soft: #2E1512; --blue: #5AA9FF; --blue-soft: #0E1E38;
+  --green: var(--ok); --green-soft: var(--ok-soft);
+  --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,.055);
+  --shadow: inset 0 1px 0 rgba(255,255,255,.06), 0 1px 2px rgba(0,0,0,.5);
+  --shadow-md: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 24px rgba(0,0,0,.55);
+  --shadow-lg: inset 0 1px 0 rgba(255,255,255,.08), 0 24px 40px rgba(0,0,0,.66);
+  --shadow-lg-glow: 0 0 40px color-mix(in srgb, var(--accent) 8%, transparent);
+  --surface-glass: color-mix(in srgb, var(--bg-elev) 72%, transparent);
+  --scrim: rgba(4, 5, 10, .72);
+}
+
+/* 密度切换挂在 <html data-density> 而不是 `body:has(#d-compact:checked)`：
    ① `position:fixed` 的侧板 / 模态 / Toast 在 body 子树之外，拿不到定义在 body 上的变量；
    ② 偏好无法持久化；③ `:has()` 在 Firefox <121 静默失效——失效方式是"没反应"，最难排查。 */
 :root[data-density="compact"] {
@@ -155,67 +268,10 @@
   --tbl-fs: 12px;
   --meter-h: 16px;
 }
-/* 触控下不允许真紧凑（G6）：34px 命中区在手指上是不可用的，强制回落到 44px。
+/* 触控下不允许真紧凑：34px 命中区在手指上是不可用的，强制回落到 44px。
    字号与量具高度保留紧凑值——收窄的是留白，不是命中区。 */
 @media (pointer: coarse) {
   :root[data-density="compact"] { --row-h: var(--touch-min); --row-pad-y: 8px; }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b1211; --bg-elev: #131c1a; --bg-soft: #182220; --bg-hover: #1f2b29; --bg-sunken: #0e1615;
-    --border: #243230; --border-strong: #354744; --seam: #5b736e; --rule: #c9d6d3; --rule-faint: #242935;
-    --grain: rgba(200,255,246,.030);
-    --text: #e4ecea; --text-soft: #a0b0ac; --text-faint: #8b9c98; --text-invert: #1a0510;
-    --accent: #f45ca0; --accent-2: #ff86bb; --accent-soft: #2a1420; --accent-hover: #ff86bb; --accent-line: #5e2340;
-    --dv-1: #f45ca0; --dv-2: #6ba1f5; --dv-3: #3fb5a6; --dv-4: #e0a33a; --dv-5: #93a5a1;
-    --ramp-1: #33403d; --ramp-2: #455551; --ramp-3: #5c6f6a; --ramp-4: #778b86; --ramp-5: #94a8a3;
-    --ok: #4fc07f; --ok-soft: #0f2419; --warn: #e0a33a; --warn-soft: #2a1f0c; --err: #f4756b; --err-soft: #2c1513;
-    --blue: #6ba1f5; --blue-soft: #12203a;
-    --green: var(--ok); --green-soft: var(--ok-soft);
-    --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
-    --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
-    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
-    --shadow-md: 0 4px 12px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.3);
-    --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 4px 10px rgba(0,0,0,.4);
-    --scrim: rgba(0, 0, 0, .58);
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0b1211; --bg-elev: #131c1a; --bg-soft: #182220; --bg-hover: #1f2b29; --bg-sunken: #0e1615;
-  --border: #243230; --border-strong: #354744; --seam: #5b736e; --rule: #c9d6d3; --rule-faint: #242935;
-  --grain: rgba(200,255,246,.030);
-  --text: #e4ecea; --text-soft: #a0b0ac; --text-faint: #8b9c98; --text-invert: #1a0510;
-  --accent: #f45ca0; --accent-2: #ff86bb; --accent-soft: #2a1420; --accent-hover: #ff86bb; --accent-line: #5e2340;
-  --dv-1: #f45ca0; --dv-2: #6ba1f5; --dv-3: #3fb5a6; --dv-4: #e0a33a; --dv-5: #93a5a1;
-  --ramp-1: #33403d; --ramp-2: #455551; --ramp-3: #5c6f6a; --ramp-4: #778b86; --ramp-5: #94a8a3;
-  --ok: #4fc07f; --ok-soft: #0f2419; --warn: #e0a33a; --warn-soft: #2a1f0c; --err: #f4756b; --err-soft: #2c1513;
-  --blue: #6ba1f5; --blue-soft: #12203a;
-  --green: var(--ok); --green-soft: var(--ok-soft);
-  --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.35);
-  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
-  --shadow-md: 0 4px 12px rgba(0,0,0,.45), 0 2px 4px rgba(0,0,0,.3);
-  --shadow-lg: 0 14px 34px rgba(0,0,0,.55), 0 4px 10px rgba(0,0,0,.4);
-  --scrim: rgba(0, 0, 0, .58);
-}
-:root[data-theme="light"] {
-  --bg: #edf1f0; --bg-elev: #ffffff; --bg-soft: #f4f7f6; --bg-hover: #e4eae8; --bg-sunken: #e8edec;
-  --border: #d8e0de; --border-strong: #b6c3c0; --seam: #8fa19d; --rule: #2b3937; --rule-faint: #e3e5ea;
-  --grain: rgba(16,45,42,.028);
-  --text: #0e1917; --text-soft: #43514e; --text-faint: #5f6d6a; --text-invert: #ffffff;
-  --accent: #a4256b; --accent-2: #c2528d; --accent-soft: #fbe9f2; --accent-hover: #86164f; --accent-line: #edbcd5;
-  --dv-1: #a4256b; --dv-2: #1a4fbe; --dv-3: #0f6f68; --dv-4: #8a5300; --dv-5: #465b58;
-  --ramp-1: #c7d0ce; --ramp-2: #a8b6b3; --ramp-3: #8a9c98; --ramp-4: #6d817d; --ramp-5: #516663;
-  --ok: #1a7040; --ok-soft: #dcf0e3; --warn: #8a5300; --warn-soft: #f8ecd3; --err: #b3261e; --err-soft: #fae3e1;
-  --blue: #1a4fbe; --blue-soft: #dee8fb;
-  --green: var(--ok); --green-soft: var(--ok-soft);
-  --gold: var(--warn); --gold-soft: var(--warn-soft); --red: var(--err); --red-soft: var(--err-soft);
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .06);
-  --shadow: 0 1px 3px rgba(16, 24, 40, .09), 0 1px 2px rgba(16, 24, 40, .05);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, .10), 0 2px 4px rgba(16, 24, 40, .05);
-  --shadow-lg: 0 14px 34px rgba(16, 24, 40, .16), 0 4px 10px rgba(16, 24, 40, .07);
-  --scrim: rgba(16, 24, 40, .40);
 }
 
 @media (min-resolution: 2dppx) { :root { --hairline: 0.5px; } }
@@ -227,19 +283,29 @@ body {
   font-family: inherit;
   font-size: var(--fs-md);
   line-height: var(--lh-normal);
+  /* 旧的 32° 斜纹防伪底纹已删除——它是「整页发灰」最直接的成因，高频纹理在任何缩放下都读成脏。
+     网格层不在这里：它铺在 .shell-content 上并可按路由关闭（密集表格页会与行线打莫尔纹），见 AppLayout。 */
   background: var(--bg);
-  /* 票据防伪底纹：两道极淡的 32° 斜纹。只铺 body 一处，不参与任何组件。 */
-  background-image:
-    repeating-linear-gradient( 32deg, var(--grain) 0 1px, transparent 1px 7px),
-    repeating-linear-gradient(-32deg, var(--grain) 0 1px, transparent 1px 7px);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+/* 极光光晕独立成层。
+   **不用 background-attachment: fixed** —— iOS Safari 上会退化成跟随滚动，长表格页光斑漂移非常廉价。 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    radial-gradient(50rem 36rem at 92% 8%, color-mix(in srgb, var(--accent-2) 9%, transparent), transparent 70%);
 }
 button, input, select, textarea { font-family: inherit; }
 code, pre, kbd, samp { font-family: var(--font-code); }
 a { color: var(--accent); }
 
-/* 全局键盘焦点环（全站原本零 :focus-visible）。用 outline 不占布局、不被 overflow 裁剪。 */
+/* 全局键盘焦点环。用 outline 不占布局、不被 overflow 裁剪。 */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -259,8 +325,14 @@ a { color: var(--accent); }
   }
 }
 
-/* 页面路由过渡（Phase G）：默认淡入+微位移，被下方 reduced-motion 全局兜底自动灭掉。 */
-.page-enter-active, .page-leave-active { transition: opacity .16s ease, transform .16s ease; }
+/* 小屏 / 触控：整体关掉重效果。backdrop-filter 与大面积 radial 是低端安卓与微信 WebView 掉帧的主因。 */
+@media (max-width: 767px), (pointer: coarse) {
+  body::before { display: none; }
+  :root { --shadow-lg-glow: none; }
+}
+
+/* 页面路由过渡：默认淡入+微位移，被下方 reduced-motion 全局兜底自动灭掉。 */
+.page-enter-active, .page-leave-active { transition: opacity var(--dur-mid) var(--ease-out), transform var(--dur-mid) var(--ease-out); }
 .page-enter-from { opacity: 0; transform: translateY(6px); }
 .page-leave-to { opacity: 0; transform: translateY(-4px); }
 
@@ -272,4 +344,12 @@ a { color: var(--accent); }
     transition-duration: .001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* 打印 / 投屏：暗色档打印会出一张全黑纸，强制回白底并去掉全部装饰。 */
+@media print {
+  :root { color-scheme: light; }
+  body { background: #fff !important; color: #000 !important; }
+  body::before { display: none !important; }
+  * { box-shadow: none !important; text-shadow: none !important; }
 }

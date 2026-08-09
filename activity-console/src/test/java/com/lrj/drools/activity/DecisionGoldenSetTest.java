@@ -7,6 +7,7 @@ import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
 import com.lrj.drools.activity.service.ActivityQueryService;
+import com.lrj.drools.activity.persistence.ActivityRuleEntity;
 import com.lrj.drools.activity.service.ActivityQueryService.DiscountView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -66,6 +67,7 @@ class DecisionGoldenSetTest {
     @Autowired ActivityMarketingService marketing;
     @Autowired ActivityQueryService query;
     @Autowired com.lrj.drools.activity.persistence.ActivityManageRepository manageRepo;
+    @Autowired com.lrj.drools.activity.persistence.ActivityRuleRepository ruleRepo;
 
     // ================================================================ 1. 阶梯落档边界（9 例）
 
@@ -433,6 +435,51 @@ class DecisionGoldenSetTest {
             DiscountView v = query.spuDiscount(req(spu, null));
             assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO),
                     "没有订单金额就算不出折扣；若这里出现 8，说明折数被当成了 8 元发出去");
+        }
+
+        @Test
+        @DisplayName("STACK 下多张折扣券累加，**可能超过订单金额**——记录既有语义，不在此处改钱")
+        void stackedRatiosCanExceedOrderAmount() {
+            long spu = nextSpu();
+            // 两张一折券（各减 90%），订单 100 → 各 90，累加 180 > 100
+            online(marketing.create(zhe("一折A", "gold-ratio-stack", new BigDecimal("1"),
+                    new BigDecimal("99999"), 1, spu, "STACK")));
+            online(marketing.create(zhe("一折B", "gold-ratio-stack", new BigDecimal("1"),
+                    new BigDecimal("99999"), 2, spu, "STACK")));
+
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+
+            assertEquals(0, v.hitAmount().compareTo(new BigDecimal("180")),
+                    "STACK 就是无条件累加，不夹订单金额上限");
+            assertTrue(v.hitAmount().compareTo(new BigDecimal("100")) > 0,
+                    "**这是一个真实的超发面**：STACK 允许总减免超过订单金额。"
+                    + "它不是折扣型引入的——两张 60 元固定券在 100 元订单上同样会累加成 120。"
+                    + "折扣型只是让它更容易被触发。要夹上限就是改钱，必须单独立项、单独对拍，"
+                    + "不能在加形态的批次里顺手改。");
+        }
+
+        @Test
+        @DisplayName("历史脏数据：同时配了阶梯与折扣时，两条路径必须给出同一个数")
+        void ladderAndRatioTogetherAgreeOnBothPaths() {
+            long spu = nextSpu();
+            // 写平面拒绝「折扣型 + 阶梯」，所以这种行只可能来自历史数据或直接写库。
+            // 但它一旦存在，Java 与 DRL 两条路的执行顺序不同（Java 是 if/else，DRL 是 salience），
+            // 如果语义不一致，同一张券在两条路上会发不同的钱。
+            CreateResult r = marketing.create(red("阶梯底", "gold-ratio-dirty",
+                    new BigDecimal("8"), null, null, 1, spu, "MAX"));
+            ActivityRuleEntity rule = ruleRepo
+                    .findByActivityIdAndVersionAndIsDel(r.activityId(), r.version(), 0).get(0);
+            rule.setRedPackageAmountUnit("折");                 // 折数 8
+            rule.setRedPackageMaxDiscount(new BigDecimal("99999"));
+            rule.setRedPackageRangeAmount(TIERS);               // 同时挂上阶梯
+            ruleRepo.save(rule);
+            online(r);
+
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+
+            // 阶梯在 orderAmount=100 上会落到 reward=12；折扣算出来是 20。
+            // 两条路都必须以「折扣覆盖阶梯」收敛（与固定金额覆盖阶梯的既有语义同源）。
+            assertAmount("20", v, "折扣型的算额规则优先级高于阶梯落档，两条路径同为此语义");
         }
 
         @Test

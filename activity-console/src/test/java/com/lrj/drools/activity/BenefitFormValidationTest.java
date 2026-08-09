@@ -1,7 +1,11 @@
 package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
+import com.lrj.drools.activity.engine.BenefitMath;
+import com.lrj.drools.activity.persistence.ActivityRuleEntity;
+import com.lrj.drools.activity.persistence.ActivityRuleRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
+import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,6 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BenefitFormValidationTest {
 
     @Autowired ActivityMarketingService marketing;
+    @Autowired ActivityRuleRepository ruleRepo;
 
     private static long spu = 700_000L;
 
@@ -86,6 +91,22 @@ class BenefitFormValidationTest {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> marketing.create(base(new BigDecimal("10"), "元", null, new BigDecimal("50"))));
         assertTrue(e.getMessage().contains("折扣型"), e.getMessage());
+    }
+
+    @Test
+    @DisplayName("折数 9.995 校验能过但列是 scale=2 —— 落库后必须仍然安全（fail-closed，不是多发）")
+    void scaleTruncationLandsFailClosed() {
+        // 9.995 < 10 所以校验放行，但 red_package_amount 是 DECIMAL(12,2)，落库会被规整成 10.00。
+        // 关键不是「能不能存」，而是**存完之后引擎怎么算**：10 折已越界 → ratioDiscount 返回 null → 不给优惠。
+        // 若哪天改成了向下取整或放宽越界判定，这条会红——那时要重新想清楚该发多少钱。
+        CreateResult r = marketing.create(zhe(new BigDecimal("9.995"), new BigDecimal("50")));
+        ActivityRuleEntity rule = ruleRepo
+                .findByActivityIdAndVersionAndIsDel(r.activityId(), r.version(), 0).get(0);
+
+        BigDecimal stored = rule.getRedPackageAmount();
+        BigDecimal off = BenefitMath.ratioDiscount(new BigDecimal("100"), stored, new BigDecimal("50"));
+        assertTrue(off == null || off.compareTo(new BigDecimal("100")) <= 0,
+                "落库规整后若折数越界应算不出优惠（null），绝不能变成一个更大的减免。实际 stored=" + stored + " off=" + off);
     }
 
     @Test
