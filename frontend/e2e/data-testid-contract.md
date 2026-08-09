@@ -122,11 +122,51 @@
 | `playbook-use-{id}` | `PlaybooksView` | 「用它新建」；**不可用的玩法刻意没有这个 testid** |
 | `playbook-blank` | `PlaybooksView` 页头 | 从空白新建 |
 | `playbook-applied` | `EditorView` | 「已按 X 模板预填」提示条 |
-| `form-take-type` | `EditorView` 发放方式下拉 | 「随机金额」选项恒 `disabled`（未实现，非删除） |
+| `form-take-type` | `EditorView` 发放方式下拉 | 发放方式（1 固定 / 2 随机）。~~「随机金额」恒 disabled~~ —— **2026-08 已接入决策链路，该选项现在可选**，选中后 `form-amount` 让位给 `form-range-min/max` |
 
 新增 e2e：`e2e-playbooks.mjs`（`npm run e2e:playbooks`），覆盖侧栏入口 / 12 张卡 /
-不可用玩法写明缺什么且无按钮 / 筛选 / **跨屏预填链路** / 随机金额置灰 / 1440 与 390 零横向溢出。
+不可用玩法写明缺什么且无按钮 / 筛选 / **跨屏预填链路** / 随机金额可选且换成区间输入 / 1440 与 390 零横向溢出。
 
 **图标系统**：全站 emoji/几何字形已统一为内联 SVG `Icon.vue`（`shared/ui/Icon.vue`）。装饰性图标 `aria-hidden`，语义图标透传 `aria-label`。
 **路由过渡**：`PageTransition.vue` 落 AppShell / ConsoleShell / DemoShell 三出口；被全局 `prefers-reduced-motion` 兜底禁用。
 **首页路由**：`/` 与 catch-all 改指 `/home`（无 e2e 走裸根路径，零冲突）；`/console` 仍 redirect `/console/activities` 不变。
+
+## 2026-08 权益形态扩容 + 视觉换代（补登记）
+
+> 这一节补的是**此前漏登记**的 testid 与脚本。契约表的价值在于「改了要在这里留痕」，
+> 漏登记的后果是下一个人照旧表写断言、跑起来才发现对不上——本轮就发生过：
+> `e2e-playbooks.mjs` 里三条断言编码的是旧现实（第二件半价标灰、随机金额禁用），
+> 功能上线后没同步，直接变红。
+
+### 权益形态表单（`EditorView`）
+
+| testid | 出现条件 | 说明 |
+|---|---|---|
+| `mode-ratio` | 活动类型=红包 | 形态切换到折扣型 |
+| `form-zhe` / `form-max-discount` | `redMode='ratio'` | 折数 (0,10) 与**必填**封顶额 |
+| `form-price` | `redMode='price'` | 一口价（秒杀）卖多少；配 `form-seckill-inventory` |
+| `form-seckill-inventory` | `redMode='price'` | 秒杀库存；真扣减走写平面 `/{id}/claim` |
+| `form-nth` / `form-nth-zhe` | `redMode='nth'` | 第几件（≥2）与折数；需决策入参带 `lines` |
+| `form-range-min` / `form-range-max` | `takeType=2` | 随机红包区间两端（存成 `{"min","max"}` 对象，与阶梯的数组互斥） |
+| `ratio-plain` | `EditorView` 折扣型 | 人话预览（封顶额与到顶门槛） |
+| `detail-ratio` | `DetailView` | 折扣型详情展示（折数不能按金额渲染） |
+
+### 阶梯刻度尺（`TierRuler`）
+
+| testid | 说明 |
+|---|---|
+| `tier-ruler` | 刻度尺容器 |
+| `tier-add` | 加一档 |
+| `tier-knob-{i}` | 第 i 档的卡子（`e2e-tier-ruler.mjs` 直接拖它；**class `.knob` 也被脚本依赖，不可改名**） |
+| `tier-reward-{i}` / `tier-issue-{i}` | 第 i 档奖励额与问题提示 |
+| `tier-plain` | 人话预览 |
+
+### 脚本清单（补齐）
+
+| 脚本 | npm script | 档位 | 覆盖 |
+|---|---|---|---|
+| `e2e-tier-ruler.mjs` | `e2e:ruler` | header（BASE=8095） | 刻度尺拖拽 / 键盘可达 / 人话实时跟随 / 零横向溢出 |
+| `e2e-visual-guard.mjs` | `e2e:visual` | header（BASE=8095） | **视觉与移动端红线**：手机工具条几何、小屏关玻璃、触控 ≥44px、零横向溢出、reduced-motion 无循环动画、深色面强调色主题无关、双档打印回落白底 |
+
+> 档位提醒：编排默认 **auth 档**。除 `e2e:oidc` 外的 8 套都走 header 档，跑之前需
+> `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`。

@@ -316,8 +316,8 @@ A 租户读到的是 dev-default 租户的活动，且没有任何报错。auth 
 | P1-4 Metaspace churn 验证 | ❌ 未开始 |
 | S 档权益模型（BenefitSpec + 前端 schema 表单） | ❌ 未开始（权益线主体，25–35 人日） |
 | 前端 PR-7~PR-9（沙盘 / 看板 / 发布实验） | ❌ 未开始（PR-0~PR-6 已完成，见 [UI 决策记录](../console-ui-coupon-mechanics-0808-2251/DECISION_RECORD.md) 的实施记录） |
-| **玩法扩容**（折扣/单价类）| ❌ 未开始——PR-6 已把边界摆明：折扣类缺「按比例」权益形态；第二件半价/秒杀/加价购缺行项模型或两阶段决策。属闸门 G 的 M 档，需重新立项 |
-| 决策指标聚合接口（`/decision/v1/metrics` · `/by-activity` · `/fallback-rate`） | ❌ 未开始——**PR-8 监控看板的前置**，也是工作台三列缺口的根因 |
+| **玩法扩容**（折扣/单价类）| ✅ **已完成（2026-08-09，分支 `feat/visual-tech-refresh`）**——PR-6 摆明的三条边界已全部拆掉：<br>· 随机金额：`BenefitEvaluator.drawRandom` + `BenefitMath.randomAmount`，**确定性随机**（SHA-256 派生自「活动+版本｜用户｜购物车指纹」）<br>· 第二件半价：决策入口 `SpuDiscountRequest` 补 `lines`（订单行含逐行单价，六参/七参构造保留），新增 `BenefitForm.NTH_ZHE`（unit=`件折`）<br>· 限时秒杀：新增 `BenefitForm.FIXED_PRICE`（unit=`价`）+ 写平面 `POST /{id}/claim` 原子扣减（`decrementInventory` 把判余量与减一压进同一条 UPDATE）<br>· 加价购：活动类型 6 + `AddOnPurchaseService` 两阶段（`/decision/v1/addon/{options,quote}`）<br>测试：`RandomAmountTest` 14 / `NthItemDiscountTest` 13 / `FixedPriceAndClaimTest` 9（含 100 线程抢 10 件的真并发压测）/ `AddOnPurchaseTest` 7 |
+| 决策指标聚合接口 | ⚠️ **部分完成（2026-08-09）**——`GET /decision/v1/metrics`（按 scene/mode 的 count/mean/max + 回退计数）与 `GET /decision/v1/by-activity`（按活动命中量）已实现；`/fallback-rate` 未单独建端点（回退计数已含在 `/metrics` 里）。<br>⚠️ 两点与 PR-8 草案**形状不同**，照旧草案实现会打不通：① 是**单实例进程内视角**（无 `window` 参数、非时序数组），跨实例汇总仍看 Prometheus；② `by-activity` 返回 `{hits, tagCap, overCapTag}`，**activityId 标签有 200 的基数上限**（超出并入 `__over_cap__`）——把 activityId 直接当 Prometheus 标签是基数爆炸，序列数由运营建活动的手速决定 |
 
 ---
 
