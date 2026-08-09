@@ -1,0 +1,261 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>视觉方向样板屏</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #222; }
+
+.skin {
+  --radius: 10px; --radius-sm: 7px; --radius-lg: 14px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px; --sp-6:32px;
+  --font-ui: "Inter", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-code: "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+  --topbar-h: 56px; --side-w: 212px;
+  width: 1440px; height: 900px; overflow: hidden;
+  font-family: var(--font-ui); color: var(--text);
+  background-color: var(--bg); position: relative; isolation: isolate;
+}
+.skin::before {
+  content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background-image:
+    linear-gradient(var(--grain) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grain) 1px, transparent 1px);
+  background-size: var(--grid) var(--grid);
+}
+.skin::after {
+  content:''; position:absolute; inset:0; z-index:0; pointer-events:none;
+  background: var(--aurora);
+}
+
+/* ===================== A · 深空遥测 ===================== */
+.skin-a {
+  --bg:#0A0B10; --bg-elev:#12141B; --bg-soft:#171A22; --bg-hover:#1F2330; --bg-sunken:#06070C;
+  --border:#272B38; --border-strong:#3A4054; --border-ctl:#5C6478;
+  --rule:#C9D0E4; --rule-faint:#1C2029; --grain:rgba(150,165,220,.055); --grid:44px;
+  --text:#E8EAF2; --text-soft:#A9B0C4; --text-faint:#8A93AC; --text-invert:#0A0713;
+  --accent:#8B7BFF; --accent-2:#22D3EE; --accent-soft:#191631; --accent-hover:#A594FF; --accent-line:#3B3470;
+  --ok:#3DDC97; --ok-soft:#0C2A1D; --warn:#F5B544; --warn-soft:#2A2009; --err:#FF7A72;
+  --blue:#5AA9FF; --ramp-3:#4B5268;
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,.055);
+  --shadow-md: inset 0 1px 0 rgba(255,255,255,.07), 0 8px 24px rgba(0,0,0,.55);
+  --glow: 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent);
+  --aurora:
+    radial-gradient(60rem 40rem at 12% -10%, color-mix(in srgb,#8B7BFF 12%,transparent), transparent 70%),
+    radial-gradient(50rem 36rem at 92% 8%, color-mix(in srgb,#22D3EE 9%,transparent), transparent 70%);
+  --hero-bg: linear-gradient(135deg, #171238 0%, #101a3a 48%, #0b1f2e 100%);
+}
+/* ===================== B · 遥测栅格 ===================== */
+.skin-b {
+  --bg:#080D12; --bg-elev:#0F161D; --bg-soft:#141C24; --bg-hover:#1B242E; --bg-sunken:#04080C;
+  --border:#1F2B36; --border-strong:#33434F; --border-ctl:#546678;
+  --rule:#BFD4E2; --rule-faint:#17202A; --grain:rgba(120,190,215,.070); --grid:40px;
+  --text:#DCE7EF; --text-soft:#98A9B8; --text-faint:#7F91A1; --text-invert:#04141A;
+  --accent:#22D3EE; --accent-2:#5EEAD4; --accent-soft:#062029; --accent-hover:#67E8F9; --accent-line:#12505F;
+  --ok:#34D399; --ok-soft:#08251A; --warn:#FBBF24; --warn-soft:#2A2008; --err:#FB7185;
+  --blue:#60A5FA; --ramp-3:#3E5268;
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,.05);
+  --shadow-md: inset 0 1px 0 rgba(255,255,255,.06), 0 8px 24px rgba(0,0,0,.55);
+  --glow: 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent);
+  --aurora: radial-gradient(52rem 34rem at 88% -6%, color-mix(in srgb,#22D3EE 11%,transparent), transparent 70%);
+  --hero-bg: linear-gradient(135deg, #06202b 0%, #072530 50%, #05161d 100%);
+  --radius: 8px; --radius-sm: 6px; --radius-lg: 12px;
+}
+/* ===================== C · 极光玻璃 ===================== */
+.skin-c {
+  --bg:#0B0A14; --bg-elev:#14121F; --bg-soft:#1A1727; --bg-hover:#221E33; --bg-sunken:#07060F;
+  --border:#2A2540; --border-strong:#3E3660; --border-ctl:#6C6492;
+  --rule:#D6CFEA; --rule-faint:#1F1B2D; --grain:rgba(180,150,240,.055); --grid:46px;
+  --text:#EDE9F7; --text-soft:#ADA6C4; --text-faint:#928AB0; --text-invert:#0C0618;
+  --accent:#A78BFA; --accent-2:#FF6FB0; --accent-soft:#1D1633; --accent-hover:#C4B0FF; --accent-line:#453573;
+  --ok:#4ADE97; --ok-soft:#0D2A1E; --warn:#FBBF24; --warn-soft:#2A2008; --err:#FF7A8A;
+  --blue:#7DA9FF; --ramp-3:#4D466F;
+  --shadow-sm: inset 0 1px 0 rgba(255,255,255,.07);
+  --shadow-md: inset 0 1px 0 rgba(255,255,255,.09), 0 10px 30px rgba(0,0,0,.55);
+  --glow: 0 0 18px color-mix(in srgb, var(--accent) 38%, transparent);
+  --aurora:
+    radial-gradient(58rem 40rem at 8% -12%, color-mix(in srgb,#A78BFA 20%,transparent), transparent 68%),
+    radial-gradient(52rem 38rem at 96% 4%, color-mix(in srgb,#FF6FB0 15%,transparent), transparent 68%),
+    radial-gradient(40rem 30rem at 60% 110%, color-mix(in srgb,#5AA9FF 12%,transparent), transparent 70%);
+  --hero-bg: linear-gradient(135deg, #2a1a5e 0%, #3d1f63 45%, #14123a 100%);
+  --radius: 14px; --radius-sm: 9px; --radius-lg: 20px;
+}
+
+/* ---------- 布局 ---------- */
+.top {
+  position: relative; z-index: 2; height: var(--topbar-h);
+  display: flex; align-items: center; gap: var(--sp-4); padding: 0 var(--sp-5);
+  background: color-mix(in srgb, var(--bg-elev) 72%, transparent);
+  backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);
+  border-bottom: 1px solid var(--border); box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+}
+.logo { width: 30px; height: 30px; border-radius: var(--radius-sm);
+  background: linear-gradient(140deg, var(--accent), var(--accent-2));
+  box-shadow: var(--glow); display: grid; place-items: center; color: var(--text-invert); font-weight: 800; font-size: 14px; }
+.brand { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.spacer { flex: 1; }
+.chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
+  color: var(--text-soft); background: var(--bg-soft); font-family: var(--font-code); }
+.chip.on { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: var(--accent-line); color: var(--accent); box-shadow: var(--glow); }
+
+.body { position: relative; z-index: 2; display: flex; height: calc(900px - var(--topbar-h)); }
+.side { width: var(--side-w); flex: none; padding: var(--sp-4) var(--sp-3);
+  background: color-mix(in srgb, var(--bg-elev) 60%, transparent);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+.slabel { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint);
+  padding: var(--sp-3) var(--sp-2) var(--sp-1); font-weight: 700; }
+.nav { position: relative; display: flex; gap: var(--sp-3); align-items: center;
+  padding: 9px var(--sp-3); border-radius: var(--radius-sm); color: var(--text-soft); font-size: 13.5px; }
+.nav .d { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid currentColor; opacity: .65; flex: none; }
+.nav.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nav.on::before { content:''; position:absolute; left:0; top:7px; bottom:7px; width:3px; border-radius:999px;
+  background: var(--accent); box-shadow: var(--glow); }
+.nav .sub { display:block; font-size: 10.5px; color: var(--text-faint); font-weight: 400; margin-top: 1px; }
+
+.main { flex: 1; padding: var(--sp-5); overflow: hidden; }
+
+/* hero */
+.hero { position: relative; overflow: hidden; border-radius: var(--radius-lg); padding: 26px 28px;
+  background: var(--hero-bg); border: 1px solid var(--border-strong); box-shadow: var(--shadow-md); margin-bottom: var(--sp-5); }
+.hero::after { content:''; position:absolute; inset:0;
+  background: radial-gradient(30rem 16rem at 88% 0%, color-mix(in srgb, var(--accent) 26%, transparent), transparent 70%); }
+.hero > * { position: relative; z-index: 1; }
+.kick { font-family: var(--font-code); font-size: 10.5px; letter-spacing: .18em; color: var(--accent-2); font-weight: 600; }
+.h1 { font-size: 36px; font-weight: 700; letter-spacing: -.02em; margin: 8px 0 6px; line-height: 1.12;
+  background: linear-gradient(120deg, var(--text) 24%, var(--accent-2) 96%);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { font-size: 13.5px; color: var(--text-soft); max-width: 620px; }
+.hrow { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-5); }
+.btns { display: flex; gap: var(--sp-3); margin-top: 18px; }
+.btn { font-size: 13px; font-weight: 600; padding: 9px 17px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-ctl); color: var(--text); background: color-mix(in srgb, var(--bg-elev) 55%, transparent); }
+.btn.pri { border-color: transparent; color: var(--text-invert);
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.24), var(--glow); }
+.hstats { display: flex; gap: 1px; background: var(--border); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden; flex: none; }
+.hstat { background: color-mix(in srgb, var(--bg-sunken) 62%, transparent); padding: 12px 20px; text-align: center; min-width: 96px; }
+.hstat b { display: block; font-family: var(--font-code); font-size: 22px; font-weight: 700; letter-spacing: -.02em;
+  color: var(--accent-2); text-shadow: 0 0 18px color-mix(in srgb, var(--accent-2) 45%, transparent); font-variant-numeric: tabular-nums; }
+.hstat span { font-size: 10.5px; color: var(--text-faint); }
+
+/* kpi row */
+.kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: var(--sp-4); margin-bottom: var(--sp-5); }
+.kpi { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: var(--sp-4) var(--sp-4) 10px; box-shadow: var(--shadow-sm); position: relative; overflow: hidden; }
+.kpi .lab { font-size: 11.5px; color: var(--text-faint); display: flex; align-items: center; gap: 6px; }
+.pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.kpi .val { font-family: var(--font-code); font-size: 27px; font-weight: 700; letter-spacing: -.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.kpi .val i { font-style: normal; font-size: 13px; color: var(--text-faint); font-weight: 500; }
+.kpi svg { display: block; margin-top: 6px; width: 100%; height: 34px; }
+
+/* table */
+.panel { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-sm); overflow: hidden; }
+.phead { display: flex; align-items: center; justify-content: space-between; padding: 14px var(--sp-4) 12px; }
+.phead h3 { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.phead .k { font-family: var(--font-code); font-size: 10px; letter-spacing: .16em; color: var(--accent); text-transform: uppercase; }
+.phead .cnt { font-size: 12px; color: var(--text-faint); font-family: var(--font-code); }
+.thead, .trow { display: grid; grid-template-columns: 2.1fr 90px 190px 110px 120px 150px; align-items: center;
+  gap: var(--sp-3); padding: 0 var(--sp-4); }
+.thead { height: 36px; background: var(--bg-soft); border-block: 1px solid var(--border);
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; }
+.trow { height: 54px; border-bottom: 1px solid var(--rule-faint); font-size: 13px; }
+.trow:nth-child(3) { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.nm { font-weight: 550; }
+.nm span { display: block; font-family: var(--font-code); font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+.mono { font-family: var(--font-code); font-variant-numeric: tabular-nums; }
+.wb { position: relative; height: 8px; border-radius: 999px; background: var(--bg-sunken); border: 1px solid var(--border); overflow: hidden; }
+.wb i { position: absolute; inset: 0 32% 0 8%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: var(--glow); }
+.wb u { position: absolute; top:-3px; bottom:-3px; left: 46%; width: 2px; background: var(--rule); }
+.wtxt { font-family: var(--font-code); font-size: 10px; color: var(--text-faint); margin-top: 5px; }
+.bdg { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px; }
+.bdg.live { color: var(--ok); background: var(--ok-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--ok) 30%,transparent); }
+.bdg.wait { color: var(--warn); background: var(--warn-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--warn) 30%,transparent); }
+.bdg .dot { width:6px; height:6px; border-radius:50%; background: currentColor; }
+.bdg .sq { width:6px; height:6px; background: currentColor; }
+.acts { display: flex; gap: 6px; }
+.mini { font-size: 11.5px; padding: 5px 11px; border-radius: var(--radius-sm); border: 1px solid var(--border); color: var(--text-soft); }
+.mini.a { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.mini.g { color: var(--ok); border-color: color-mix(in srgb,var(--ok) 35%,transparent); background: var(--ok-soft); }
+.tag { font-size: 11.5px; color: var(--text-soft); }
+.tag span { display:block; font-family: var(--font-code); font-size: 10px; color: var(--text-faint); }
+</style>
+
+<div class="skin skin-a" id="a"></div>
+<div class="skin skin-b" id="b"></div>
+<div class="skin skin-c" id="c"></div>
+
+<script>
+const spark = (c1,c2,id) => `<svg viewBox="0 0 200 34" preserveAspectRatio="none">
+  <defs><linearGradient id="g${id}" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="${c1}" stop-opacity=".34"/><stop offset="100%" stop-color="${c1}" stop-opacity="0"/>
+  </linearGradient></defs>
+  <path d="M0 26 L20 22 L40 25 L60 15 L80 18 L100 10 L120 14 L140 7 L160 11 L180 5 L200 8 L200 34 L0 34 Z" fill="url(#g${id})"/>
+  <path d="M0 26 L20 22 L40 25 L60 15 L80 18 L100 10 L120 14 L140 7 L160 11 L180 5 L200 8" fill="none"
+        stroke="${c1}" stroke-width="1.8" style="filter:drop-shadow(0 0 5px ${c2})"/>
+</svg>`;
+
+const row = (n,id,v,type,d1,d2,q,st,stx) => `<div class="trow">
+  <div class="nm">${n}<span>${id} · ${v}</span></div>
+  <div class="tag">${type}<span>mall</span></div>
+  <div><div class="wb"><i></i><u></u></div><div class="wtxt">${d1} → ${d2}</div></div>
+  <div class="mono">${q} <i style="font-style:normal;color:var(--text-faint);font-size:11px">声明式</i></div>
+  <div><span class="bdg ${st}"><span class="${st==='live'?'dot':'sq'}"></span>${stx}</span></div>
+  <div class="acts"><span class="mini a">详情</span><span class="mini">编辑</span><span class="mini g">上线</span></div>
+</div>`;
+
+const tpl = (accent, accent2) => `
+<div class="top">
+  <div class="logo">◈</div><div class="brand">活动引擎控制台</div>
+  <div class="spacer"></div>
+  <span class="chip on">acme</span><span class="chip">beta</span><span class="chip">__dev__</span>
+  <span class="chip" style="margin-left:8px">◐</span>
+</div>
+<div class="body">
+  <div class="side">
+    <div class="nav"><span class="d"></span><span>概览<span class="sub">两大区域 · 最近活动</span></span></div>
+    <div class="slabel">控制台</div>
+    <div class="nav on"><span class="d"></span><span>活动列表<span class="sub">浏览 · 复核 · 上下线</span></span></div>
+    <div class="nav"><span class="d"></span><span>玩法模板<span class="sub">挑一个玩法开始</span></span></div>
+    <div class="nav"><span class="d"></span><span>新建活动<span class="sub">配置红包 / 买赠规则</span></span></div>
+    <div class="nav"><span class="d"></span><span>优惠验证<span class="sub">对已上线活动跑决策</span></span></div>
+    <div class="slabel">规则能力中心</div>
+    <div class="nav"><span class="d"></span><span>能力目录<span class="sub">规则场景 · 在线验证</span></span></div>
+  </div>
+  <div class="main">
+    <div class="hero"><div class="hrow"><div>
+      <div class="kick">ACTIVITY BENCH</div>
+      <div class="h1">活动工作台</div>
+      <div class="sub">检索、复核、批量上下线——一屏完成。保存即生成受控 Drools 规则，发布代际由决策面轮询预热。</div>
+      <div class="btns"><span class="btn pri">＋ 新建活动</span><span class="btn">优惠验证</span></div>
+    </div><div class="hstats">
+      <div class="hstat"><b>31</b><span>活动总数</span></div>
+      <div class="hstat"><b>4</b><span>正在生效</span></div>
+      <div class="hstat"><b>2</b><span>7 日内到期</span></div>
+    </div></div></div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="lab"><span class="pulse"></span>决策 QPS · 近 1 小时</div>
+        <div class="val">1,284<i> /s</i></div>${spark(accent2, accent2+'99','1')}</div>
+      <div class="kpi"><div class="lab"><span class="pulse"></span>规则命中率</div>
+        <div class="val">92.7<i> %</i></div>${spark(accent, accent+'99','2')}</div>
+      <div class="kpi"><div class="lab"><span class="pulse"></span>决策 P99</div>
+        <div class="val">18<i> ms</i></div>${spark(accent2, accent2+'99','3')}</div>
+    </div>
+
+    <div class="panel">
+      <div class="phead"><div><div class="k">ACTIVITY INVENTORY</div><h3>活动清单</h3></div><div class="cnt">共 31 项</div></div>
+      <div class="thead"><div>活动</div><div>类型</div><div>生效窗</div><div>额度</div><div>状态</div><div>操作</div></div>
+      ${row('双十一通用红包','ACT1786245472930010','v2','红包','08-09','08-16','100','live','生效中')}
+      ${row('新客首单立减','ACT1786245471263009','v1','红包','08-09','08-16','100','wait','待上线')}
+      ${row('满 299 赠品券','ACT1786245469272008','v3','买赠','08-09','09-08','500','live','生效中')}
+      ${row('会员日阶梯折扣','ACT1786245467388007','v1','红包','08-12','09-08','500','wait','待上线')}
+    </div>
+  </div>
+</div>`;
+
+document.getElementById('a').innerHTML = tpl('#8B7BFF', '#22D3EE');
+document.getElementById('b').innerHTML = tpl('#22D3EE', '#5EEAD4');
+document.getElementById('c').innerHTML = tpl('#A78BFA', '#FF6FB0');
+</script>
