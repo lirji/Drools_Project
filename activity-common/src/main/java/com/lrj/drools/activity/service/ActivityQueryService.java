@@ -120,7 +120,14 @@ public class ActivityQueryService {
     }
 
     public DiscountView spuDiscount(SpuDiscountRequest req, boolean explain) {
-        return metrics.timeDecision(SCENE_DISCOUNT, () -> spuDiscountInternal(req, explain), DiscountView::mode);
+        DiscountView v = metrics.timeDecision(SCENE_DISCOUNT,
+                () -> spuDiscountInternal(req, explain), DiscountView::mode);
+        // 按活动的命中计数打在**唯一出口**上，而不是引擎命中的那个分支里。
+        // 打在分支里会漏掉回退路径（legacyMax 也会命中活动），于是「按活动命中量」在
+        // 引擎回退时系统性少计——**少计的指标比没有指标更危险**，因为它看起来是权威的，
+        // 而回退恰恰是最需要盯着的时刻。基数上限由 DecisionMetrics.hit 兜住。
+        if (v != null && v.hit()) metrics.hit(SCENE_DISCOUNT, v.hitActivityId());
+        return v;
     }
 
     private DiscountView spuDiscountInternal(SpuDiscountRequest req, boolean explain) {
@@ -184,9 +191,6 @@ public class ActivityQueryService {
         }
         if (disc != null && (disc.getHitActivityId() != null || disc.getHitAmount().signum() > 0)) {
             traces.addAll(disc.getTraces());
-            // 按活动的命中计数——控制台「按活动看命中量」的唯一数据来源。
-            // 基数上限在 DecisionMetrics.hit 里兜住，这里不需要额外判断。
-            metrics.hit(SCENE_DISCOUNT, disc.getHitActivityId());
             return new DiscountView(true, disc.getHitActivityId(), disc.getHitActivityName(),
                     disc.getHitAmount(), disc.getStrategy().name(), traces, engineMode(true));
         }
