@@ -59,6 +59,10 @@ public class BenefitEvaluator {
             if (driver == null) continue;                       // 缺字段 → 闸门不开（与 DRL 的 != null 一致）
             LadderTier tier = tierOf(def.tiers(), driver);
             if (tier == null) continue;
+            // 负奖励 = 负优惠（下游会去加钱）。写入口现在拦得住新配置，但拦不住已经在库里的脏数据，
+            // 而决策出口的闸门是 `hitActivityId != null || hitAmount > 0`——OR 短路让负数照样出门。
+            // 落档前挡一次，语义与其它 fail-closed 分支一致：算出来不对，就是本活动不适用。
+            if (tier.reward() != null && tier.reward().signum() < 0) continue;
             for (ActivityCandidate c : candidates) {
                 if (!c.isEligible()) continue;
                 if (!def.activityId().equals(c.getActivityId())) continue;
@@ -103,7 +107,7 @@ public class BenefitEvaluator {
                 BigDecimal drawn = drawRandom(ctx, c);
                 // 算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 ratioDiscount 的规矩：
                 // 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
-                if (drawn == null) continue;
+                if (drawn == null) { notApplicable(c, "随机区间缺失或非法"); continue; }
                 c.setComputedAmount(drawn);
                 c.setAmountComputed(true);
                 continue;
@@ -116,7 +120,7 @@ public class BenefitEvaluator {
             // **绝不退化成拿整单均价算**：混着贵重与便宜商品的车会静默算错钱。
             if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.NTH_ZHE) {
                 BigDecimal off = nthDiscount(ctx, c);
-                if (off == null) continue;
+                if (off == null) { notApplicable(c, "第 N 件折缺订单行或 N 非法"); continue; }
                 c.setComputedAmount(off);
                 c.setAmountComputed(true);
                 continue;
@@ -128,7 +132,8 @@ public class BenefitEvaluator {
             if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.FIXED_PRICE) {
                 BigDecimal off = BenefitMath.fixedPriceDiscount(
                         ctx == null ? null : ctx.getOrderAmount(), c.getRedPackageAmount());
-                if (off == null) continue;   // 订单比秒杀价还便宜 / 缺金额 → 本活动不适用
+                // 订单比秒杀价还便宜 / 缺金额 → 本活动不适用
+                if (off == null) { notApplicable(c, "一口价高于订单金额或缺订单金额"); continue; }
                 c.setComputedAmount(off);
                 c.setAmountComputed(true);
                 continue;
@@ -143,7 +148,7 @@ public class BenefitEvaluator {
                         c.getRedPackageMaxDiscount());
                 // 算不出来（没订单金额 / 折数越界）→ **不给优惠**，而不是给 0 元：
                 // 给 0 元会让它以 0 参与 MAX 竞争并可能挤掉别的活动。
-                if (off == null) continue;
+                if (off == null) { notApplicable(c, "缺订单金额或折数越界"); continue; }
                 c.setComputedAmount(off);
                 c.setAmountComputed(true);
                 continue;
@@ -152,6 +157,27 @@ public class BenefitEvaluator {
             c.setComputedAmount(c.getRedPackageAmount());
             c.setAmountComputed(true);
         }
+    }
+
+    /**
+     * 「这个活动算不出金额」= <b>它不适用</b>，而不是「它减 0 元」。
+     *
+     * <p>四种形态各自的 fail-closed 分支从前都只是 {@code continue}，注释也写着「不给优惠，不是给 0 元」——
+     * 但候选的 {@code eligible} 默认 true、{@code computedAmount} 默认 ZERO，而
+     * {@link #merge} 只按 {@code isEligible} 过滤。于是 continue 出来的候选<b>仍是一个合法候选，
+     * 只是金额为 0</b>：它会被 MAX 选中（当它是唯一候选时）从而报出 {@code hit=true, amount=0}，
+     * 更糟的是在 PRIORITY/MUTEX 下能凭 priority 挤掉一个本可以减 10 元的活动。
+     * 契约写在注释里、却没有落到数据结构上，是这个 bug 的全部成因。
+     *
+     * <p>用 {@link ActivityCandidate#reject} 而不是只清 {@code computedAmount}：
+     * 「不适用」和「减 0 元」必须在数据上可区分——阶梯首档 reward=0 是合法的 0 元优惠，
+     * 靠金额判别会把它一起误杀。
+     *
+     * <p><b>注意它会让「唯一候选不适用」走到空决策回退</b>（{@code ActivityQueryService} 的
+     * {@code empty-decision}）。这与「候选全被资格条件淘汰」走的是同一条路，不是新增的异常路径。
+     */
+    private static void notApplicable(ActivityCandidate c, String why) {
+        c.reject("本活动不适用：" + why);
     }
 
     /**

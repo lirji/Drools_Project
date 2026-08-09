@@ -117,18 +117,116 @@ class BenefitFormValidationTest {
         assertDoesNotThrow(() -> marketing.create(base(new BigDecimal("10"), null, null, null)));
     }
 
+    // ================================================================ range 列的三用途分叉
+    //
+    // redPackageRangeAmount 是三用途列：数组=阶梯、{"min","max"}=随机区间、{"nth":N}=第 N 件折。
+    // 读侧（LadderRangeParser 只认数组 / RandomRangeParser 只认对象）早就是这么分的，
+    // 写侧却一度无条件按阶梯解析 —— 于是「第二件半价」和「随机金额红包」这两种合法配置
+    // 在写入口 100% 被判成「阶梯分档 JSON 无有效档位」。下面这组就是钉住这条分叉。
+
+    @Test
+    @DisplayName("第 N 件折可以创建——{\"nth\":2} 不是「无效的阶梯」")
+    void nthCanBeCreated() {
+        assertDoesNotThrow(() -> marketing.create(nth(new BigDecimal("5"), "{\"nth\":2}")));
+    }
+
+    @Test
+    @DisplayName("第 N 件折的 N 必须 ≥2：缺 nth / N=1 / 写成数组都拒")
+    void nthRejectsBadN() {
+        for (String bad : new String[]{"{\"nth\":1}", "{\"nth\":0}", "{}", "[{\"min\":0,\"reward\":5}]"}) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> marketing.create(nth(new BigDecimal("5"), bad)), "nth JSON " + bad + " 应被拒");
+            assertTrue(e.getMessage().contains("第 N 件折"), e.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("第 N 件折的折数是折数不是钱：必填且须在 (0,10)")
+    void nthValidatesZhe() {
+        assertThrows(IllegalArgumentException.class, () -> marketing.create(nth(null, "{\"nth\":2}")));
+        for (String bad : new String[]{"0", "10", "-1"}) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> marketing.create(nth(new BigDecimal(bad), "{\"nth\":2}")), "折数 " + bad + " 应被拒");
+        }
+    }
+
+    @Test
+    @DisplayName("随机金额红包可以创建——{\"min\",\"max\"} 不是「无效的阶梯」")
+    void randomRangeCanBeCreated() {
+        assertDoesNotThrow(() -> marketing.create(random(new BigDecimal("10"), "{\"min\":5,\"max\":20}")));
+    }
+
+    @Test
+    @DisplayName("随机区间非法一律拒：min>max / 负数 / 缺字段（决策侧算不出就是不发，不许静默上线）")
+    void randomRangeRejectsBad() {
+        for (String bad : new String[]{"{\"min\":20,\"max\":5}", "{\"min\":-1,\"max\":5}", "{\"min\":5}"}) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                    () -> marketing.create(random(new BigDecimal("10"), bad)), "区间 " + bad + " 应被拒");
+            assertTrue(e.getMessage().contains("随机金额"), e.getMessage());
+        }
+    }
+
+    @Test
+    @DisplayName("阶梯仍按老规矩校验：数组解析不出档位照样拒（本次分叉不放松旧闸门）")
+    void ladderStillGuarded() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> marketing.create(base(null, "元", "[{\"min\":0,\"max\":100}]", null)));
+        assertTrue(e.getMessage().contains("阶梯分档"), e.getMessage());
+    }
+
+    @Test
+    @DisplayName("阶梯每一档的奖励都要过 [0, 999999]——负奖励等于负优惠，会一路发到下游")
+    void ladderTierRewardGuarded() {
+        // 一档合法一档为负：护栏必须逐档看，不能只看第一档
+        String negative = "[{\"min\":0,\"max\":100,\"reward\":5},{\"min\":100,\"max\":null,\"reward\":-50}]";
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> marketing.create(base(null, "元", negative, null)));
+        assertTrue(e.getMessage().contains("阶梯档奖励"), e.getMessage());
+
+        String tooBig = "[{\"min\":0,\"max\":null,\"reward\":1000000}]";
+        assertThrows(IllegalArgumentException.class, () -> marketing.create(base(null, "元", tooBig, null)));
+
+        // 0 元档是合法配置（首档不减），不能被一起误杀
+        assertDoesNotThrow(() -> marketing.create(base(null, "元",
+                "[{\"min\":0,\"max\":100,\"reward\":0},{\"min\":100,\"max\":null,\"reward\":20}]", null)));
+    }
+
+    @Test
+    @DisplayName("一口价：必须 >0，且不许配 range（结果与原价无关，配了也没人读）")
+    void fixedPriceGuards() {
+        assertDoesNotThrow(() -> marketing.create(base(new BigDecimal("9.9"), "价", null, null)));
+        assertThrows(IllegalArgumentException.class, () -> marketing.create(base(BigDecimal.ZERO, "价", null, null)));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> marketing.create(base(new BigDecimal("9.9"), "价", "[{\"min\":0,\"reward\":5}]", null)));
+        assertTrue(e.getMessage().contains("一口价"), e.getMessage());
+    }
+
     // ---- helpers ----
 
     private ActivityCreateRequest zhe(BigDecimal zheValue, BigDecimal cap) {
         return base(zheValue, "折", null, cap);
     }
 
+    /** 第 N 件折：单位=件折，amount 是折数，N 在 range 列。takeType 与它无关，传 null（前端也是）。 */
+    private ActivityCreateRequest nth(BigDecimal zheValue, String rangeJson) {
+        return base(zheValue, "件折", rangeJson, null, null);
+    }
+
+    /** 随机金额红包：单位=元 + takeType=2 + 区间对象。 */
+    private ActivityCreateRequest random(BigDecimal amount, String rangeJson) {
+        return base(amount, "元", rangeJson, null, 2);
+    }
+
     private ActivityCreateRequest base(BigDecimal amount, String unit, String ladder, BigDecimal cap) {
+        return base(amount, unit, ladder, cap, 1);
+    }
+
+    private ActivityCreateRequest base(BigDecimal amount, String unit, String ladder, BigDecimal cap, Integer takeType) {
         long now = System.currentTimeMillis();
         return new ActivityCreateRequest(
                 null, null, "形态校验-" + (++spu), "benefit-form", 1, null,
                 now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
-                1, amount, unit, ladder, "MAX",
+                takeType, amount, unit, ladder, "MAX",
                 null, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null,
                 cap);
     }

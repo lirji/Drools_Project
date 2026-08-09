@@ -180,7 +180,18 @@ public class ActivityQueryService {
         if (javaBenefitEval) {
             // P1-2：标量计算与 reduce 不进规则引擎。语义逐条复制自原 DRL，见 BenefitEvaluator。
             benefits.applyLadder(ctx, candidates, ladderDefs);
+            // 算额会把「形态对但算不出金额」的候选淘汰掉（BenefitEvaluator.notApplicable）。
+            // 那是**静默**的——试算屏上表现为「这个活动凭空没了」，而运营刚在控制台看到它已上线。
+            // 所以 explain 档要把淘汰前后的差集讲出来：只在这里比对，BenefitEvaluator 不必知道 trace 的存在。
+            List<String> applicableBefore = explain ? eligibleIds(candidates) : List.of();
             benefits.computeAmounts(ctx, candidates);
+            if (explain) {
+                for (ActivityCandidate c : candidates) {
+                    if (!c.isEligible() && applicableBefore.contains(c.getActivityId())) {
+                        traces.add("not applicable: " + c.getActivityId() + "（" + c.getRejectReason() + "）");
+                    }
+                }
+            }
             disc = benefits.merge(candidates, strategy, explain);
         } else {
             if (!ladderDefs.isEmpty() && ctx.getOrderAmount() != null) {
@@ -238,6 +249,11 @@ public class ActivityQueryService {
                 if (explain) traces.add("eligibility reject: " + c.getActivityId());
             }
         }
+    }
+
+    private static List<String> eligibleIds(List<ActivityCandidate> candidates) {
+        return candidates.stream().filter(ActivityCandidate::isEligible)
+                .map(ActivityCandidate::getActivityId).toList();
     }
 
     /** 旧逻辑：同批候选取最大红包金额。 */

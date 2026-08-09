@@ -5,12 +5,14 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DistributionMode;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
 import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import com.lrj.drools.activity.engine.LadderRangeParser;
+import com.lrj.drools.activity.engine.RandomRangeParser;
 import com.lrj.drools.activity.engine.RuleConditionTranslator;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.persistence.*;
@@ -167,11 +169,8 @@ public class ActivityMarketingService {
             eligDrl = drlBuilder.buildEligibilityDrl(List.of(new EligibilityRuleDef(activityId, constraint)), true);
             ruleRuntime.compileOrGet(eligDrl); // 编译失败带行号抛出
         }
-        // 阶梯 JSON 校验
-        if (req.redPackageRangeAmount() != null && !req.redPackageRangeAmount().isBlank()
-                && LadderRangeParser.parse(req.redPackageRangeAmount()).isEmpty()) {
-            throw new IllegalArgumentException("阶梯分档 JSON 无有效档位");
-        }
+        // range 列校验（按权益形态分叉，见 validateRangeColumn）
+        validateRangeColumn(req);
 
         // 落库：基础层 → 规则层 → 条件层 → 买赠 → 手动绑定 → 池引用 → 自动圈选物化
         Integer status = ActivityStatus.NORMAL.code();
@@ -357,14 +356,34 @@ public class ActivityMarketingService {
         String unit = req.redPackageAmountUnit();
         if (!BenefitForm.isSupportedUnit(unit)) {
             throw new IllegalArgumentException(
-                    "金额单位仅支持「元」(金额型) 或「折」(折扣型)，收到: " + unit);
+                    "金额单位仅支持「元」(金额型) /「折」(折扣型) /「价」(一口价) /「件折」(第 N 件折)，收到: " + unit);
         }
-        if (BenefitForm.of(unit) != BenefitForm.RATIO_ZHE) {
+        BenefitForm form = BenefitForm.of(unit);
+        if (form != BenefitForm.RATIO_ZHE) {
             if (hasFixed && (req.redPackageAmount().signum() < 0 || req.redPackageAmount().compareTo(MAX_AMOUNT) > 0)) {
                 throw new IllegalArgumentException("红包金额需在 [0, " + MAX_AMOUNT + "] 内");
             }
             if (req.redPackageMaxDiscount() != null) {
                 throw new IllegalArgumentException("封顶减免额只对折扣型(单位=折)有意义");
+            }
+            // 一口价与第 N 件折此前从这里直接早退，两个「决定发多少钱」的数字一条护栏都没有——
+            // 规则只写在前端表单里，任何绕过 SPA 的调用方（压测脚本 / 批量导入 / 租户直连）都能存进来。
+            // 现在它们从模板走得通了（见 validateRangeColumn），护栏必须跟着落到写入口。
+            if (form == BenefitForm.FIXED_PRICE) {
+                // 一口价是「卖多少」不是「减多少」：0 等于白送、负数等于倒贴，都不是运营的本意
+                if (!hasFixed || req.redPackageAmount().signum() <= 0) {
+                    throw new IllegalArgumentException("一口价(单位=价)必须填 redPackageAmount 且大于 0");
+                }
+            } else if (form == BenefitForm.NTH_ZHE) {
+                // 这里的数字是折数不是钱，上面 [0, MAX_AMOUNT] 的金额护栏对它毫无意义
+                if (!hasFixed) {
+                    throw new IllegalArgumentException("第 N 件折(单位=件折)必须填折数（redPackageAmount）");
+                }
+                BigDecimal nthZhe = req.redPackageAmount();
+                if (nthZhe.signum() <= 0 || nthZhe.compareTo(BigDecimal.TEN) >= 0) {
+                    throw new IllegalArgumentException(
+                            "第 N 件折的折数须在 (0,10) 之间，10 折=不打折、0 折=白送，均按配置错误拒绝，收到: " + nthZhe);
+                }
             }
             return;
         }
@@ -388,6 +407,68 @@ public class ActivityMarketingService {
         }
         if (cap.compareTo(MAX_AMOUNT) > 0) {
             throw new IllegalArgumentException("封顶减免额需在 (0, " + MAX_AMOUNT + "] 内");
+        }
+    }
+
+    /**
+     * 校验 {@code redPackageRangeAmount} 这一列。
+     *
+     * <p><b>它是三用途的</b>：数组=阶梯分档、{@code {"min","max"}}=随机金额区间、
+     * {@code {"nth":N}}=第 N 件折。三者靠 <b>顶层 JSON 类型 + 判别位</b> 互斥
+     * （{@link com.lrj.drools.activity.engine.RandomRangeParser} 的类注释是这条分工的出处），
+     * 读侧早就是这么分的——{@code LadderRangeParser} 见到非数组直接返回空，把对象让给随机/第 N 件。
+     *
+     * <p>写侧此前却<b>无条件</b>按阶梯解析这一列：于是「第二件半价」({@code {"nth":2}}) 与
+     * 「随机金额红包」({@code {"min":5,"max":20}}) 这两种合法配置在写入口 100% 被拒，
+     * 报错文案还讲的是运营从没碰过的「阶梯分档」。统一写入口本身没错，错在这里少了按形态的分叉——
+     * 一个读侧认识三种语义、写侧只认识一种的列，必然把另外两种判成脏数据。
+     *
+     * <p>各形态<b>都要真解析一遍</b>而不是只看形状：能存进来的必须是决策侧算得出金额的，
+     * 否则活动会以「不适用」姿态上线（{@code parseNth}/{@code parse} 返回 null → 决策侧不给优惠），
+     * 而运营在控制台看到的是「已上线」。
+     */
+    private void validateRangeColumn(ActivityCreateRequest req) {
+        String json = req.redPackageRangeAmount();
+        if (json == null || json.isBlank()) return;
+
+        BenefitForm form = BenefitForm.of(req.redPackageAmountUnit());
+        if (form == BenefitForm.NTH_ZHE) {
+            if (RandomRangeParser.parseNth(json) == null) {
+                throw new IllegalArgumentException(
+                        "第 N 件折需在 redPackageRangeAmount 配 {\"nth\":N} 且 N≥2（N=1 等于全场打折，那是折扣型），收到: " + json);
+            }
+            return;
+        }
+        if (form == BenefitForm.FIXED_PRICE) {
+            // 一口价的结果与原价无关，配了分档/区间也没有任何一条读路径会用它——
+            // 静默留着只会在下一次「这个列到底是什么」里再坑一次，直接拒。
+            throw new IllegalArgumentException("一口价(单位=价)不支持阶梯分档/区间，redPackageRangeAmount 必须为空");
+        }
+        boolean random = req.redPackageTakeType() != null
+                && DistributionMode.RANDOM_AMOUNT.code() == req.redPackageTakeType();
+        if (form == BenefitForm.AMOUNT && random) {
+            if (RandomRangeParser.parse(json) == null) {
+                throw new IllegalArgumentException(
+                        "随机金额红包需在 redPackageRangeAmount 配 {\"min\":x,\"max\":y} 且 0≤min≤max，收到: " + json);
+            }
+            return;
+        }
+        List<ActivityDrlBuilder.LadderTier> tiers = LadderRangeParser.parse(json);
+        if (tiers.isEmpty()) {
+            throw new IllegalArgumentException("阶梯分档 JSON 无有效档位");
+        }
+        // 每一档的 reward 都要过和固定金额同一道 [0, MAX_AMOUNT] 护栏。
+        //
+        // 从前这道护栏只作用在 redPackageAmount 上，阶梯档的 reward 一条都没有——而阶梯正是
+        // 「一次配好几个金额」的形态，最该被守住的恰恰是它。一档填 -50 会一路通到 hitAmount=-50：
+        // 决策出口的闸门是 `hitActivityId != null || hitAmount > 0`，OR 短路让负数照样出门，
+        // 下游拿到一个「负优惠」。
+        for (ActivityDrlBuilder.LadderTier t : tiers) {
+            BigDecimal reward = t.reward();
+            if (reward.signum() < 0 || reward.compareTo(MAX_AMOUNT) > 0) {
+                throw new IllegalArgumentException(
+                        "阶梯档奖励金额需在 [0, " + MAX_AMOUNT + "] 内，收到: " + reward);
+            }
         }
     }
 
