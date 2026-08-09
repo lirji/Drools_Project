@@ -66,6 +66,36 @@ public final class BenefitMath {
         return off;
     }
 
+    // ================================================================ 一口价（秒杀）
+
+    /**
+     * 一口价的减免额：{@code 减免 = 订单金额 − 一口价}。
+     *
+     * <p><b>与折扣/固定金额的根本区别是结果与原价强相关</b>：同一个「9.9 一口价」活动，
+     * 在 100 元的单上减 90.1，在 500 元的单上减 490.1。所以它必须在决策时按当笔订单算，
+     * 不能像固定金额那样预先存一个"减多少"。
+     *
+     * <p><b>订单金额低于一口价时返回 null（不给优惠），而不是返回 0 或负数</b>：
+     * <ul>
+     *   <li>负数 = 反向加价，是"优惠"里最不该出现的东西；</li>
+     *   <li>0 元会以 0 参与 MAX 竞争并可能挤掉别的真能减钱的活动；</li>
+     *   <li>而"这单本来就比秒杀价便宜"的正确语义就是<b>这个活动不适用</b>。</li>
+     * </ul>
+     *
+     * @param orderAmount 订单金额；null（上游没传）→ null，与阶梯/折扣「缺驱动字段就不开闸」同一条规矩
+     * @param price       一口价（元）。null 或负数 → null：一口价是这个形态的全部信息，缺了它无从算起
+     * @return 减免额（2 位小数），或 null 表示不适用
+     */
+    public static BigDecimal fixedPriceDiscount(BigDecimal orderAmount, BigDecimal price) {
+        if (orderAmount == null || price == null) return null;
+        if (price.signum() < 0) return null;
+        if (orderAmount.signum() <= 0) return null;
+        BigDecimal off = orderAmount.subtract(price);
+        // 订单比秒杀价还便宜 → 本活动不适用（不是减 0 元）
+        if (off.signum() <= 0) return null;
+        return off.setScale(MONEY_SCALE, MONEY_ROUNDING);
+    }
+
     // ================================================================ 随机红包
 
     /**

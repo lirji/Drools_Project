@@ -26,17 +26,35 @@ public enum BenefitForm {
      * <p>用「折」而不是百分比，是因为百分比在中文语境里有歧义——「打 20%」既可能是
      * 「收 20%」也可能是「减 20%」，而「8 折」只有一个意思。
      */
-    RATIO_ZHE;
+    RATIO_ZHE,
+
+    /**
+     * 一口价（秒杀）：{@code redPackageAmount} 是<b>卖多少</b>，不是减多少。
+     * 减免额 = 订单金额 − 一口价。
+     *
+     * <p>它与 {@link #AMOUNT}/{@link #RATIO_ZHE} 的根本区别是<b>结果与原价无关</b>——
+     * 前两者是「在原价上减」，它是「不管原价多少，就卖这个数」。这也是为什么它不能
+     * 用「减免额」表达：同一个活动在 100 元和 500 元的单上要减掉的钱完全不同。
+     *
+     * <p><b>秒杀必须配合库存扣减</b>，而决策服务连的是只读账号（物理上写不了库），
+     * 所以扣减在写平面的 claim 端点上做，决策侧只做「余量 &gt; 0」的**建议性**闸门。
+     * 详见 {@code ActivityMarketingService.claimInventory}。
+     */
+    FIXED_PRICE;
 
     public static final String UNIT_YUAN = "元";
     public static final String UNIT_ZHE = "折";
+    /** 一口价的判别位。用「价」而不是「元」——后者已被"减多少"占用，混用会让同一个数字有两种含义。 */
+    public static final String UNIT_PRICE = "价";
 
     public static BenefitForm of(String unit) {
-        return UNIT_ZHE.equals(unit) ? RATIO_ZHE : AMOUNT;
+        if (UNIT_ZHE.equals(unit)) return RATIO_ZHE;
+        if (UNIT_PRICE.equals(unit)) return FIXED_PRICE;
+        return AMOUNT;
     }
 
-    /** 写平面白名单：只有这两个单位是受控的，其余一律拒（防止拼错的单位被静默当成金额） */
+    /** 写平面白名单：只有这三个单位是受控的，其余一律拒（防止拼错的单位被静默当成金额） */
     public static boolean isSupportedUnit(String unit) {
-        return unit == null || UNIT_YUAN.equals(unit) || UNIT_ZHE.equals(unit);
+        return unit == null || UNIT_YUAN.equals(unit) || UNIT_ZHE.equals(unit) || UNIT_PRICE.equals(unit);
     }
 }

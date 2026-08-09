@@ -110,6 +110,18 @@ public class BenefitEvaluator {
 
             if (c.getRedPackageAmount() == null) continue;
 
+            // 一口价（秒杀）：redPackageAmount 是"卖多少"不是"减多少"，减免额与当笔订单强相关。
+            // 秒杀还必须防超发，但决策服务连的是只读账号、物理上写不了库——所以这里**只算钱**，
+            // 库存扣减在写平面的 claim 端点（决策 ≠ 提交），决策侧的余量判断只是建议性闸门。
+            if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.FIXED_PRICE) {
+                BigDecimal off = BenefitMath.fixedPriceDiscount(
+                        ctx == null ? null : ctx.getOrderAmount(), c.getRedPackageAmount());
+                if (off == null) continue;   // 订单比秒杀价还便宜 / 缺金额 → 本活动不适用
+                c.setComputedAmount(off);
+                c.setAmountComputed(true);
+                continue;
+            }
+
             // 形态判别必须在最前面。漏了它，「打 8 折」会被当成「减 8 元」原样发出去——
             // 而且看起来毫无异常：金额是正数、决策成功、日志干净。
             if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.RATIO_ZHE) {

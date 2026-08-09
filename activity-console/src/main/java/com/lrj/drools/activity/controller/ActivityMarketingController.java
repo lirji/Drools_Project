@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -94,6 +95,21 @@ public class ActivityMarketingController {
 
     public record BulkStatusRequest(java.util.List<ActivityMarketingService.BulkStatusItem> items,
                                     Integer targetStatus) {}
+
+    /**
+     * 抢占秒杀库存。**决策 ≠ 提交**：决策接口只报价，这里才是权威扣减。
+     *
+     * <p>返回 200 表示抢到、409 表示没抢到（库存不足或活动不可用）。
+     * 用 409 而不是 200+ok:false，是为了让调用方的重试/降级逻辑能靠状态码分流——
+     * 200 会被大多数客户端当成成功而继续走下单流程，那正是超发的来源。
+     */
+    @PostMapping("/{activityId}/claim")
+    public ResponseEntity<?> claim(@PathVariable("activityId") String activityId,
+                                   @RequestParam(value = "version", required = false) Integer version,
+                                   @RequestParam(value = "quantity", required = false) Integer quantity) {
+        var r = marketing.claimInventory(activityId, version, quantity);
+        return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(409).body(r);
+    }
 
     @GetMapping("/list")
     public ResponseEntity<?> list() {

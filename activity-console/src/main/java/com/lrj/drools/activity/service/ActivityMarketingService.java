@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import com.lrj.drools.activity.persistence.ActivityManageEntity;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -646,4 +647,48 @@ public class ActivityMarketingService {
                                  List<ActivitySpuBindingEntity> bindings,
                                  List<ActivityGiftEntity> gifts,
                                  List<PoolRefEntity> poolRefs) {}
+    // ================================================================ 秒杀库存扣减（一口价配套）
+
+    /** claim 结果。{@code ok=false} 时 {@code reason} 说明为什么没抢到。 */
+    public record ClaimResult(boolean ok, String activityId, Integer version, int claimed, String reason) {}
+
+    /**
+     * 抢占库存——**秒杀防超发的权威动作**。
+     *
+     * <p><b>为什么必须在写平面、不能在决策链路里做</b>：决策服务连的是只读账号
+     * （{@code deploy/mysql-init/01-decision-readonly-user.sql} 只 GRANT SELECT，
+     * 且 {@code DecisionDdlGuardTest} 钉死），物理上写不了库。这不是疏漏——
+     * 决策热路径是高 QPS 只读，让它去写库会同时毁掉「只读副本可扩」与「写面独占 DDL」两条边界。
+     *
+     * <p>所以分工是：<b>决策只报价，claim 才是提交</b>。
+     * 决策结果里的库存判断是<b>建议性</b>的（读到的那一刻余量可能已被别人抢走，天然 TOCTOU），
+     * 真正的裁决只发生在这里的原子 UPDATE 上。调用方拿到决策报价后必须再 claim 一次，
+     * claim 失败就是没抢到——<b>不能拿决策成功当作抢到了</b>。
+     *
+     * <p>幂等性：**本方法不幂等**。同一个用户连点两次会扣两次库存。
+     * 要幂等需要「用户 × 活动」的领取流水表来去重，当前没有那张表——
+     * 这一点必须让调用方知道，而不是假装它幂等。
+     */
+    @Transactional
+    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
+        int n = quantity == null ? 1 : quantity;
+        if (activityId == null || activityId.isBlank()) return new ClaimResult(false, activityId, version, 0, "缺 activityId");
+        if (n <= 0) return new ClaimResult(false, activityId, version, 0, "扣减数量必须为正");
+
+        Integer v = version;
+        if (v == null) {
+            // 没给版本就打到当前最高版——与「上线打到最新草稿」的既有语义一致
+            v = manageRepo.findFirstByActivityIdAndIsDelOrderByVersionDesc(activityId, 0)
+                    .map(ActivityManageEntity::getVersion).orElse(null);
+            if (v == null) return new ClaimResult(false, activityId, null, 0, "活动不存在");
+        }
+
+        // 判断余量与减一压在同一条 UPDATE 里，靠数据库对同一行的串行化防超发。
+        // **绝不能改成先查后减**——那是 check-then-act 竞态，低并发测不出来、大促必现。
+        int affected = manageRepo.decrementInventory(activityId, v, n, Instant.now());
+        return affected > 0
+                ? new ClaimResult(true, activityId, v, n, null)
+                : new ClaimResult(false, activityId, v, 0, "库存不足或活动不可用");
+    }
+
 }
