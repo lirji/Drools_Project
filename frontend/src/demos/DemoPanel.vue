@@ -347,14 +347,14 @@ onBeforeUnmount(() => {
 .path-input:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .path-input span { padding-left: var(--sp-3); color: var(--text-faint); font-family: var(--mono); }
 .path-input input { width: 100%; min-width: 0; padding: var(--sp-2); border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
-.editor-shell { margin: var(--sp-3) var(--sp-4) 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #11131a; }
-.editor-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-2) 0 var(--sp-3); border-bottom: 1px solid #292d3a; background: #181b24; color: #aab2c5; font-family: var(--mono); font-size: 9px; }
+.editor-shell { margin: var(--sp-3) var(--sp-4) 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-deep); }
+.editor-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-2) 0 var(--sp-3); border-bottom: 1px solid color-mix(in srgb, var(--on-deep) 14%, transparent); background: var(--surface-deep-2); color: var(--on-deep-soft); font-family: var(--mono); font-size: 9px; }
 .editor-bar > span { display: inline-flex; align-items: center; gap: var(--sp-2); }
-.editor-bar > span i { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 3px rgba(74,222,128,.12); }
+.editor-bar > span i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(74,222,128,.12); }
 .editor-bar > div { display: flex; gap: 2px; }
-.editor-bar button { display: inline-flex; align-items: center; gap: 3px; padding: 5px 6px; border: 0; border-radius: 4px; background: transparent; color: #8d97ad; cursor: pointer; font: inherit; }
-.editor-bar button:hover { background: #252a36; color: #e5e7eb; }
-.body { display: block; width: 100%; min-height: 340px; padding: var(--sp-3); border: 0; outline: 0; background: #11131a; color: #d7dbea; caret-color: #818cf8; font-family: var(--mono); font-size: 11px; line-height: 1.65; resize: vertical; tab-size: 2; }
+.editor-bar button { display: inline-flex; align-items: center; gap: 3px; padding: 5px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--on-deep-faint); cursor: pointer; font: inherit; }
+.editor-bar button:hover { background: color-mix(in srgb, var(--on-deep) 12%, transparent); color: var(--on-deep); }
+.body { display: block; width: 100%; min-height: 340px; padding: var(--sp-3); border: 0; outline: 0; background: var(--surface-deep); color: var(--on-deep); caret-color: var(--accent); font-family: var(--mono); font-size: 11px; line-height: 1.65; resize: vertical; tab-size: 2; }
 .no-body { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-3); margin: var(--sp-3) var(--sp-4) 0; padding: var(--sp-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-soft); }
 .no-body > span { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; background: var(--bg-elev); color: var(--blue); }
 .no-body strong, .no-body small { display: block; }

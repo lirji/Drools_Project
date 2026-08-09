@@ -220,7 +220,7 @@ function selectTenant(value: string): void {
   color: var(--text);
   background:
     radial-gradient(circle at 12% 15%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 31%),
-    radial-gradient(circle at 88% 82%, color-mix(in srgb, #06b6d4 15%, transparent), transparent 30%),
+    radial-gradient(circle at 88% 82%, color-mix(in srgb, var(--accent-2) 18%, transparent), transparent 30%),
     linear-gradient(145deg, var(--bg) 0%, color-mix(in srgb, var(--accent-soft) 58%, var(--bg)) 48%, var(--bg) 100%);
 }
 
@@ -251,8 +251,8 @@ function selectTenant(value: string): void {
   animation: aurora-float 11s ease-in-out infinite alternate;
 }
 
-.aurora-blob--one { top: -150px; right: 4%; background: #6366f1; }
-.aurora-blob--two { bottom: -180px; left: 3%; background: #22d3ee; animation-delay: -4s; }
+.aurora-blob--one { top: -150px; right: 4%; background: var(--accent); }
+.aurora-blob--two { bottom: -180px; left: 3%; background: var(--accent-2); animation-delay: -4s; }
 
 .login-stage {
   position: relative;
@@ -286,11 +286,11 @@ function selectTenant(value: string): void {
   padding: 48px 40px 36px;
   flex-direction: column;
   justify-content: space-between;
-  color: #fff;
+  color: var(--on-deep);
   background:
     radial-gradient(circle at 12% 12%, rgba(255,255,255,.22), transparent 34%),
     radial-gradient(circle at 95% 82%, rgba(34,211,238,.3), transparent 38%),
-    linear-gradient(155deg, #3730a3 0%, #4f46e5 48%, #2563eb 100%);
+    var(--hero-bg);
 }
 
 .login-brand::after {
@@ -362,11 +362,11 @@ function selectTenant(value: string): void {
 .tenant-chip--active { border-color: var(--accent); background: var(--accent); color: var(--text-invert); }
 .tenant-chip:disabled { cursor: not-allowed; opacity: .55; }
 
-.login-primary { position: relative; display: inline-flex; width: 100%; min-height: 48px; margin-top: 8px; padding: 0 17px; align-items: center; justify-content: center; gap: 9px; overflow: hidden; border: 0; border-radius: 11px; background: linear-gradient(120deg, #4f46e5 0%, #6366f1 48%, #2589dc 100%); background-size: 170% 170%; color: #fff; box-shadow: 0 11px 24px rgba(79,70,229,.26); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .16s ease, box-shadow .2s ease, background-position .45s ease; }
+.login-primary { position: relative; display: inline-flex; width: 100%; min-height: 48px; margin-top: 8px; padding: 0 17px; align-items: center; justify-content: center; gap: 9px; overflow: hidden; border: 0; border-radius: 11px; background: linear-gradient(120deg, var(--accent) 0%, var(--accent-hover) 52%, var(--accent-2) 100%); background-size: 170% 170%; color: var(--text-invert); box-shadow: 0 11px 24px color-mix(in srgb, var(--accent) 30%, transparent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .16s ease, box-shadow .2s ease, background-position .45s ease; }
 .login-primary:hover:not(:disabled) { background-position: 100% 50%; box-shadow: 0 15px 30px rgba(79,70,229,.35); transform: translateY(-1px); }
 .login-primary:active:not(:disabled) { transform: translateY(0); }
 .login-primary:disabled { cursor: not-allowed; opacity: .58; box-shadow: none; }
-.login-primary .button-spinner { border-color: rgba(255,255,255,.38); border-top-color: #fff; }
+.login-primary .button-spinner { border-color: rgba(255,255,255,.38); border-top-color: var(--text-invert); }
 .button-arrow { position: absolute; right: 16px; opacity: .75; }
 
 .security-note { display: flex; margin-top: 22px; align-items: flex-start; justify-content: center; gap: 7px; color: var(--text-faint); font-size: 10px; line-height: 1.55; text-align: center; }
