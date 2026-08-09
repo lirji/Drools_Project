@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.domain.DistributionMode;
+import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderTier;
@@ -110,6 +111,17 @@ public class BenefitEvaluator {
 
             if (c.getRedPackageAmount() == null) continue;
 
+            // 第 N 件折（第二件半价）：折数在 redPackageAmount、第几件在 redPackageRangeAmount 的 {"nth":N}。
+            // 它必须有逐行单价才算得出来——缺 lines 时返回 null（不适用），
+            // **绝不退化成拿整单均价算**：混着贵重与便宜商品的车会静默算错钱。
+            if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.NTH_ZHE) {
+                BigDecimal off = nthDiscount(ctx, c);
+                if (off == null) continue;
+                c.setComputedAmount(off);
+                c.setAmountComputed(true);
+                continue;
+            }
+
             // 一口价（秒杀）：redPackageAmount 是"卖多少"不是"减多少"，减免额与当笔订单强相关。
             // 秒杀还必须防超发，但决策服务连的是只读账号、物理上写不了库——所以这里**只算钱**，
             // 库存扣减在写平面的 claim 端点（决策 ≠ 提交），决策侧的余量判断只是建议性闸门。
@@ -199,6 +211,32 @@ public class BenefitEvaluator {
             }
         }
         return result;
+    }
+
+    // ================================================================ 第 N 件折
+
+    /**
+     * 「第 N 件打 X 折」求值。订单行从属性袋的 {@code orderLines} 取——
+     * 它由 {@code ActivityQueryService.requestAttributes} 唯一映射表写入。
+     *
+     * <p>缺行项 / N 非法 / 折数越界 → null（不适用）。这是 fail-closed：
+     * 宁可这个活动不生效，也不拿均价算出一个"看起来对"的错金额。
+     */
+    private static BigDecimal nthDiscount(ActivityRuleContext ctx, ActivityCandidate c) {
+        if (ctx == null) return null;
+        Object raw = ctx.getAttrs().get("orderLines");
+        if (!(raw instanceof java.util.List<?> list) || list.isEmpty()) return null;
+
+        Integer nth = RandomRangeParser.parseNth(c.getRedPackageRangeAmount());
+        if (nth == null) return null;
+
+        java.util.List<BenefitMath.Line> lines = new java.util.ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof SpuDiscountRequest.OrderLine l && l.unitPrice() != null && l.quantity() != null) {
+                lines.add(new BenefitMath.Line(l.unitPrice(), l.quantity()));
+            }
+        }
+        return BenefitMath.nthItemDiscount(lines, nth, c.getRedPackageAmount());
     }
 
     // ================================================================ 随机红包

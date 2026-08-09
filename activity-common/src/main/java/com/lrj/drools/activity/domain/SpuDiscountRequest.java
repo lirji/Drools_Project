@@ -19,6 +19,15 @@ import java.util.List;
  *
  * <p><b>兼容</b>：新增字段为纯增量。老调用方走 {@linkplain #SpuDiscountRequest(List, Long, String, List, BigDecimal, Integer)
  * 六参构造}，{@code storeId} 归 null → 属性袋无此键 → 与今天行为完全一致（仍 fail-closed）。
+ *
+ * <p><b>{@code lines}（订单行）的来历</b>：「第二件半价」这类玩法此前做不了，卡点就在这里——
+ * 入参只有 {@code orderAmount}（整单金额）与 {@code quantity}（总件数），<b>没有逐行单价</b>，
+ * 于是算不出「第二件」是哪一件、值多少钱。整单金额除以件数得到的是均价，
+ * 拿均价当第二件的价去打折，在购物车里混着贵重与便宜商品时会算错钱——而且是静默算错。
+ *
+ * <p>它同样是**纯增量**：不传 {@code lines} 的老调用方行为一个字节不变，
+ * 只是配了「第 N 件折」形态的活动对他们不适用（{@code BenefitMath.nthItemDiscount} 返回 null →
+ * fail-closed 不给优惠），而不是拿均价瞎算。
  */
 public record SpuDiscountRequest(
         List<Long> spuIdList,
@@ -27,12 +36,29 @@ public record SpuDiscountRequest(
         List<String> userTags,
         BigDecimal orderAmount,
         Integer quantity,
-        Integer storeId
+        Integer storeId,
+        /** 订单行。为空 = 调用方没有逐行信息，此时「第 N 件折」类活动不适用（fail-closed）。 */
+        List<OrderLine> lines
 ) {
+
+    /**
+     * 一行订单：同一 SPU 的 n 件同价商品。
+     *
+     * <p><b>为什么按行而不是按件</b>：按件展开会让 100 件的单产生 100 个对象，
+     * 而「第 N 件」的计算只需要 (单价, 件数) 两个数——按行是这个玩法所需的最小信息量。
+     */
+    public record OrderLine(Long spuId, BigDecimal unitPrice, Integer quantity) {}
 
     /** 兼容旧调用方的六参构造（storeId 缺省为 null）。JSON 反序列化走全参构造，不受影响。 */
     public SpuDiscountRequest(List<Long> spuIdList, Long userId, String userDistrictId,
                               List<String> userTags, BigDecimal orderAmount, Integer quantity) {
-        this(spuIdList, userId, userDistrictId, userTags, orderAmount, quantity, null);
+        this(spuIdList, userId, userDistrictId, userTags, orderAmount, quantity, null, null);
+    }
+
+    /** 兼容七参构造（补 storeId 那一版）。JSON 反序列化走全参构造，不受影响。 */
+    public SpuDiscountRequest(List<Long> spuIdList, Long userId, String userDistrictId,
+                              List<String> userTags, BigDecimal orderAmount, Integer quantity,
+                              Integer storeId) {
+        this(spuIdList, userId, userDistrictId, userTags, orderAmount, quantity, storeId, null);
     }
 }

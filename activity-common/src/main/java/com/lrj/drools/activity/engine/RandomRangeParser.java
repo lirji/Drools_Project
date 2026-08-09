@@ -54,6 +54,26 @@ public final class RandomRangeParser {
         }
     }
 
+    /**
+     * 读「第 N 件」的 N。与随机区间共用 JSON 对象形态，靠 {@code redPackageAmountUnit}
+     * 区分用途（'元'+takeType=2 → 随机区间；'件折' → 第 N 件），不靠猜键名。
+     *
+     * @return N，或 null（缺失/非法/&lt;2）。1 等于全场打折——那是另一个形态，配成 1 更像配错，故拒。
+     */
+    public static Integer parseNth(String rangeJson) {
+        if (rangeJson == null || rangeJson.isBlank()) return null;
+        try {
+            JsonNode node = MAPPER.readTree(rangeJson);
+            if (node == null || !node.isObject()) return null;
+            JsonNode v = node.get("nth");
+            if (v == null || !v.canConvertToInt()) return null;
+            int n = v.asInt();
+            return n >= 2 ? n : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static BigDecimal readDecimal(JsonNode node, String... names) {
         for (String n : names) {
             JsonNode v = node.get(n);

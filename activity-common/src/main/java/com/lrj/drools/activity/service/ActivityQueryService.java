@@ -339,6 +339,9 @@ public class ActivityQueryService {
         attrs.put("storeId", req.storeId());
         // userId 不在条件白名单里（运营无法用它写条件），但历史上就写入属性袋，保留以免行为漂移。
         attrs.put("userId", req.userId());
+        // 订单行同样不进条件白名单——运营写不出「第 3 行单价 > 100」这种条件，也不该能写。
+        // 它只服务于「第 N 件折」的算额，故以原始对象入袋，由 BenefitEvaluator 直接取用。
+        attrs.put("orderLines", req.lines() == null || req.lines().isEmpty() ? null : new ArrayList<>(req.lines()));
         return attrs;
     }
 

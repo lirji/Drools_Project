@@ -66,6 +66,53 @@ public final class BenefitMath {
         return off;
     }
 
+    // ================================================================ 第 N 件折（第二件半价）
+
+    /** 订单行的最小表达：单价 + 件数。与 {@code SpuDiscountRequest.OrderLine} 解耦，便于纯函数测试。 */
+    public record Line(BigDecimal unitPrice, int quantity) {}
+
+    /**
+     * 「第 N 件打 X 折」的减免额。{@code nth=2, zhe=5} 就是第二件半价。
+     *
+     * <p><b>语义</b>：<b>逐行、按同款计数</b>。一行 {@code (单价 p, 件数 q)} 里
+     * 每满 {@code nth} 件就有 1 件享折，即享折件数 = {@code floor(q / nth)}，
+     * 每件减 {@code p × (10−zhe)/10}。多行分别计算后求和。
+     *
+     * <p>为什么按行而不是把整车摊平排序：「第二件半价」的商业语义是<b>同款</b>第二件，
+     * 不是"整车里第二贵的那件"。把不同 SPU 混在一起排序会让「买一个贵的 + 一个便宜的」
+     * 也触发折扣，那不是运营配这个玩法时的意思。
+     *
+     * <p><b>缺行项信息一律返回 null（不适用）</b>，绝不退化成"拿整单均价算"——
+     * 均价在混着贵重与便宜商品的购物车里会算错钱，而且是静默算错：
+     * 金额是正数、决策成功、日志干净，只有对账时才发现少收/多送了。
+     *
+     * @param lines 订单行 {@code (单价, 件数)}；null / 空 → null
+     * @param nth   第几件享折，必须 ≥2（1 等于全场打折，那是另一个形态，配成 1 更像配错）
+     * @param zhe   折数 (0,10)，与 {@link #ratioDiscount} 同一套语义
+     * @return 减免额（2 位小数，向下取整），或 null 表示不适用
+     */
+    public static BigDecimal nthItemDiscount(java.util.List<Line> lines, int nth, BigDecimal zhe) {
+        if (lines == null || lines.isEmpty()) return null;
+        if (nth < 2) return null;
+        if (zhe == null || zhe.signum() <= 0 || zhe.compareTo(TEN) >= 0) return null;
+
+        BigDecimal offPerYuan = TEN.subtract(zhe);   // 每元减免的"折价分子"，除以 10 得比例
+        BigDecimal total = BigDecimal.ZERO;
+        for (Line l : lines) {
+            if (l == null || l.unitPrice() == null) continue;
+            if (l.unitPrice().signum() <= 0 || l.quantity() <= 0) continue;
+            int discounted = l.quantity() / nth;      // 每满 nth 件享 1 件
+            if (discounted <= 0) continue;
+            BigDecimal per = l.unitPrice()
+                    .multiply(offPerYuan)
+                    .divide(TEN, MONEY_SCALE, MONEY_ROUNDING);
+            total = total.add(per.multiply(BigDecimal.valueOf(discounted)));
+        }
+        // 一件都没享到 → 不适用，而不是减 0 元（0 元会参与 MAX 竞争挤掉别的活动）
+        if (total.signum() <= 0) return null;
+        return total.setScale(MONEY_SCALE, MONEY_ROUNDING);
+    }
+
     // ================================================================ 一口价（秒杀）
 
     /**

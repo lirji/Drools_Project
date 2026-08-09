@@ -40,21 +40,35 @@ public enum BenefitForm {
      * 所以扣减在写平面的 claim 端点上做，决策侧只做「余量 &gt; 0」的**建议性**闸门。
      * 详见 {@code ActivityMarketingService.claimInventory}。
      */
-    FIXED_PRICE;
+    FIXED_PRICE,
+
+    /**
+     * 第 N 件折（第二件半价）：{@code redPackageAmount} 是<b>折数</b>（同 {@link #RATIO_ZHE}），
+     * 而「第几件」存在 {@code redPackageRangeAmount} 的 {@code {"nth":2}} 里。
+     *
+     * <p>它与 {@link #RATIO_ZHE} 的区别是<b>作用对象</b>：折扣型作用于整单金额，
+     * 它作用于<b>同款商品里的第 N 件</b>——因此必须有逐行单价才算得出来，
+     * 这也是它在决策入口补 {@code lines} 之前做不了的原因。
+     */
+    NTH_ZHE;
 
     public static final String UNIT_YUAN = "元";
     public static final String UNIT_ZHE = "折";
     /** 一口价的判别位。用「价」而不是「元」——后者已被"减多少"占用，混用会让同一个数字有两种含义。 */
     public static final String UNIT_PRICE = "价";
+    /** 第 N 件折的判别位。与「折」分开：两者数字同为折数，但作用对象一个是整单、一个是第 N 件。 */
+    public static final String UNIT_NTH_ZHE = "件折";
 
     public static BenefitForm of(String unit) {
         if (UNIT_ZHE.equals(unit)) return RATIO_ZHE;
         if (UNIT_PRICE.equals(unit)) return FIXED_PRICE;
+        if (UNIT_NTH_ZHE.equals(unit)) return NTH_ZHE;
         return AMOUNT;
     }
 
     /** 写平面白名单：只有这三个单位是受控的，其余一律拒（防止拼错的单位被静默当成金额） */
     public static boolean isSupportedUnit(String unit) {
-        return unit == null || UNIT_YUAN.equals(unit) || UNIT_ZHE.equals(unit) || UNIT_PRICE.equals(unit);
+        return unit == null || UNIT_YUAN.equals(unit) || UNIT_ZHE.equals(unit)
+                || UNIT_PRICE.equals(unit) || UNIT_NTH_ZHE.equals(unit);
     }
 }
