@@ -792,5 +792,8 @@ onUnmounted(() => {
   /* 卡片模式下密度切换没有意义（行高由内容决定），隐掉，避免给出一个无效开关 */
   .density { display: none; }
 }
-@media (pointer: coarse) { .acts button, .sort { min-height: var(--touch-min); } }
+/* 选择器必须能压过 ≤1023 卡片模式里的 `.tr .acts button { min-height: 36px }`（0-2-1）——
+   只写 `.acts button`（0-1-1）会被它盖掉，触控命中区静默退回 36px。
+   e2e:visual 的 A-8 断言就是这条的回归护栏。 */
+@media (pointer: coarse) { .tr .acts button, .acts button, .sort { min-height: var(--touch-min); } }
 </style>

@@ -151,7 +151,7 @@ function toggle(groupId: string): void {
 .group-label strong, .group-label small { display: block; }
 .group-label strong { font-size: 12px; }
 .group-label small { color: var(--text-faint); font-size: var(--fs-2xs); }
-.chevron { color: var(--text-faint); transition: transform .15s ease; }
+.chevron { color: var(--text-faint); transition: transform var(--dur-mid) var(--ease-out); }
 .chevron.open { transform: rotate(180deg); }
 .items { position: relative; margin-left: 21px; padding: 2px 0 var(--sp-2) 13px; }
 .items::before { content: ''; position: absolute; top: 0; bottom: 8px; left: 0; width: 1px; background: var(--border); }

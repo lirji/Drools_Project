@@ -66,7 +66,7 @@ function toggleTheme(): void {
   display: none; align-items: center; justify-content: center;
   width: 40px; min-height: 40px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text);
-  cursor: pointer; transition: background .12s ease, border-color .12s ease;
+  cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .hamburger:hover { background: var(--bg-hover); }
 .brand-link {
@@ -85,10 +85,10 @@ function toggleTheme(): void {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--bg-soft); color: var(--text); cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .theme-btn:hover { background: var(--bg-hover); }
-@media (pointer: coarse) { .theme-btn { min-height: var(--touch-min); } }
+@media (pointer: coarse) { .theme-btn, .hamburger { min-height: var(--touch-min); min-width: var(--touch-min); } }
 @media (max-width: 767px) {
   .hamburger { display: inline-flex; }
   .brand { font-size: var(--fs-md); }

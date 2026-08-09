@@ -133,9 +133,9 @@ const inHome = computed(() => route.name === 'home')
   position: relative; display: flex; align-items: center; gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3); border-radius: var(--radius-sm);
   text-decoration: none; color: var(--text-soft);
-  transition: background .12s ease, color .12s ease;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.ic { display: inline-flex; color: var(--text-faint); transition: color .12s ease; flex: 0 0 auto; }
+.ic { display: inline-flex; color: var(--text-faint); transition: color var(--dur-fast) var(--ease-out); flex: 0 0 auto; }
 .txt { display: flex; flex-direction: column; min-width: 0; line-height: var(--lh-tight); }
 .label { font-size: var(--fs-md); font-weight: var(--fw-medium); }
 .desc { font-size: var(--fs-xs); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

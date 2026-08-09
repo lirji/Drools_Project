@@ -175,7 +175,7 @@ function onKeydown(e: KeyboardEvent): void {
 /* ── overlay（1024–1279） ── */
 .panel:not(.push) {
   position: fixed; right: 0; top: var(--shell-topbar-h); bottom: 0;
-  width: min(94vw, 458px); overflow-y: auto; box-shadow: var(--shadow-lg);
+  width: min(94vw, 458px); overflow-y: auto; box-shadow: var(--shadow-lg), var(--shadow-lg-glow);
 }
 /* ── sheet（<1024）：全屏。
    用 `left:0;right:0;width:auto` 而**不是** `width:100vw`——`100vw` 含滚动条宽度，

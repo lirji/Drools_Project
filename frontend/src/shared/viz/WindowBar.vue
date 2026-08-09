@@ -40,7 +40,8 @@ const label = computed(() => {
 </template>
 
 <style scoped>
-.wb { position: relative; height: 22px; min-width: 178px; }
+/* 高度走 --meter-h：紧凑密度下会收到 16px，硬编码 22px 时不跟随密度切换。 */
+.wb { position: relative; height: var(--meter-h); min-width: 178px; }
 .track {
   position: absolute; left: 0; right: 0; top: 7px; height: 8px; border-radius: 2px;
   background: var(--bg-sunken);

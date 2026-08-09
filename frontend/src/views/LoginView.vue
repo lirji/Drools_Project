@@ -348,7 +348,7 @@ function selectTenant(value: string): void {
 .tenant-form > label { color: var(--text); font-size: 12px; font-weight: 600; }
 .tenant-input-wrap { position: relative; display: flex; align-items: center; }
 .tenant-input-icon { position: absolute; left: 14px; z-index: 1; color: var(--text-faint); pointer-events: none; }
-.tenant-input-wrap input { width: 100%; min-height: 48px; padding: 0 14px 0 43px; border: 1px solid var(--border-strong); border-radius: 11px; background: color-mix(in srgb, var(--bg-elev) 90%, transparent); color: var(--text); font: inherit; font-size: 14px; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+.tenant-input-wrap input { width: 100%; min-height: 48px; padding: 0 14px 0 43px; border: 1px solid var(--border-strong); border-radius: 11px; background: color-mix(in srgb, var(--bg-elev) 90%, transparent); color: var(--text); font: inherit; font-size: 14px; transition: border-color var(--dur-mid) var(--ease-out), box-shadow var(--dur-mid) var(--ease-out), background var(--dur-mid) var(--ease-out); }
 .tenant-input-wrap input::placeholder { color: var(--text-faint); }
 .tenant-input-wrap input:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); }
 .tenant-input-wrap input:focus { outline: none; border-color: var(--accent); background: var(--bg-elev); box-shadow: var(--focus-ring); }
@@ -357,12 +357,12 @@ function selectTenant(value: string): void {
 
 .tenant-options { display: grid; gap: 8px; margin: 1px 0 4px; color: var(--text-faint); font-size: 11px; }
 .tenant-chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.tenant-chip { min-height: 28px; padding: 4px 10px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 11px; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
+.tenant-chip { min-height: 28px; padding: 4px 10px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 11px; cursor: pointer; transition: transform var(--dur-mid) var(--ease-out), border-color var(--dur-mid) var(--ease-out), background var(--dur-mid) var(--ease-out); }
 .tenant-chip:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
 .tenant-chip--active { border-color: var(--accent); background: var(--accent); color: var(--text-invert); }
 .tenant-chip:disabled { cursor: not-allowed; opacity: .55; }
 
-.login-primary { position: relative; display: inline-flex; width: 100%; min-height: 48px; margin-top: 8px; padding: 0 17px; align-items: center; justify-content: center; gap: 9px; overflow: hidden; border: 0; border-radius: 11px; background: linear-gradient(120deg, var(--accent) 0%, var(--accent-hover) 52%, var(--accent-2) 100%); background-size: 170% 170%; color: var(--text-invert); box-shadow: 0 11px 24px color-mix(in srgb, var(--accent) 30%, transparent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .16s ease, box-shadow .2s ease, background-position .45s ease; }
+.login-primary { position: relative; display: inline-flex; width: 100%; min-height: 48px; margin-top: 8px; padding: 0 17px; align-items: center; justify-content: center; gap: 9px; overflow: hidden; border: 0; border-radius: 11px; background: linear-gradient(120deg, var(--accent) 0%, var(--accent-hover) 52%, var(--accent-2) 100%); background-size: 170% 170%; color: var(--text-invert); box-shadow: 0 11px 24px color-mix(in srgb, var(--accent) 30%, transparent); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform var(--dur-mid) var(--ease-out), box-shadow var(--dur-mid) var(--ease-out), background-position var(--dur-slow) var(--ease-out); }
 .login-primary:hover:not(:disabled) { background-position: 100% 50%; box-shadow: 0 15px 30px rgba(79,70,229,.35); transform: translateY(-1px); }
 .login-primary:active:not(:disabled) { transform: translateY(0); }
 .login-primary:disabled { cursor: not-allowed; opacity: .58; box-shadow: none; }

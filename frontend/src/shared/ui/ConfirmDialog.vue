@@ -82,7 +82,7 @@ onUnmounted(() => {
 .dialog {
   width: 100%; max-width: 400px; background: var(--bg-elev);
   border: 1px solid var(--border); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg); padding: var(--sp-5);
+  box-shadow: var(--shadow-lg), var(--shadow-lg-glow); padding: var(--sp-5);
 }
 .d-head { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-3); }
 .d-ic {
@@ -97,7 +97,7 @@ onUnmounted(() => {
   min-height: 38px; padding: var(--sp-2) var(--sp-4); border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--bg-elev); color: var(--text);
   font-size: var(--fs-sm); font-weight: var(--fw-medium); font-family: inherit; cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .btn:hover { background: var(--bg-hover); }
 /* 压在 accent 上的字走 --text-invert，不写死 #fff——深色态 accent 是浅粉 #f45ca0，
@@ -108,8 +108,8 @@ onUnmounted(() => {
 .btn.ok.danger:hover { filter: brightness(1.06); }
 @media (pointer: coarse) { .btn { min-height: var(--touch-min); } }
 
-.dlg-enter-active, .dlg-leave-active { transition: opacity .16s ease; }
-.dlg-enter-active .dialog, .dlg-leave-active .dialog { transition: transform .16s ease, opacity .16s ease; }
+.dlg-enter-active, .dlg-leave-active { transition: opacity var(--dur-mid) var(--ease-out); }
+.dlg-enter-active .dialog, .dlg-leave-active .dialog { transition: transform var(--dur-mid) var(--ease-out), opacity var(--dur-mid) var(--ease-out); }
 .dlg-enter-from, .dlg-leave-to { opacity: 0; }
 .dlg-enter-from .dialog, .dlg-leave-to .dialog { transform: translateY(8px) scale(.98); opacity: 0; }
 </style>

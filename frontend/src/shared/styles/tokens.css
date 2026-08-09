@@ -127,7 +127,6 @@
   --shadow-lg: inset 0 1px 0 rgba(255,255,255,.08), 0 24px 40px rgba(0,0,0,.66);
   --shadow-lg-glow: 0 0 40px color-mix(in srgb, var(--accent) 8%, transparent); /* 新增·仅模态/侧板叠加 */
   --glow: 0 0 16px color-mix(in srgb, var(--accent) 32%, transparent);          /* 新增·收编此前 4 处各写各的手写发光 */
-  --glow-strong: 0 0 28px color-mix(in srgb, var(--accent) 45%, transparent);
   --surface-glass: color-mix(in srgb, var(--bg-elev) 72%, transparent);         /* 新增·玻璃面底色 */
   --scrim: rgba(4, 5, 10, .72);
 
@@ -177,8 +176,7 @@
   --fs-lg: 16px;
   --fs-xl: 20px;
   --fs-2xl: 26px;
-  --fs-3xl: 36px;        /* 大标题（原 30px） */
-  --fs-4xl: 44px;        /* 新增·仅 Tier A 门面三屏（/login、/home、/demos）的 h1 */
+  --fs-3xl: 36px;        /* 大标题（原 30px）。Hero 用它；曾另加过 --fs-4xl(44px) 但没找到落点已删——不留死令牌 */
   --lh-tight: 1.25;
   --lh-normal: 1.5;
   --lh-relaxed: 1.7;
@@ -372,7 +370,12 @@ a { color: var(--accent); }
   border-radius: var(--radius-sm);
 }
 
-/* 触控兜底：coarse 指针下所有可交互件 ≥44px，一处堵住各组件手写 (pointer:coarse) 的缺口。桌面（fine 指针）不受影响。 */
+/* 触控兜底：coarse 指针下所有可交互件 ≥44px。桌面（fine 指针）不受影响。
+   ⚠ **这不是万能兜底**：选择器是 `button`（0-0-1），组件 scoped 样式里任何
+   `.x { min-height: … }`（带 [data-v-*] 后至少 0-2-0）都会压过它——所以自己写了
+   min-height 的组件必须各自再补一条 (pointer:coarse) 规则。
+   历史上 TopBar 的汉堡（40px）与 ListView 卡片模式的行内按钮（36px）就是这样静默退化的。
+   回归护栏见 `e2e/e2e-visual-guard.mjs` 的 A-8 断言。 */
 @media (pointer: coarse) {
   button,
   select,

@@ -8,6 +8,7 @@ import { useToast } from '@/shared/useToast'
 import Banner from '@/shared/ui/Banner.vue'
 import Icon from '@/shared/ui/Icon.vue'
 import Skeleton from '@/shared/ui/Skeleton.vue'
+import Sparkline from '@/shared/viz/Sparkline.vue'
 
 const route = useRoute()
 const toast = useToast()
@@ -22,6 +23,14 @@ const pathValues = ref<Record<string, string>>({})
 const selectedExample = ref(0)
 const running = ref(false)
 const elapsedMs = ref<number | null>(null)
+/**
+ * 真实耗时序列（最近 12 次）。它是**实测值**不是造出来的曲线——所以可以画：
+ * 单看「18 ms」不知道快慢，有了序列才知道「这次比前几次慢」。
+ *
+ * 作用域是 **(能力, 示例)** 而不是「能力」：清空点在 loadExample 里，切换示例也会清。
+ * 这是刻意的——不同 payload 的耗时混进同一条线会让趋势失真，那就成了另一种假图。
+ */
+const latency = ref<number[]>([])
 const resp = ref<{ ok: boolean; status: number; json: unknown; text: string } | null>(null)
 const runErr = ref('')
 let activeRequest: AbortController | null = null
@@ -67,6 +76,7 @@ function loadExample(index: number): void {
   resp.value = null
   runErr.value = ''
   elapsedMs.value = null
+  latency.value = []
 }
 
 function buildUrl(): string {
@@ -126,6 +136,7 @@ async function run(): Promise<void> {
   } finally {
     if (sequence === requestSequence) {
       elapsedMs.value = Math.max(1, Math.round(performance.now() - startedAt))
+      latency.value = [...latency.value, elapsedMs.value].slice(-12)
       running.value = false
       activeRequest = null
     }
@@ -265,7 +276,15 @@ onBeforeUnmount(() => {
             <span class="status" :class="resp.ok ? 'ok' : 'err'" role="status" aria-live="polite" data-testid="demo-status">
               <i /> HTTP {{ resp.status }} · {{ resp.ok ? '请求成功' : '业务拒绝' }}
             </span>
-            <span v-if="elapsedMs !== null" class="elapsed"><Icon name="clock" :size="13" /> {{ elapsedMs }} ms</span>
+            <span v-if="elapsedMs !== null" class="elapsed">
+                <Icon name="clock" :size="13" /> {{ elapsedMs }} ms
+                <Sparkline
+                  v-if="latency.length > 1"
+                  class="elapsed-spark"
+                  :values="latency"
+                  :label="`最近 ${latency.length} 次执行耗时趋势，当前 ${elapsedMs} 毫秒`"
+                />
+              </span>
           </div>
           <div class="result-content">
             <pre v-if="demo.responseType === 'text'" class="text-box">{{ resp.text }}</pre>
@@ -385,6 +404,7 @@ onBeforeUnmount(() => {
 .result-meta { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-3) var(--sp-4); border-bottom: 1px solid var(--border); }
 .status { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--mono); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
 .status i { width: 7px; height: 7px; border-radius: 50%; }.status.ok { color: var(--green); }.status.ok i { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }.status.err { color: var(--err); }.status.err i { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
+.elapsed-spark { width: 52px; height: 13px; }
 .elapsed { display: inline-flex; align-items: center; gap: var(--sp-1); color: var(--text-faint); font-family: var(--mono); font-size: var(--fs-2xs); }
 .result-content { min-width: 0; padding: var(--sp-4); }
 .text-box { max-height: 520px; overflow: auto; margin: 0; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font-family: var(--mono); font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }

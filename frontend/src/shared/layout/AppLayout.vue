@@ -54,7 +54,7 @@ defineEmits<{ (e: 'close'): void }>()
   .shell-sidebar {
     position: fixed; top: var(--shell-topbar-h); left: 0; bottom: 0;
     height: auto; width: min(85vw, 320px);
-    transform: translateX(-100%); transition: transform .22s ease;
+    transform: translateX(-100%); transition: transform var(--dur-slow) var(--ease-out);
     z-index: var(--z-drawer); box-shadow: var(--shadow-lg);
     padding-bottom: env(safe-area-inset-bottom);
   }
