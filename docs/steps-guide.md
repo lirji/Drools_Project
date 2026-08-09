@@ -2,7 +2,11 @@
 
 本文是 CLAUDE.md 的详细配套：每个 Step 的完整说明、REST 接口清单、以及各 Step 特有的 DRL 语义 / 实现注意点。CLAUDE.md 只保留概览与通用规范，具体到某个 Step 时来这里查。
 
-> **代码位置（2026-07-20 四模块重构后）**：本文涉及的 Step 1–18 全部实现（controller / service / domain / `rules/` / `DroolsConfig` / `META-INF/kmodule.xml` 等）已从仓库根 `src/` 迁入 **`drools-lab`** 模块（落在 `drools-lab/src/main/...`），本文中形如 `service/HotReloadService.java`、`rules/hello/hello.drl`、`audit/RuleAuditListener.java`、`META-INF/kmodule.xml` 的相对路径均相对该模块根。`drools-lab` 是**库模块（不含 Spring Boot 启动类）**：Step 1–18 的 REST 入口由依赖它的 **`activity-console`** 应用对外提供（`ConsoleApplication`，端口 **8081**，`@SpringBootApplication(scanBasePackages="com.lrj.drools")` 把 lab 里的 controller 扫进来）。因此根 `./mvnw spring-boot:run` 已失效，改用 `./mvnw -pl activity-console spring-boot:run` 起服务后再打本文各接口（8082 的 `activity-decision` 只暴露活动引擎只读决策 `/decision/v1`，不含 Step 1–18）。
+> **代码位置（2026-07-20 四模块重构后）**：本文涉及的 Step 1–18 全部实现（controller / service / domain / `rules/` / `DroolsConfig` / `META-INF/kmodule.xml` 等）已从仓库根 `src/` 迁入 **`drools-lab`** 模块（落在 `drools-lab/src/main/...`），本文中形如 `service/HotReloadService.java`、`rules/hello/hello.drl`、`audit/RuleAuditListener.java`、`META-INF/kmodule.xml` 的相对路径均相对该模块根。`drools-lab` 是**库模块（不含 Spring Boot 启动类）**：Step 1–18 的 REST 入口由依赖它的 **`activity-console`** 应用对外提供（`ConsoleApplication`，端口 **8081**，`@SpringBootApplication(scanBasePackages="com.lrj.drools")` 把 lab 里的 controller 扫进来）。因此根 `./mvnw spring-boot:run` 已失效，改用 `./mvnw -pl activity-console spring-boot:run` 起服务后再打本文各接口。
+>
+> **不想 curl 就开 SPA**：前端「规则能力」目录（`/ui/demos`）已把 Step 1–18 的全部端点做成可点即跑的示例台（每个 Step 预置若干示例请求，执行后除了 HTTP 状态还会把**最近 12 次**耗时画成 sparkline；换示例会清空该序列，避免不同 payload 的耗时混进同一条线）。SPA 要么用 `./mvnw -pl activity-console -Pfrontend spring-boot:run` 打进 console 的 `static/ui/`，要么走 compose 的网关 `http://localhost:8095/ui/demos`（编排里前端由 gateway 镜像托管，不在 console 的 JAR 里）。
+>
+> **8082 的 `activity-decision` 不含 Step 1–18**，它只暴露活动引擎的只读决策 / 观测端点（`/decision/v1/**`：`spu-discount` / `gifts` / `addon/*` / `metrics` / `by-activity`）。它已改回 `ddl-auto: validate`（只读平面不碰 DDL，建表由 console 独占），所以本地单独 `./mvnw -pl activity-decision spring-boot:run` 前得先让 console 起过一次把表建好，否则启动即 validate 失败。
 
 ## 各 Step 详解
 
@@ -55,7 +59,7 @@
 | POST | `/guard/timeout`        | Step 14：失控规则裸跑, watchdog 线程在 timeoutMillis 后 halt() 打断, 返回中断前 fire 次数 |
 | POST | `/guard/canary`         | Step 14：插 Cart 跑三条带 @release 标记的规则, AgendaFilter 按 allowedReleases 白名单放行, 返回结果 + 被拦规则 skipped |
 | POST | `/metrics/discount`     | Step 15：跟 /discount/calculate 同入参同折扣, 但挂 MeteredRuleListener + Timer, 把 fire/match/fact/耗时打进 Micrometer |
-| GET  | `/actuator/prometheus`  | Step 15：Prometheus 抓取端点, grep `drools_` 看规则指标随调用累积 |
+| GET  | `/actuator/prometheus`  | Step 15：Prometheus 抓取端点, grep `drools_` 看规则指标随调用累积（同端点还混着活动引擎平台的 `activity_*` 指标，见下方注意点） |
 | POST | `/scanner/deploy`       | Step 16：DRL 打成 KJAR 装进本地 ~/.m2, 首次创建 container 否则 scanNow 热替换; 编译错误 400 |
 | POST | `/scanner/run`          | Step 16：用当前 live KieBase 跑 cart, 返回 fire count + cart + generation (内容代次) |
 | POST | `/scanner/poll/start`   | Step 16：开 KieScanner 自动轮询 (默认 5000ms), 生产形态——deploy 后无人值守自动生效 |
@@ -118,6 +122,9 @@
 - Step 15：`Counter.builder(name).tags(...).register(registry)` 对**相同 meter id 幂等** (返回已存在实例), 所以 listener 每次事件都 builder→register→increment 是安全的, 不会重复创建 meter。但 `rule` 当 tag 要警惕 **高基数**: 规则名数量可控没事, 千万别把 orderId / customerId 这种无界值塞进 tag, 会把时序库打爆
 - Step 15：`Timer.record(...)` 对返回 `int` 的 `fireAllRules` 有重载歧义 (`DoubleSupplier` / `Supplier<T>` / `Runnable` 都能匹配), 必须显式转 `(Supplier<Integer>)` 才能编译。这是 Micrometer + 原始类型返回值的常见坑
 - Step 15：`management.endpoints.web.exposure.include` 默认只开 `health`, 必须显式加 `prometheus` 才有抓取端点。`management.metrics.tags.application` 给所有指标加公共 tag (本项目 `drools-demo`), 多实例部署时用来区分来源
+- Step 15：`/actuator/prometheus` 上**不只有** `drools_*`。console 的 classpath 上还有 activity-common 的 `DecisionMetrics`(`@Component`), 它往**同一个 MeterRegistry** 打活动引擎平台那套埋点: `activity_decision_duration_seconds`(决策耗时, tag `scene`/`mode`) / `activity_decision_fallback_total`(**回退到旧 Java 逻辑的次数——会静默改发放金额, 平台侧头号告警项**) / `activity_decision_candidates`(候选活动数分布) / `activity_decision_source_total`(物料来自代际快照还是逐请求查库) / `activity_decision_hit_total`(按活动命中) / `activity_rule_compile_seconds` / `activity_rule_fire_ceiling_total` / `activity_rule_cache_{entries,hit_ratio,weight_kb}`。**按前缀分清楚**: `drools_` 是本 Step 的教学 listener + Timer, `activity_` 是平台产线埋点, 别混着 grep。缓存那三个 Gauge 在 `ActivityRuleRuntimeService` 构造时就 `bindKieBaseCache` 绑好了, 没打过任何活动决策请求也能读到值
+- Step 15 的高基数警告在平台侧被真正执行了: `activity_decision_hit_total` 的 `activityId` 标签带 **200 的基数上限**(`DecisionMetrics.ACTIVITY_TAG_CAP`), 超出的一律并进 `__over_cap__` 哨兵——总量仍准, 只是分不出是哪几个活动。理由跟本 Step "别把 orderId/customerId 塞进 tag" 同源: 活动数是运营行为不是工程可控量, 序列爆掉的时刻恰好是活动最多的大促当天
+- Step 14 / Step 15 的"产线对照版"就是 activity-common 的 `ActivityRuleRuntimeService`, 读完这两步再去看那个类能直接对上号: fire 上界按**该 KieBase 的编译规则数**派生 (`maxFiresBase + maxFiresPerRule × 规则数`, 非全局常量), `FireCeilingListener` 数到上界就 `halt()` (= Step 14 的 `fireAllRules(max)` + `halt()` 合体), 触顶后抛异常让 `safeRun` 回退旧 Java 逻辑, 同时打 `activity_rule_fire_ceiling_total` + `activity_decision_fallback_total{reason="fire-ceiling"}` (= Step 15 的"给护栏装仪表", 护栏不再静默)。`reason` 刻意是**有限集**(引擎侧 `compile-error` / `fire-ceiling` / `eval-error`; 查询侧另有 `engine-disabled` / `empty-decision` / `condition-tree-unavailable`), 绝不塞异常全文——编译错误里带行号和 DRL 片段, 进了标签就是基数爆炸
 - Step 16：KieScanner 的"发现新版本"对 **release 固定版本 (1.0.0) 不触发** (Maven 契约: 固定版本内容不可变)。必须用 **SNAPSHOT** (`1.0.0-SNAPSHOT`) 才能同 GAV 滚动更新——`scanNow()` 重新解析 + 比对时间戳命中替换。所以 demo 固定一个 SNAPSHOT GAV 反复 install 新内容; 生产规则发版用递增 release 版本 + `KieContainer.updateToVersion(newReleaseId)`
 - Step 16：`installArtifact(ReleaseId, InternalKieModule, File pom)` 三个参数都不能省。pom 文件用 `KieBuilderImpl.generatePomXml(releaseId)` (返回 String) 写临时文件; KJAR 本身的 pom 由 `kfs.generateAndWritePomXML(releaseId)` 写进构件内部, 两者一个给 maven install 元数据、一个让 KJAR 自描述
 - Step 16：`KieMavenRepository` / `KieScanner` / `InternalKieModule` / `KieBuilderImpl` 这些类来自 `kie-ci` (`org.kie.scanner.*` + `org.drools.compiler.kie.builder.impl.*`)。`KieScanner` 接口本身在 `kie-api`, 但实现要 kie-ci。没加 kie-ci 时 `newKieScanner` 会拿不到实现

@@ -19,7 +19,8 @@ Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 
 ```
 drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
-├── activity-common/             共享库：domain / engine（规则编译·翻译） / persistence（JPA） /
+├── activity-common/             共享库：domain / engine（规则编译·翻译 + 权益与条件树的 Java 求值） /
+│                                snapshot（发布代际快照包） / metrics（决策指标） / persistence（JPA） /
 │                                tenant（多租户·安全） + 只读查询与选品服务。两个 app 都依赖它
 ├── drools-lab/                  Step 1–18 教学库（重 drools 依赖：kie-ci / kie-dmn / decisiontables）
 │   └── src/main/
@@ -34,12 +35,14 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 │       └── resources/
 │           ├── application.yml / -mysql.yml / -h2.yml    端口 8081；H2 落 ./data/drools-demo.mv.db
 │           └── static/index.html                         落地页（指向 /ui/）+ 构建期注入的 SPA 产物
-└── activity-decision/  【可执行 app · 8082】只读决策热路径 /decision/v1/*（spu-discount / gifts）+
-    └── src/main/                发布代际轮询预热。仅依赖 activity-common（甩掉 drools-lab 的重依赖，jar 更轻）
+└── activity-decision/  【可执行 app · 8082】只读决策热路径 /decision/v1/*（spu-discount / gifts /
+    └── src/main/                addon/options + addon/quote 两阶段加价购 / metrics / by-activity）+
+                                 发布代际轮询预热。仅依赖 activity-common（甩掉 drools-lab 的重依赖，jar 更轻）
         ├── java/com/lrj/drools/DecisionApplication.java  启动类
         └── resources/
             ├── application.yml / -mysql.yml / -h2.yml    端口 8082；H2 落 ./data/decision.mv.db
-            └── （默认 mysql profile 单跑仍是 ddl-auto=update + root；只有 docker-compose 部署叠**只读账号** decision_ro + validate，物理上不建表/不写库）
+            └── （**ddl-auto 已固定成 validate**：只读平面不碰 DDL，建表由 console 独占，`DecisionDdlGuardTest` 读源文件钉死；
+                  docker-compose 再叠**只读账号** decision_ro，物理上写不了库。单跑的代价见下面「运行」的注意事项）
 
 frontend/                        Vue3 + Vite + TS 的 SPA 源码（Docker 由独立 nginx 托管；Maven profile 仍嵌入 console 作后备）
 deploy/                          docker-compose（mysql + console + decision + frontend nginx + Prometheus + Grafana）
@@ -61,12 +64,20 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
 
 # 起 decision (只读决策热路径 /decision/v1/*, 8082)。可单独跑, 也可与 console 并行:
+# 注意: decision 的 ddl-auto 是 validate, 表不存在会启动失败 (见下面那条注意事项)
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
 
 # 一次编译/测试整个 reactor (4 模块):
 ./mvnw clean package        # 两个 app 各出可执行 jar
 ./mvnw test                 # 跑全 reactor 测试
 ```
+
+> **decision 单跑要先有表**: 它是只读平面, `ddl-auto` 固定 `validate` (建表归 console 独占)。
+> 对着空库直接起会停在 `Schema-validation: missing table [activity_artifact]` 并退出。两条路:
+> ① 走默认 mysql profile, 先起一次 console 把表建好 (两个服务同一个库);
+> ② 只是想本机单跑 decision, 临时覆盖 `SPRING_JPA_HIBERNATE_DDL_AUTO=update ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2`
+> —— h2 档 decision 用的是**独立文件** (`-pl` 起时落在 `activity-decision/data/decision.mv.db`),
+> console 建的 `./data/drools-demo.mv.db` 它看不到。docker-compose 里 decision 一直是 validate + 只读账号, 不受影响。
 
 > **数据库**: Step 10 (会话持久化) 和 Step 18 (活动规则) 都用 JPA 落库。默认 profile 是 **MySQL**;
 > URL 带 `createDatabaseIfNotExist=true`, 库不存在会自动建。连接细节见 `application-mysql.yml`,
@@ -117,7 +128,40 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 - **看得见的效果**：每个 demo 内置多组示例 payload（从本 README 的 curl 转写），命中规则、推荐、
   审计栈时序、logical/regular 撤销对比等都有专门的可视化摘要。
 - **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
-- **明/暗主题** + 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+- **dark-first 主题**：没显式选过就跟随系统（默认深色），右上角可切浅色，选择存 `localStorage`；另有**表格密度两档**（舒适 / 紧凑，写 `<html data-density>`）+ 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
+
+### 活动控制台：工作台 · 玩法模板（2026-08 换代）
+
+演示台里"活动引擎控制台"那一半（`/ui/console`）换了一代，后端也跟着开了几个新口子（Step 1–18 的端点一个没动）：
+
+- **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
+- **玩法模板屏**（`/ui/console/playbooks`）：12 张玩法卡（满减 / 阶梯 / 折扣券 / 人群·门店·地域定向 / 满额赠品 / 第二件半价 / 秒杀一口价 / 加价购），点"用它新建"跳编辑器并预填。
+- **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。
+- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；秒杀库存扣减在写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409），决策侧只做建议性闸门——decision 连的是只读账号，物理上写不了库。
+- **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动命中量，标签数有上限，超出并进 `__over_cap__`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。
+
+前端回归（Vitest + 9 套 e2e）：
+
+```bash
+cd frontend && npm test && npm run typecheck && npm run build
+
+# 这四套默认就打编排的网关 BASE=http://localhost:8095
+npm run e2e:visual      # 视觉 / 移动端红线守卫（触控 ≥44px、零横向溢出…）
+npm run e2e:bench       # 工作台：行归并 / 批量四段流程 / 版本正确性 / 密度持久化 / 侧板 Esc
+npm run e2e:playbooks   # 玩法模板 + 跨屏预填
+npm run e2e:ruler       # 阶梯刻度尺
+
+# 早期四套的默认 BASE 还停在 :8097，打网关要显式给
+BASE=http://localhost:8095 npm run e2e:dev        # 同理 e2e:catalog / e2e:tablet / e2e:phone
+npm run e2e:oidc        # 默认 :8095，但需本机 Casdoor :8000（唯一走 auth 档的一套）
+```
+
+> 除 `e2e:oidc` 外都走 `tenant-chip`（header 档），而编排**默认是 auth 档**，跑之前要切：
+> `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
+
+> 前端产物在 **gateway 镜像**里，不在 console 的 jar 里：只 `--build console` 页面纹丝不动，要
+> `docker compose -f deploy/docker-compose.yml up -d --build gateway`（或 `./deploy.sh --frontend-only`）。
+> 网关已开 gzip（css / js / json / svg）；字体自托管 Inter + JetBrains Mono 拉丁子集（约 80KB，中文走系统栈）。
 
 ### 公开能力门户与 Casdoor 租户入口
 
