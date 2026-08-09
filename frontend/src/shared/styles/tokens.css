@@ -35,6 +35,40 @@
  *   **正典外的既有偏离（待后续收敛，新写样式一律只用正典四档）**：460 / 640 / 680 / 700 / 760 / 820 / 1100 / 1180(×4)。
  */
 
+/* ═══════════ 字体自托管（步骤 4）═══════════
+ * **只自托管拉丁 / 数字，中文一律吃系统栈**：CJK web font 即使子集化也是 3–10MB 级，
+ * 这是内网 docker 编排 + 网关托管的 B 端控制台，为字形花几 MB 不划算。
+ * 已知代价：英文数字是 Inter、汉字是苹方/雅黑，混排有轻微割裂——用字重/字距/字号层级弥补。
+ *
+ * 文件放 `src/assets/` 而不是 `public/`：
+ *   - public 下的文件落到 `/ui/fonts/`，命中 `deploy/nginx.conf` 的 `location /ui/ { Cache-Control: no-cache }`，
+ *     每次导航都会重新下载字体；
+ *   - `src/assets/` 由 Vite 指纹化输出到 `/ui/assets/`，命中 nginx 的 `location ^~ /ui/assets/` 长缓存（immutable）。
+ * 两个都是**可变字体**（Inter 100–900 / JetBrains Mono 可变），所以正文与 bold 共用一个文件。
+ * 合计 80KB（预算 100KB）。授权见同目录 NOTICE.md（均为 SIL OFL 1.1）。
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../../assets/fonts/inter-latin-var.woff2") format("woff2");
+  /* 只覆盖拉丁 + 常用标点符号：汉字不在这个范围内，会自动落到系统栈。 */
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+                 U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+                 U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("../../assets/fonts/jetbrains-mono-latin-var.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+                 U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+                 U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* ═══════════ 暗色：主场基线 ═══════════ */
 :root {
   /* 原生控件（select 弹层、search 清除键、滚动条）跟随主题；缺了它们会是浅色 UA 样式压在深空底上。 */
@@ -108,7 +142,7 @@
   --hairline: 1px;
   /* 字体：拉丁自托管（@font-face 见下方 §字体），**拉丁字族必须排在中文前**——浏览器逐字符 fallback，
      这样英文数字走 Inter、汉字走苹方，混排自然。中文一律吃系统栈（CJK web font 3–10MB，内网部署不划算）。 */
-  --font-ui: "Inter var", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "HarmonyOS Sans SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif;
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "HarmonyOS Sans SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans SC", Arial, sans-serif;
   --font-code: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", "Roboto Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: var(--font-ui);
   --mono: var(--font-code);
@@ -317,7 +351,13 @@ body::before {
     radial-gradient(50rem 36rem at 92% 8%, color-mix(in srgb, var(--accent-2) 9%, transparent), transparent 70%);
 }
 button, input, select, textarea { font-family: inherit; }
-code, pre, kbd, samp { font-family: var(--font-code); }
+/* 技术数据一律等宽 + tabular-nums：列表滚动 / 数值刷新时数字不跳位。
+   这一条比任何辉光都更像"专业工具"，成本近零。
+   `.mono` 是全局 utility（组件里已有若干处在用，此前只声明了字族、没声明 tabular-nums）。 */
+code, pre, kbd, samp, .mono {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+}
 a { color: var(--accent); }
 
 /* 全局键盘焦点环。用 outline 不占布局、不被 overflow 裁剪。 */
