@@ -2,6 +2,8 @@
 import { computed, ref } from 'vue'
 import { GROUPS, DEMOS, type DemoDef } from './catalog'
 import Icon from '@/shared/ui/Icon.vue'
+import EmptyState from '@/shared/ui/EmptyState.vue'
+import Button from '@/shared/ui/Button.vue'
 
 const query = ref('')
 const activeGroup = ref('all')
@@ -162,12 +164,17 @@ function clearFilters(): void {
         </article>
       </div>
 
-      <div v-else class="empty-search">
-        <span><Icon name="search" :size="24" /></span>
-        <h3>没有找到匹配的能力</h3>
-        <p>试试搜索「折扣」「动态发布」或「C08」。</p>
-        <button type="button" @click="clearFilters">清除筛选</button>
-      </div>
+      <EmptyState
+        v-else
+        class="empty-search"
+        icon="search"
+        title="没有找到匹配的能力"
+        hint="试试搜索「折扣」「动态发布」或「C08」。"
+      >
+        <template #action>
+          <Button variant="subtle" @click="clearFilters">清除筛选</Button>
+        </template>
+      </EmptyState>
     </section>
   </div>
 </template>
@@ -210,7 +217,7 @@ function clearFilters(): void {
 .quick-card { position: relative; min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); color: var(--text); text-decoration: none; box-shadow: var(--shadow-sm); transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
 .quick-card:hover { transform: translateY(-2px); border-color: var(--accent-line); box-shadow: var(--shadow-md); }
 .quick-index { color: var(--accent); font-size: 12px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }
-.quick-meta { color: var(--text-faint); font-size: 10px; text-transform: uppercase; }
+.quick-meta { color: var(--text-faint); font-size: var(--fs-xs); text-transform: uppercase; }
 .quick-card h3 { margin: 3px 0 var(--sp-1); font-size: var(--fs-md); }
 .quick-card p { display: -webkit-box; overflow: hidden; margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .quick-arrow { color: var(--text-faint); }
@@ -230,13 +237,13 @@ function clearFilters(): void {
 .filters button { display: inline-flex; align-items: center; gap: var(--sp-1); flex: 0 0 auto; padding: 7px 10px; border: 1px solid transparent; border-radius: var(--radius-pill); background: transparent; color: var(--text-soft); cursor: pointer; font: inherit; font-size: var(--fs-xs); }
 .filters button:hover { background: var(--bg-hover); color: var(--text); }
 .filters button.active { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-semibold); }
-.filters button span { font-size: 10px; font-variant-numeric: tabular-nums; opacity: .76; }
+.filters button span { font-size: var(--fs-xs); font-variant-numeric: tabular-nums; opacity: .76; }
 .groups { display: flex; flex-direction: column; gap: var(--sp-4); }
 .group-card { --group-color: var(--accent); overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 .group-card.violet { --group-color: var(--dv-1); } .group-card.blue { --group-color: var(--dv-2); } .group-card.cyan { --group-color: var(--dv-2); } .group-card.amber { --group-color: var(--dv-4); } .group-card.green { --group-color: var(--dv-3); } .group-card.rose { --group-color: var(--dv-5); }
 .group-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: start; padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); background: linear-gradient(105deg, color-mix(in srgb, var(--group-color) 7%, var(--bg-soft)), var(--bg-elev) 64%); }
 .group-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 11px; background: color-mix(in srgb, var(--group-color) 12%, var(--bg-elev)); color: var(--group-color); }
-.group-title-wrap > span { color: var(--group-color); font-size: 10px; font-weight: var(--fw-bold); letter-spacing: .1em; text-transform: uppercase; }
+.group-title-wrap > span { color: var(--group-color); font-size: var(--fs-xs); font-weight: var(--fw-bold); letter-spacing: .1em; text-transform: uppercase; }
 .group-title-wrap h3 { margin: 2px 0 0; font-size: var(--fs-lg); }
 .group-title-wrap p { margin: 2px 0 0; color: var(--text-faint); font-size: 11px; }
 .group-count { margin-top: 2px; color: var(--text-faint); font-size: var(--fs-xs); }
@@ -251,9 +258,9 @@ function clearFilters(): void {
 .demo-copy strong { font-size: var(--fs-sm); }
 .demo-copy small { margin-top: 2px; color: var(--text-faint); font-size: 11px; }
 .endpoint { min-width: 0; }
-.endpoint b { display: block; width: max-content; font-family: var(--mono); font-size: 9px; }
+.endpoint b { display: block; width: max-content; font-family: var(--mono); font-size: var(--fs-2xs); }
 .endpoint b.get { color: var(--blue); } .endpoint b.post { color: var(--accent); }
-.endpoint code { display: block; overflow: hidden; margin-top: 2px; color: var(--text-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.endpoint code { display: block; overflow: hidden; margin-top: 2px; color: var(--text-faint); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .row-arrow { color: var(--text-faint); transition: color .12s ease, transform .12s ease; }
 .empty-search { padding: var(--sp-8); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); text-align: center; }
 .empty-search > span { display: inline-flex; padding: var(--sp-3); border-radius: 50%; background: var(--bg-soft); color: var(--text-faint); }

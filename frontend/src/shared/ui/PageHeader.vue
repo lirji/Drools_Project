@@ -40,7 +40,7 @@ defineProps<{
 .row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
 .kicker {
   display: block; margin-bottom: 3px;
-  font-family: var(--mono); font-size: 10px; font-weight: var(--fw-bold);
+  font-family: var(--mono); font-size: var(--fs-xs); font-weight: var(--fw-bold);
   letter-spacing: .16em; text-transform: uppercase; color: var(--text-faint);
 }
 .title { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: -.02em; }

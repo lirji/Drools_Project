@@ -318,7 +318,7 @@ function selectTenant(value: string): void {
   background: rgba(255,255,255,.15);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
 }
-.brand-kicker { margin: 28px 0 8px; color: rgba(255,255,255,.7); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
+.brand-kicker { margin: 28px 0 8px; color: rgba(255,255,255,.7); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .18em; }
 .login-brand h2 { margin: 0; font-size: 28px; line-height: 1.36; letter-spacing: -.02em; }
 .brand-intro { max-width: 310px; margin: 16px 0 0; color: rgba(255,255,255,.78); font-size: 13px; line-height: 1.7; }
 .brand-features { position: relative; z-index: 1; display: grid; gap: 18px; margin: 34px 0; }
@@ -327,12 +327,12 @@ function selectTenant(value: string): void {
 .brand-feature span:last-child { display: grid; gap: 2px; }
 .brand-feature strong { font-size: 13px; font-weight: 600; }
 .brand-feature small { color: rgba(255,255,255,.68); font-size: 11px; line-height: 1.45; }
-.brand-foot { position: relative; z-index: 1; margin: 0; color: rgba(255,255,255,.56); font-size: 10px; letter-spacing: .08em; }
+.brand-foot { position: relative; z-index: 1; margin: 0; color: rgba(255,255,255,.56); font-size: var(--fs-xs); letter-spacing: .08em; }
 
 .login-form-panel { display: flex; min-width: 0; padding: 48px 50px 38px; flex-direction: column; justify-content: center; }
 .login-compact-head { display: none; }
 .form-heading { margin-bottom: 26px; }
-.form-eyebrow { margin: 0 0 8px; color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+.form-eyebrow { margin: 0 0 8px; color: var(--accent); font-size: var(--fs-xs); font-weight: 700; letter-spacing: .16em; }
 .form-heading h1 { margin: 0; color: var(--text); font-size: 25px; line-height: 1.35; letter-spacing: -.025em; }
 .form-heading > p:last-child { margin: 9px 0 0; color: var(--text-soft); font-size: 13px; line-height: 1.6; }
 
@@ -369,9 +369,9 @@ function selectTenant(value: string): void {
 .login-primary .button-spinner { border-color: rgba(255,255,255,.38); border-top-color: var(--text-invert); }
 .button-arrow { position: absolute; right: 16px; opacity: .75; }
 
-.security-note { display: flex; margin-top: 22px; align-items: flex-start; justify-content: center; gap: 7px; color: var(--text-faint); font-size: 10px; line-height: 1.55; text-align: center; }
+.security-note { display: flex; margin-top: 22px; align-items: flex-start; justify-content: center; gap: 7px; color: var(--text-faint); font-size: var(--fs-xs); line-height: 1.55; text-align: center; }
 .security-note > svg { flex: 0 0 auto; color: var(--ok); }
-.login-footer { margin: 17px 0 0; color: var(--text-faint); font-size: 10px; letter-spacing: .05em; }
+.login-footer { margin: 17px 0 0; color: var(--text-faint); font-size: var(--fs-xs); letter-spacing: .05em; }
 
 @keyframes aurora-float { to { transform: translate3d(24px, 18px, 0) scale(1.08); } }
 
@@ -384,7 +384,7 @@ function selectTenant(value: string): void {
   .compact-logo { width: 42px; height: 42px; border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
   .login-compact-head > span:last-child { display: grid; gap: 1px; }
   .login-compact-head strong { color: var(--text); font-size: 15px; }
-  .login-compact-head small { color: var(--text-faint); font-size: 10px; }
+  .login-compact-head small { color: var(--text-faint); font-size: var(--fs-xs); }
 }
 
 @media (max-width: 460px) {

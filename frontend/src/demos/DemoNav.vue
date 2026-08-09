@@ -131,16 +131,16 @@ function toggle(groupId: string): void {
 .catalog-link span:nth-child(2) { min-width: 0; }
 .catalog-link strong, .catalog-link small { display: block; }
 .catalog-link strong { font-size: var(--fs-sm); }
-.catalog-link small { color: var(--text-faint); font-size: 10px; font-weight: var(--fw-medium); }
+.catalog-link small { color: var(--text-faint); font-size: var(--fs-xs); font-weight: var(--fw-medium); }
 .now-running { display: grid; grid-template-columns: auto 1fr; column-gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--accent-soft); }
 .now-running .pulse { grid-row: span 2; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
-.now-running span:not(.pulse) { color: var(--accent); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .08em; text-transform: uppercase; }
+.now-running span:not(.pulse) { color: var(--accent); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .08em; text-transform: uppercase; }
 .now-running strong { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .nav-search { display: flex; align-items: center; gap: var(--sp-2); min-height: 36px; padding: 0 var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
 .nav-search:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .nav-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
 .nav-search button { display: inline-flex; padding: 2px; border: 0; background: transparent; color: var(--text-faint); cursor: pointer; }
-.nav-caption { display: flex; justify-content: space-between; padding: 0 var(--sp-1); color: var(--text-faint); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .1em; text-transform: uppercase; }
+.nav-caption { display: flex; justify-content: space-between; padding: 0 var(--sp-1); color: var(--text-faint); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .1em; text-transform: uppercase; }
 .group-list { display: flex; flex-direction: column; gap: 3px; }
 .group { border-radius: var(--radius-sm); }
 .group.current { background: color-mix(in srgb, var(--accent-soft) 46%, transparent); }
@@ -150,7 +150,7 @@ function toggle(groupId: string): void {
 .group.current .group-icon { background: var(--accent-soft); color: var(--accent); }
 .group-label strong, .group-label small { display: block; }
 .group-label strong { font-size: 12px; }
-.group-label small { color: var(--text-faint); font-size: 9px; }
+.group-label small { color: var(--text-faint); font-size: var(--fs-2xs); }
 .chevron { color: var(--text-faint); transition: transform .15s ease; }
 .chevron.open { transform: rotate(180deg); }
 .items { position: relative; margin-left: 21px; padding: 2px 0 var(--sp-2) 13px; }
@@ -163,10 +163,10 @@ function toggle(groupId: string): void {
 .item-copy { min-width: 0; }
 .item-copy strong, .item-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-copy strong { font-size: 11px; font-weight: var(--fw-medium); }
-.item-copy small { margin-top: 1px; color: var(--text-faint); font-family: var(--mono); font-size: 8px; }
+.item-copy small { margin-top: 1px; color: var(--text-faint); font-family: var(--mono); font-size: var(--fs-2xs); }
 .item-copy b { font-weight: var(--fw-bold); }
 .item-copy b.get { color: var(--blue); } .item-copy b.post { color: var(--accent); }
-.item-step { color: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
+.item-step { color: var(--text-faint); font-size: var(--fs-2xs); font-variant-numeric: tabular-nums; }
 .nav-empty { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); padding: var(--sp-5); color: var(--text-faint); font-size: var(--fs-xs); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 @media (max-width: 1023px) {

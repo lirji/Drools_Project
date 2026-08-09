@@ -63,7 +63,7 @@ function run(t: Toast, a: ToastAction): void {
 }
 .acts button:hover { background: var(--bg-hover); }
 .acts .close { margin-left: auto; border-color: transparent; background: transparent; color: var(--text-faint); font-size: 15px; line-height: 1; }
-.remain { font-family: var(--mono); font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.remain { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); font-variant-numeric: tabular-nums; }
 /* 入场/退场动画（被全局 reduced-motion 兜底禁用） */
 .toast-enter-active, .toast-leave-active { transition: opacity .18s ease, transform .18s ease; }
 .toast-enter-from { opacity: 0; transform: translateX(16px); }

@@ -191,7 +191,7 @@ function onKeydown(e: KeyboardEvent): void {
   /* 不透明底：sticky 头压在滚动内容上，半透明会串字 */
   background: var(--bg-elev); border-bottom: 1px solid var(--border);
 }
-.kicker { display: block; color: var(--accent); font-size: 9px; font-weight: var(--fw-bold); letter-spacing: .16em; text-transform: uppercase; }
+.kicker { display: block; color: var(--accent); font-size: var(--fs-2xs); font-weight: var(--fw-bold); letter-spacing: .16em; text-transform: uppercase; }
 .panel-head h2 { margin: 2px 0 0; font-size: var(--fs-lg); }
 .x {
   flex: none; width: 30px; height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm);

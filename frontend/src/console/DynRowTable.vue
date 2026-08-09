@@ -67,7 +67,7 @@ function remove(i: number): void {
 .table { padding: var(--sp-2); }
 .row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) 0; }
 .row + .row:not(.head) { border-top: 1px solid var(--border); }
-.row.head { color: var(--text-faint); font-size: 10px; font-weight: var(--fw-bold); letter-spacing: .03em; text-transform: uppercase; }
+.row.head { color: var(--text-faint); font-size: var(--fs-xs); font-weight: var(--fw-bold); letter-spacing: .03em; text-transform: uppercase; }
 .idx { width: 24px; font-variant-numeric: tabular-nums; text-align: center; }
 .act { width: 32px; }
 .empty { color: var(--text-faint); font-size: 11px; padding: var(--sp-3); text-align: center; }

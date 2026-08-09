@@ -110,7 +110,7 @@ function use(id: string): void {
 .chip { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg-elev); color: var(--text-soft); cursor: pointer; font: inherit; font-size: var(--fs-xs); }
 .chip:hover { background: var(--bg-hover); }
 .chip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.chip i { font-family: var(--mono); font-style: normal; font-size: 10px; color: var(--text-faint); }
+.chip i { font-family: var(--mono); font-style: normal; font-size: var(--fs-xs); color: var(--text-faint); }
 .chip.on i { color: var(--accent); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 296px), 1fr)); gap: var(--sp-4); }
@@ -125,7 +125,7 @@ function use(id: string): void {
 .head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
 .head h3 { margin: 0; font-size: var(--fs-md); }
 .card.blocked .head h3 { color: var(--text-soft); }
-.tag { flex: none; padding: 1px var(--sp-2); border: 1px solid var(--border-strong); border-radius: var(--radius-pill); color: var(--text-faint); font-size: 10px; }
+.tag { flex: none; padding: 1px var(--sp-2); border: 1px solid var(--border-strong); border-radius: var(--radius-pill); color: var(--text-faint); font-size: var(--fs-xs); }
 .plain { margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: var(--fs-xs); line-height: var(--lh-normal); }
 .foot { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: auto; }
 .why { margin: 0; color: var(--text-faint); font-size: var(--fs-xs); line-height: var(--lh-normal); }
