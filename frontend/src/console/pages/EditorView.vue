@@ -39,7 +39,10 @@ interface Draft {
   activityId: string | null
   requestId: string
   activityType: number
-  redMode: 'fixed' | 'ladder' | 'ratio'
+  /** price = 一口价（amount 是卖多少）；nth = 第 N 件折（amount 是折数，nth 是第几件） */
+  redMode: 'fixed' | 'ladder' | 'ratio' | 'price' | 'nth'
+  /** 第 N 件折的 N（≥2） */
+  nth: number | string
   bindMode: 'manual' | 'pool'
   areaType: number
   name: string
@@ -71,7 +74,7 @@ function newDraft(): Draft {
     activityType: 1, redMode: 'fixed', bindMode: 'manual', areaType: 1,
     name: '', bizLine: 'mall', rule: '', priority: 1, inventory: 100,
     startLocal: toLocalInput(Date.now() - 3600000), endLocal: toLocalInput(Date.now() + 7 * 86400000),
-    districtIds: '', amount: '', maxDiscount: '', takeType: 1, rangeMin: '', rangeMax: '', unit: '元', strategy: 'MAX',
+    districtIds: '', amount: '', maxDiscount: '', takeType: 1, rangeMin: '', rangeMax: '', nth: 2, unit: '元', strategy: 'MAX',
     ladder: [], gifts: [], spu: [{ storeId: 1, spuId: '' }], pool: [{ poolId: '' }],
     tree: emptyGroup(),
   }
@@ -134,6 +137,12 @@ const validationErrs = computed(() => {
   if (dr.startLocal && dr.endLocal && toEpoch(dr.startLocal)! >= toEpoch(dr.endLocal)!) errs.push('开始时间须早于结束时间')
   if (dr.activityType === 1 && dr.redMode === 'fixed' && (dr.amount === '' || dr.amount == null)) errs.push('固定红包金额必填')
   if (dr.activityType === 1 && dr.redMode === 'ladder' && !cleanLadder(dr.ladder).length) errs.push('阶梯档至少一档有奖励')
+  // 一口价是「卖多少」：0 等于白送、负数等于倒贴，两者都不是运营的本意
+  if (dr.activityType === 1 && dr.redMode === 'price' && !(Number(dr.amount) > 0)) errs.push('一口价必须大于 0')
+  if (dr.activityType === 1 && dr.redMode === 'nth') {
+    if (!(Number(dr.amount) > 0 && Number(dr.amount) < 10)) errs.push('第 N 件折的折数必须在 (0,10)')
+    if (!(Number(dr.nth) >= 2)) errs.push('第 N 件折的 N 必须 ≥ 2（1 等于全场打折）')
+  }
   if (dr.activityType === 1 && dr.redMode === 'ratio') {
     const zhe = Number(dr.amount)
     if (dr.amount === '' || dr.amount == null || Number.isNaN(zhe)) errs.push('折数必填')
@@ -352,7 +361,12 @@ async function submit(): Promise<void> {
     redPackageTakeType: dr.activityType === 1 && dr.redMode === 'fixed' ? dr.takeType : null,
     // 折扣型把「折数」放在 redPackageAmount 里，靠 unit 判别（与后端 BenefitForm 一致）
     redPackageAmount: dr.activityType === 1 && dr.redMode !== 'ladder' ? numOrNull(dr.amount) : null,
-    redPackageAmountUnit: dr.activityType === 1 && dr.redMode === 'ratio' ? '折' : '元',
+    // unit 是「这个数字什么意思」的判别位，与后端 BenefitForm 一一对应
+    redPackageAmountUnit: dr.activityType !== 1 ? '元'
+      : dr.redMode === 'ratio' ? '折'
+      : dr.redMode === 'price' ? '价'
+      : dr.redMode === 'nth' ? '件折'
+      : '元',
     redPackageMaxDiscount: dr.activityType === 1 && dr.redMode === 'ratio' ? numOrNull(dr.maxDiscount) : null,
     // redPackageRangeAmount 是双用途列：**数组 = 阶梯分档，对象 = 随机区间**。
     // 后端 LadderRangeParser 只认数组、RandomRangeParser 只认对象，靠 JSON 顶层类型互斥，
@@ -361,6 +375,8 @@ async function submit(): Promise<void> {
       dr.activityType === 1 && dr.redMode === 'ladder' ? JSON.stringify(cleanLadder(dr.ladder))
       : dr.activityType === 1 && dr.redMode === 'fixed' && dr.takeType === 2
         ? JSON.stringify({ min: Number(dr.rangeMin), max: Number(dr.rangeMax) })
+      : dr.activityType === 1 && dr.redMode === 'nth'
+        ? JSON.stringify({ nth: Number(dr.nth) })
       : null,
     discountStrategy: dr.strategy,
     eligibilityConditionTree: pruneTree(dr.tree),
@@ -502,6 +518,28 @@ onBeforeRouteLeave(async () => {
                 <option v-for="m in distModes" :key="m.code" :value="m.code">{{ m.label }}</option>
               </select>
               <small v-if="dr.takeType === 2">确定性随机：同一用户同一购物车金额固定，刷新不变价</small>
+            </label>
+          </div>
+          <div v-else-if="dr.redMode === 'price'" class="fg">
+            <label>一口价 *
+              <input v-model="dr.amount" type="number" min="0.01" step="0.01"
+                     placeholder="如 9.9" data-testid="form-price" />
+              <small>不管原价多少就卖这个数，减免 = 订单金额 − 一口价</small>
+            </label>
+            <label>库存 *
+              <input v-model="dr.inventory" type="number" min="1" data-testid="form-seckill-inventory" />
+              <small>秒杀库存由 claim 端点原子扣减防超发；决策只报价、不扣减</small>
+            </label>
+          </div>
+          <div v-else-if="dr.redMode === 'nth'" class="fg">
+            <label>第几件 *
+              <input v-model="dr.nth" type="number" min="2" step="1" data-testid="form-nth" />
+              <small>2 = 第二件（每满 2 件享 1 件折扣）</small>
+            </label>
+            <label>折数 *
+              <input v-model="dr.amount" type="number" step="0.1" min="0.1" max="9.9"
+                     placeholder="5 = 半价" data-testid="form-nth-zhe" />
+              <small>按<b>同款</b>逐行算；调用方必须传订单行（含逐行单价），否则本活动不适用</small>
             </label>
           </div>
           <div v-else-if="dr.redMode === 'ratio'" class="fg">

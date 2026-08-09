@@ -12,7 +12,19 @@ public enum ActivityType {
     COUPONS(2, "优惠券"),
     CPS(3, "CPS 分润"),
     RIGHT_COUPON(4, "权益券"),
-    BUY_AND_GET(5, "买赠");
+    BUY_AND_GET(5, "买赠"),
+
+    /**
+     * 加价购：买主商品后，可以加少量钱换购指定商品。
+     *
+     * <p><b>它与买赠的区别是"要不要用户选"</b>——买赠是一次性把赠品全给出去，
+     * 加价购必须先返回可换购清单、等用户挑一个、再二次定价。这就是它此前做不了的原因：
+     * 决策链路是一次性返回最终优惠，没有第二阶段。
+     *
+     * <p>复用 {@code activity_gift} 承载换购品：{@code giftName} 是品名、
+     * {@code absoluteAmount} 是<b>加价金额</b>（加多少钱换购），不是赠品价值。
+     */
+    ADD_ON_PURCHASE(6, "加价购");
 
     private final int code;
     private final String label;

@@ -47,11 +47,63 @@ public class DecisionMetrics {
     public static final String COMPILE = "activity.rule.compile";
     public static final String CEILING = "activity.rule.fire.ceiling";
     public static final String SOURCE = "activity.decision.source";
+    /** 按活动的命中计数。**带基数上限**，见 {@link #hit}。 */
+    public static final String HIT = "activity.decision.hit";
+
+    /**
+     * activityId 标签的基数上限。
+     *
+     * <p><b>为什么必须有这个上限</b>：把 activityId 直接当 Prometheus 标签是教科书级的
+     * 基数爆炸——每个活动一条时间序列，活动是运营随手就能创建的，序列数不受工程控制。
+     * 后果不是"图变多"，是 Prometheus 内存打满、抓取超时、**整套监控一起挂**，
+     * 而挂掉的时刻恰好是活动最多的大促当天。
+     *
+     * <p>超出上限后一律打到 {@code __over_cap__} 这个哨兵标签上：总量仍然准确，
+     * 只是分不出是哪几个活动。这比"要么没有按活动的指标、要么监控挂掉"好。
+     */
+    public static final int ACTIVITY_TAG_CAP = 200;
+    public static final String OVER_CAP = "__over_cap__";
 
     private final MeterRegistry registry;
 
+    /** 已经打过标的 activityId。用来判断"再放一个新的会不会超上限"。 */
+    private final java.util.Set<String> taggedActivities =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public DecisionMetrics(MeterRegistry registry) {
         this.registry = registry;
+    }
+
+    /**
+     * 记一次「某活动被命中」。
+     *
+     * <p>这是控制台「按活动看命中量」唯一的数据来源——此前没有它，所以工作台上那块
+     * 指标卡只能写"尚未接入"。
+     *
+     * <p>基数由 {@link #ACTIVITY_TAG_CAP} 兜住：前 N 个活动各占一条序列，之后一律并进
+     * {@link #OVER_CAP}。**不要因为"我们活动不多"就去掉这个上限**——活动数是运营行为，
+     * 不是工程可控量，而基数爆炸的代价是整套监控在大促当天一起挂。
+     */
+    public void hit(String scene, String activityId) {
+        if (activityId == null || activityId.isBlank()) return;
+        String tag = activityId;
+        if (!taggedActivities.contains(activityId)) {
+            if (taggedActivities.size() >= ACTIVITY_TAG_CAP) {
+                tag = OVER_CAP;
+            } else {
+                taggedActivities.add(activityId);
+            }
+        }
+        Counter.builder(HIT)
+                .tag("scene", scene == null ? "unknown" : scene)
+                .tag("activityId", tag)
+                .register(registry)
+                .increment();
+    }
+
+    /** 供只读端点聚合用。返回注册表本身，调用方只读不改。 */
+    public MeterRegistry registry() {
+        return registry;
     }
 
     /**

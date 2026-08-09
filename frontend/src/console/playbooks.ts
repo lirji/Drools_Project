@@ -23,11 +23,19 @@ export interface PlaybookCondition {
 }
 
 export interface PlaybookPreset {
-  /** 1 = 红包，5 = 买赠。后端 create 只放行这两个 */
-  activityType: 1 | 5
-  /** 与后端 BenefitForm 对齐：fixed/ladder = 金额型，ratio = 折扣型（amount 是折数） */
-  redMode: 'fixed' | 'ladder' | 'ratio'
+  /** 1 = 红包，5 = 买赠，6 = 加价购 */
+  activityType: 1 | 5 | 6
+  /**
+   * 与后端 BenefitForm 对齐：
+   * - fixed/ladder = 金额型（amount 是要减的钱）
+   * - ratio        = 折扣型（amount 是折数，作用于整单）
+   * - price        = 一口价（amount 是"卖多少"，unit='价'）
+   * - nth          = 第 N 件折（amount 是折数，nth 是第几件，unit='件折'）
+   */
+  redMode: 'fixed' | 'ladder' | 'ratio' | 'price' | 'nth'
   amount?: number
+  /** 第 N 件折的 N（≥2）。仅 redMode='nth' 有意义 */
+  nth?: number
   /** 折扣型的封顶减免额。折扣型**必填**——写平面会拒掉没有封顶的折扣券 */
   maxDiscount?: number
   ladder?: Array<{ min: number; max: number | ''; reward: number }>
@@ -162,37 +170,39 @@ export const PLAYBOOKS: Playbook[] = [
     },
   },
 
-  // ─────────────── 暂不可用：逐条写明缺什么 ───────────────
+  // ─────────────── 曾经不可用、现已解锁（决策入口补订单行 + 一口价 + 两阶段） ───────────────
   {
     id: 'second-half',
     name: '第二件半价',
     plain: '同款买两件，第二件半价。',
-    group: 'blocked',
-    receipt: [{ label: '第 2 件', amount: 0 }],
-    blockedReason:
-      '决策入口 SpuDiscountRequest 只有 spuIdList / orderAmount / quantity，**没有逐行单价**，'
-      + '算不出「第二件」是哪一件、值多少钱。要支持必须先加行项模型（订单行 + 单价），'
-      + '那是入口契约的破坏性升级。',
+    group: 'targeted',
+    receipt: [{ label: '第 2 件', amount: 5 }],
+    preset: {
+      activityType: 1, redMode: 'nth', amount: 5, nth: 2, strategy: MAX,
+      conditions: [],
+    },
   },
   {
     id: 'flash',
     name: '限时秒杀（一口价）',
     plain: '活动期内直接按一口价卖，不是在原价上减。',
-    group: 'blocked',
-    receipt: [{ label: '一口价', amount: 0 }],
-    blockedReason:
-      '现有权益形态表达的都是「减多少」，没有「卖多少」这种一口价形态。'
-      + '而且秒杀要靠库存扣减防超发，当前 inventory 是声明式、决策链路不读取不扣减。',
+    group: 'reduce',
+    receipt: [{ label: '一口价', amount: 9.9 }],
+    preset: {
+      activityType: 1, redMode: 'price', amount: 9.9, strategy: MAX,
+      conditions: [],
+    },
   },
   {
     id: 'addon',
     name: '加价购',
     plain: '买主商品后，可以加少量钱换购指定商品。',
-    group: 'blocked',
-    receipt: [{ label: '加 9.9 元换购', amount: 0 }],
-    blockedReason:
-      '需要两阶段决策：先判主商品是否命中，再返回可换购清单让用户选，选完二次定价。'
-      + '当前决策链路是一次性返回最终优惠，没有第二阶段。',
+    group: 'gift',
+    receipt: [{ label: '加 9.9 元换购', amount: 9.9 }],
+    preset: {
+      activityType: 6, redMode: 'fixed', strategy: MAX,
+      conditions: [],
+    },
   },
 ]
 

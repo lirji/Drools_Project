@@ -184,6 +184,9 @@ public class ActivityQueryService {
         }
         if (disc != null && (disc.getHitActivityId() != null || disc.getHitAmount().signum() > 0)) {
             traces.addAll(disc.getTraces());
+            // 按活动的命中计数——控制台「按活动看命中量」的唯一数据来源。
+            // 基数上限在 DecisionMetrics.hit 里兜住，这里不需要额外判断。
+            metrics.hit(SCENE_DISCOUNT, disc.getHitActivityId());
             return new DiscountView(true, disc.getHitActivityId(), disc.getHitActivityName(),
                     disc.getHitAmount(), disc.getStrategy().name(), traces, engineMode(true));
         }
