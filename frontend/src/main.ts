@@ -4,6 +4,8 @@ import router from './router'
 import App from './App.vue'
 import { applyDensity, readDensity } from './shared/useDensity'
 import './shared/styles/tokens.css'
+// 效果层必须排在 tokens 之后：它引用 --grain / --glow / --dur-* / --ease-* 等令牌。
+import './shared/styles/effects.css'
 
 // 主题：沿用旧前端 localStorage key `drools-theme` + data-theme（平滑接续用户偏好）
 const THEME_KEY = 'drools-theme'

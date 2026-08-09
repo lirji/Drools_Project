@@ -5,7 +5,7 @@
  * - 承接 ConsoleShell 的「401 途中失效 → 兜底跳 login」watch（上提后同时覆盖 demos 区，属登出重定向的行为扩面）。
  * 登录/回调页不套本壳（由 App.vue 分流）。
  */
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from './AppLayout.vue'
 import SidebarNav from './SidebarNav.vue'
@@ -22,6 +22,13 @@ const drawerOpen = ref(false)
 function closeDrawer(): void {
   drawerOpen.value = false
 }
+
+// 网格底铺在内容区（不是 body）：ListView 每 5 行一道加重线，与 44px 网格会产生莫尔纹式拍频；
+// EditorView 是长表单，网格同样只添噪。**两条最重的路线上关掉网格**。
+// 用显式属性而不是 `.shell-content:has(.bench)` —— :has() 在 Firefox <121 静默失效，
+// 失效方式是「没反应」，是最难排查的一类（tokens.css 已记载过这条坑）。
+const DENSE_ROUTES = new Set(['activities', 'activity-new', 'activity-edit'])
+const gridOff = computed(() => DENSE_ROUTES.has(route.name as string))
 
 // 路由跳转自动关抽屉
 watch(() => route.fullPath, closeDrawer)
@@ -54,7 +61,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <AppLayout :drawer-open="drawerOpen" @close="closeDrawer">
+  <AppLayout :drawer-open="drawerOpen" :grid="!gridOff" @close="closeDrawer">
     <template #topbar>
       <TopBar @toggle-nav="drawerOpen = !drawerOpen" />
     </template>

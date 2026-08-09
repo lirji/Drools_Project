@@ -654,7 +654,7 @@ onBeforeRouteLeave(async () => {
 .primary { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); min-height: 46px; margin-top: var(--sp-3); background: linear-gradient(100deg, var(--accent), var(--accent-2)); color: var(--text-invert); border: none; border-radius: var(--radius-sm); padding: var(--sp-3); cursor: pointer; font-size: 13px; font-weight: var(--fw-semibold); box-shadow: 0 8px 18px color-mix(in srgb, var(--accent) 20%, transparent); transition: background .12s ease, transform .08s ease; }
 .primary:hover:not(:disabled) { background: var(--accent-hover); }
 .primary:disabled { opacity: .5; cursor: not-allowed; }
-.spinning { animation: spin .9s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }.save-note { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: 9px; }
+.spinning { animation: spin .9s linear infinite; }.save-note { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: 9px; }
 .tag-gold { background: var(--gold-soft); color: var(--gold); font-size: 12px; padding: var(--sp-1) var(--sp-2); border-radius: var(--radius-sm); margin-top: var(--sp-2); }
 .back { margin-top: var(--sp-3); width: 100%; }
 @media (max-width: 1023px) { .workflow-bar { grid-template-columns: 1fr 1fr; }.workflow-bar > :deep(svg) { display: none; }.layout { grid-template-columns: 1fr; } .rail { position: static; } .fg { grid-template-columns: 1fr; } }

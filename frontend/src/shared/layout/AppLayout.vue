@@ -4,13 +4,13 @@
  * 纯展示：状态（抽屉开合）由父 AppShell 持有并经 props/emit 驱动，本组件只管布局与抽屉动效。
  * 断点：≥768 侧栏常驻；<768 侧栏 fixed + translateX 离屏（不改布局宽度 → 平板 768 无横向溢出），scrim 遮罩。
  */
-defineProps<{ drawerOpen: boolean }>()
+withDefaults(defineProps<{ drawerOpen: boolean; grid?: boolean }>(), { grid: true })
 defineEmits<{ (e: 'close'): void }>()
 </script>
 
 <template>
   <div class="shell">
-    <header class="shell-topbar">
+    <header class="shell-topbar u-glass">
       <slot name="topbar" />
     </header>
     <div class="shell-body">
@@ -18,7 +18,7 @@ defineEmits<{ (e: 'close'): void }>()
         <slot name="sidebar" />
       </aside>
       <div v-if="drawerOpen" class="scrim" @click="$emit('close')" />
-      <main class="shell-content">
+      <main class="shell-content" :class="{ 'u-grid': grid }">
         <slot />
       </main>
     </div>
@@ -27,11 +27,13 @@ defineEmits<{ (e: 'close'): void }>()
 
 <style scoped>
 .shell { min-height: 100dvh; display: flex; flex-direction: column; }
+/* 玻璃条：`.u-glass`（effects.css）给底色 + blur + 1px 高光边，`@supports` 与小屏关闭都在那里统一管。
+   **只有顶栏做玻璃化**——侧栏是竖向长条、面积大，玻璃化的合成开销换不来观感，且会把
+   「同屏 backdrop-filter ≤2」的配额在 /demos 上直接顶穿（那里还有 hero-stats）。 */
 .shell-topbar {
   position: sticky; top: 0; z-index: var(--z-sticky);
   height: var(--shell-topbar-h); flex-shrink: 0;
-  background: var(--bg-elev); border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
+  border-bottom: 1px solid var(--border);
 }
 .shell-body { flex: 1; display: flex; align-items: flex-start; min-height: 0; }
 .shell-sidebar {

@@ -1,0 +1,107 @@
+/* 效果层 —— 全站共享的关键帧与效果 utility（视觉换代 0809，步骤 3）
+ *
+ * 为什么单独一层：换代前全仓 9 个 @keyframes 里有 3 组是逐字重复的
+ *   spin ×5（LoginView / DemoPanel / EditorView / ListView / ValidateView）
+ *   shimmer ×2（Skeleton / DemoPanel）
+ *   pulse 与 breathe 逐字相同（ValidateView / DemoPanel）
+ * 各页各写各的，改一个动效要翻五个文件。
+ *
+ * **Vue scoped CSS 只重写"定义在同一个 scoped 块里"的 @keyframes 名**；
+ * 组件里删掉本地定义后，`animation: spin …` 会正常落到这里的全局定义上。
+ *
+ * **不引动效库**（motion-v / @vueuse/motion）：理由不是体积，是它会绕开
+ * tokens.css 末尾那道 prefers-reduced-motion 全局闸——现在靠
+ * `* { animation-duration: .001ms !important }` 一处兜住全站，换成 JS 驱动后
+ * 无障碍面会从「一处兜底」退化成「N 处各自兜底」。
+ * 下面所有动效都在那道闸下面，自动可被灭掉。
+ */
+
+/* ═══════════ 关键帧 ═══════════ */
+
+/* 旋转：加载指示器。5 份重复收敛于此。 */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 扫光：骨架屏。原 shimmer 两份写法不一（一份 0%→100%、一份 to -200%），统一成单向扫过。 */
+@keyframes sweep { to { background-position: -200% 0; } }
+/* 旧名保留转发，避免遗漏的引用点静默失效。 */
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* 脉冲环：只用于「在跑 / 生效中」这类**有信息量**的状态，禁止当装饰铺开。 */
+@keyframes ping { to { box-shadow: 0 0 0 10px transparent; } }
+
+/* 呼吸：ValidateView 的 pulse 与 DemoPanel 的 breathe 逐字相同，收敛成一个。 */
+@keyframes breathe { to { transform: scale(1.06); box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 8%, transparent); } }
+
+/* 入场：位移 + 淡入。配合 .u-stagger 做编排。 */
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+/* ═══════════ 效果 utility ═══════════ */
+
+/* 玻璃面。
+   **只给高度 ≤56px 的 sticky 窄条（顶栏）与非 sticky 的小面积元素**——
+   侧栏那种竖向长条与滚动容器内部的大面积 sticky 一律不用（合成开销与红线）。
+   同屏 ≤2 个；blur ≤14px；`@supports` 包裹并给不透明兜底；必须 -webkit- 双写
+   （全仓此前一个都没写，Safari 17- 静默失效且无 autoprefixer 兜底）。 */
+.u-glass {
+  background: var(--surface-glass);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  /* 小屏与触控下整体关掉：backdrop-filter 是低端安卓与微信 WebView 掉帧的主因。 */
+  @media (min-width: 768px) and (hover: hover) {
+    .u-glass {
+      -webkit-backdrop-filter: blur(14px) saturate(150%);
+      backdrop-filter: blur(14px) saturate(150%);
+    }
+  }
+}
+
+/* 网格底。铺在内容区而不是 body：密集表格页（每 5 行一道加重线）会与它打莫尔纹式拍频，
+   需要能按路由关掉，见 AppLayout 的 data-grid。
+   background-size ≥40px + --grain alpha ≤.07：125%/150% 缩放的办公机不进 2dppx 分支，
+   网格越密越糊，糊了就从"精致"变"脏"。 */
+.u-grid {
+  background-image:
+    linear-gradient(var(--grain) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grain) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* 辉光。配额：一屏同时可见 ≤3 个，且**不要对 box-shadow 做 transition**
+   （合成开销大），要渐显就动伪元素的 opacity。 */
+.u-glow { box-shadow: var(--glow); }
+
+/* 渐变标题。**必须有 @supports not 兜底**：background-clip 失效时
+   color:transparent 会让标题直接消失，这是最难发现的一类翻车。 */
+.u-gradient-text {
+  background: linear-gradient(120deg, var(--text) 24%, var(--accent-2) 96%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+  .u-gradient-text { color: var(--text); background: none; }
+}
+
+/* 入场编排。纯 CSS nth-child 递增 delay，**仅 Tier A 门面页使用**——
+   工作台与编辑器是高频重复访问的密度屏，入场动画在那里只会碍事。 */
+.u-stagger > * { animation: rise var(--dur-slow) var(--ease-out) both; }
+.u-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.u-stagger > *:nth-child(2) { animation-delay: 50ms; }
+.u-stagger > *:nth-child(3) { animation-delay: 100ms; }
+.u-stagger > *:nth-child(4) { animation-delay: 150ms; }
+.u-stagger > *:nth-child(5) { animation-delay: 200ms; }
+.u-stagger > *:nth-child(n+6) { animation-delay: 250ms; }
+
+/* 脉冲指示点：「在跑」。禁止出现在 /console/activities 与 /console/activities/new
+   两条最重的路线上（同屏循环动画 ≤2 层的配额留给真正有信息量的地方）。 */
+.u-pulse { position: relative; }
+.u-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent);
+  animation: ping 1.8s cubic-bezier(0, 0, .2, 1) infinite;
+  pointer-events: none;
+}

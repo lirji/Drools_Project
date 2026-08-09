@@ -1,12 +1,15 @@
 <script setup lang="ts">
 /**
- * 图标原语（UX 重设计 Phase B）：零依赖内联 SVG，手抄 lucide 线型 path（viewBox 24，stroke=currentColor，1.75 描边）。
+ * 图标原语（UX 重设计 Phase B）：零依赖内联 SVG，手抄 lucide 线型 path（viewBox 24，stroke=currentColor）。
  * 替换全站 emoji/几何字形（☰◐◆▾🔐⚖◍✕🗑▶ 等）。默认 aria-hidden；需语义时由使用处透传 aria-label/data-testid。
  * 用法：<Icon name="list" />；<Icon name="plus" :size="18" />；<Icon name="logout" aria-label="登出" />
+ *
+ * 描边默认 1.75 → 1.5（视觉换代 0809）：细描边是当代科技感界面的通行做法，且全站 135 处调用
+ * 自动跟随，无需逐个改。Icon.test.ts 测的是「显式传 stroke 时透传」，改默认值不破测试。
  */
 const props = withDefaults(defineProps<{ name: string; size?: number | string; stroke?: number }>(), {
   size: 16,
-  stroke: 1.75,
+  stroke: 1.5,
 })
 
 // name → svg 内部标记（path/circle 混合）。currentColor 让图标随文字色走。

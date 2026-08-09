@@ -374,7 +374,6 @@ function selectTenant(value: string): void {
 .login-footer { margin: 17px 0 0; color: var(--text-faint); font-size: 10px; letter-spacing: .05em; }
 
 @keyframes aurora-float { to { transform: translate3d(24px, 18px, 0) scale(1.08); } }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {
   .login-stage { padding: 24px 18px 18px; }

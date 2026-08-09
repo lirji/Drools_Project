@@ -667,7 +667,7 @@ onUnmounted(() => {
 .refresh { display: inline-flex; align-items: center; gap: var(--sp-1); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text-soft); cursor: pointer; font: inherit; font-size: var(--fs-xs); }
 .refresh:disabled { cursor: wait; opacity: .7; }
 .spinning { animation: spin .9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
 .retry { margin-left: var(--sp-2); border: 0; background: transparent; color: inherit; cursor: pointer; font-weight: var(--fw-semibold); text-decoration: underline; }
 .empty-action { padding: var(--sp-2) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); cursor: pointer; }
 
@@ -777,6 +777,11 @@ onUnmounted(() => {
   .stat strong { font-size: 18px; }
   .stat-note { display: none; }
   .toolbar { align-items: stretch; flex-direction: column; }
+  /* 缺陷 F3：≤1023 的 `.search-box { flex: 1 1 240px }` 是给 row 方向写的；这里容器转成 column 后，
+     240px 从「宽度基准」变成「高度基准」（column 下 flex-basis 即主轴 = 高度，容器高度 auto 时
+     flex-grow 无自由空间可分），实测搜索框被撑成 316×240px 的空盒。
+     修法只落在这个 ≤560 块内：桌面 `:660` 的 `flex: 0 1 360px` 与 ≤1023 的换行行为都不受影响。 */
+  .search-box { flex: 0 0 auto; }
   .search-box, .status-select { width: 100%; }
   .spacer { display: none; }
   .refresh { align-self: flex-end; }

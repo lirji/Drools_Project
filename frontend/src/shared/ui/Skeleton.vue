@@ -8,11 +8,17 @@ defineProps<{ rows?: number }>()
 </template>
 <style scoped>
 .skel { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0; }
+/* 扫光换成「accent 微光扫过 + 底面」双层：换代前是中性灰阶推移，在深空底上几乎看不出在动。
+   关键帧走 effects.css 的全局 sweep（原本 Skeleton 与 DemoPanel 各写一份且写法不一致）。 */
 .skel-row {
   height: 16px; border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--bg-soft) 25%, var(--border) 37%, var(--bg-soft) 63%);
-  background-size: 400% 100%; animation: shimmer 1.4s ease infinite;
+  background:
+    linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--accent) 16%, transparent) 45%, transparent 90%),
+    var(--bg-soft);
+  background-size: 220% 100%, 100% 100%;
+  background-repeat: no-repeat;
+  animation: sweep 1.6s var(--ease-out) infinite;
 }
-@keyframes shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
 @media (prefers-reduced-motion: reduce) { .skel-row { animation: none; } }
 </style>

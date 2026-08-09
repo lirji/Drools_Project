@@ -364,18 +364,18 @@ onBeforeUnmount(() => {
 .run:disabled { opacity: .68; cursor: wait; }
 .run small { overflow: hidden; max-width: 190px; opacity: .72; font-family: var(--mono); font-size: 8px; font-weight: var(--fw-medium); text-overflow: ellipsis; white-space: nowrap; }
 .spinning { animation: spin .9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+
 .copy-response { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 6px var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text-soft); cursor: pointer; font: inherit; font-size: 10px; }
 .loading-state, .idle { display: flex; min-height: 430px; flex-direction: column; align-items: center; justify-content: center; padding: var(--sp-6); text-align: center; }
 .loader, .idle-icon { display: inline-flex; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 18px; background: var(--accent-soft); color: var(--accent); }
 .loader { animation: breathe 1.1s ease-in-out infinite alternate; }
-@keyframes breathe { to { transform: scale(1.06); box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 8%, transparent); } }
+
 .loading-state h3, .idle h3 { margin: var(--sp-3) 0 var(--sp-1); font-size: var(--fs-md); }
 .loading-state p, .idle p { max-width: 360px; margin: 0; color: var(--text-faint); font-size: 11px; line-height: 1.6; }
 .loading-lines { width: min(280px, 80%); margin-top: var(--sp-5); }
 .loading-lines i { display: block; height: 7px; margin-top: var(--sp-2); border-radius: var(--radius-pill); background: linear-gradient(90deg, var(--bg-soft), var(--bg-hover), var(--bg-soft)); background-size: 200% 100%; animation: shimmer 1.1s linear infinite; }
 .loading-lines i:nth-child(2) { width: 82%; } .loading-lines i:nth-child(3) { width: 64%; }
-@keyframes shimmer { to { background-position: -200% 0; } }
+
 .idle-flow { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-4); color: var(--text-faint); font-size: 9px; }
 .idle-flow span { padding: 4px 7px; border-radius: var(--radius-pill); background: var(--bg-soft); }
 .error-banner { display: flex; min-height: 110px; flex-direction: column; justify-content: center; margin: var(--sp-4); }
