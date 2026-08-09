@@ -154,7 +154,9 @@ const axisTicks = computed(() => {
   background-position: 0 100%, 0 100%;
   background-repeat: no-repeat, no-repeat;
 }
-.seg { position: absolute; top: 31px; height: 14px; background: var(--accent-ink, rgba(164,37,107,.14)); }
+/* --accent-ink 此前全仓无定义，这里永远吃内联 fallback 的旧复写紫红，深色态不跟随主题（缺陷 F2）。
+   现已在 tokens.css 定义；fallback 也改成随 accent 走的 color-mix，双保险。 */
+.seg { position: absolute; top: 31px; height: 14px; background: var(--accent-ink, color-mix(in srgb, var(--accent) 14%, transparent)); }
 .seg-lab {
   position: absolute; left: 4px; top: -16px; white-space: nowrap;
   font-family: var(--mono); font-size: 10px; color: var(--text-faint);

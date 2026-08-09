@@ -165,7 +165,7 @@ onUnmounted(() => ctrl?.abort())
 .head { display: flex; gap: var(--sp-3); align-items: flex-start; }
 .area-ic {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  width: 44px; height: 44px; border-radius: var(--radius); color: #fff;
+  width: 44px; height: 44px; border-radius: var(--radius); color: var(--text-invert);
 }
 .area-ic.console { background: var(--accent); }
 .area-ic.demos { background: var(--accent-2); }

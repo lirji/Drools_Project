@@ -81,7 +81,7 @@ function removeChild(i: number): void {
 .logic-toggle { display: flex; gap: var(--sp-1); }
 .spacer { flex: 1; }
 .chip { padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: 999px; background: var(--bg-elev); color: var(--text); font-size: 12px; cursor: pointer; }
-.chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chip-active { background: var(--accent); color: var(--text-invert); border-color: var(--accent); }
 .mini { display: inline-flex; align-items: center; gap: 3px; padding: var(--sp-1) var(--sp-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--text); font-size: 12px; cursor: pointer; transition: background .12s ease; }
 .mini:hover:not(:disabled) { background: var(--bg-hover); }
 .mini:disabled { opacity: .5; cursor: not-allowed; }

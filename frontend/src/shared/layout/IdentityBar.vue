@@ -93,7 +93,7 @@ function doLogout(): void {
   border: 1px solid var(--border); border-radius: var(--radius-pill);
   background: var(--bg-elev); color: var(--text); font-size: var(--fs-xs); cursor: pointer;
 }
-.chip-active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chip-active { background: var(--accent); color: var(--text-invert); border-color: var(--accent); }
 .chip { transition: background .12s ease, border-color .12s ease; }
 .chip:hover { background: var(--bg-hover); }
 .chip-active:hover { background: var(--accent-hover); }

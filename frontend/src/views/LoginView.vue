@@ -359,7 +359,7 @@ function selectTenant(value: string): void {
 .tenant-chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .tenant-chip { min-height: 28px; padding: 4px 10px; border: 1px solid var(--accent-line); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 11px; cursor: pointer; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
 .tenant-chip:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
-.tenant-chip--active { border-color: var(--accent); background: var(--accent); color: #fff; }
+.tenant-chip--active { border-color: var(--accent); background: var(--accent); color: var(--text-invert); }
 .tenant-chip:disabled { cursor: not-allowed; opacity: .55; }
 
 .login-primary { position: relative; display: inline-flex; width: 100%; min-height: 48px; margin-top: 8px; padding: 0 17px; align-items: center; justify-content: center; gap: 9px; overflow: hidden; border: 0; border-radius: 11px; background: linear-gradient(120deg, #4f46e5 0%, #6366f1 48%, #2589dc 100%); background-size: 170% 170%; color: #fff; box-shadow: 0 11px 24px rgba(79,70,229,.26); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .16s ease, box-shadow .2s ease, background-position .45s ease; }

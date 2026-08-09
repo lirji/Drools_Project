@@ -27,11 +27,11 @@ withDefaults(defineProps<{ variant?: 'primary' | 'ghost' | 'subtle' | 'danger'; 
 .btn:hover { background: var(--bg-hover); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--text-invert); }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.subtle { background: var(--bg-soft); }
 .btn.subtle:hover { background: var(--bg-hover); }
 .btn.danger { color: var(--err); border-color: var(--err-soft); background: var(--err-soft); }
-.btn.danger:hover { background: var(--err); color: #fff; border-color: var(--err); }
+.btn.danger:hover { background: var(--err); color: var(--text-invert); border-color: var(--err); }
 @media (pointer: coarse) { .btn { min-height: var(--touch-min); } }
 </style>

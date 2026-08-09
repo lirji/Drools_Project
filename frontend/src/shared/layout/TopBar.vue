@@ -11,8 +11,13 @@ defineEmits<{ (e: 'toggle-nav'): void }>()
 
 const THEME_KEY = 'drools-theme'
 const dark = ref(false)
+// data-theme 只在用户显式选过主题时才存在（index.html 内联脚本 + main.ts 都只在 localStorage 有值时写）。
+// dark-first 换代后，「属性缺席」= 按 :root 裸块渲成深色 —— 若此时仍把 dark 初始化为 false，
+// 按钮会显示月亮且 aria-pressed=false，第一次点击写入 dark 后**视觉零变化**，要点两次才切得到浅色。
+// 这是每个新用户的默认路径，故属性缺席时必须从系统偏好反推：只有显式 prefers light 才算浅色。
 onMounted(() => {
-  dark.value = document.documentElement.getAttribute('data-theme') === 'dark'
+  const attr = document.documentElement.getAttribute('data-theme')
+  dark.value = attr ? attr === 'dark' : !window.matchMedia('(prefers-color-scheme: light)').matches
 })
 function toggleTheme(): void {
   dark.value = !dark.value
