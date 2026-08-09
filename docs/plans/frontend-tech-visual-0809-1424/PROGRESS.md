@@ -36,7 +36,7 @@
 |---|---|
 | A-1 硬编码颜色归零 | ✅ `grep -rnE '#[0-9a-fA-F]{3,6}' src --include='*.vue'` 无命中 |
 | A-2 单测 / typecheck / build | ✅ vitest **154** 全绿（基线 150 + 新增 4）、typecheck 干净、build 通过 |
-| A-3 e2e 全套 | ✅ **8 套 71 条断言全绿**：visual 10 / dev 7 / catalog 6 / tablet 7 / phone 7 / bench 13 / playbooks 17 / ruler 4 |
+| A-3 e2e 全套 | ✅ **9 套 83 条断言全绿**：visual 10 / dev 7 / catalog 6 / tablet 7 / phone 7 / bench 13 / playbooks 17 / ruler 4 / **oidc 12** |
 | A-4 WCAG 数字写回注释 | ✅ 已写进 `tokens.css` 头部（评审复算 20/23 组一致，`--accent-2` 浅色三行按复算值更正） |
 | A-5 `--border-ctl` ≥3:1 | ✅ 暗 3.11/3.32、浅 3.29/3.03，且已接到 7 处输入控件 |
 | A-6 手机工具条 | ✅ search-box **46px**（≤56）、toolbar **178px**（≤240）—— e2e 守卫常态化 |
@@ -92,7 +92,23 @@ npm run e2e:oidc   # 需本机 Casdoor :8000，本轮未跑
 每步一个独立 commit。最坏情况 `git revert 70cd3c0`（令牌换代）即回到旧观感——
 其余步骤（effects.css / 字体 / 组件形制）在旧令牌下也能正常工作，不会连锁崩。
 
-## 尚未验证的一项
+## e2e:oidc 已补跑（2026-08-09，收口）
 
-`npm run e2e:oidc` 需要本机 Casdoor `:8000`，本轮环境没起，**未跑**。
-登录页本轮只做了令牌收编、未改结构与 `#login-tenant`，风险低，但合并前建议补跑一次。
+起 `auth-platform`（`~/personal/LLM/auth-platform && ./dev.sh up`）拉起 Casdoor `:8000` 后：
+
+```bash
+bash scratchpad/casdoor-spa-provision.sh          # 幂等：SPA 应用 + 回调白名单 + 测试用户
+docker compose -f deploy/docker-compose.yml up -d # 切回 auth 档（默认）
+cd frontend && BASE=http://localhost:8095 npm run e2e:oidc
+```
+
+结果 **pass=12 fail=0**，覆盖：路由守卫弹登录 / token aud 派生租户 / Bearer 验签 /
+独立 decision 服务鉴权 / token tenant 与 X-Tenant-Id 不一致时 403 / 建活动 /
+多 tab token 不跨 context / 登出清 sessionStorage / 切租户重登 / 跨租户隔离。
+
+**至此 9 套 e2e 全绿，没有未验项。**
+
+> ⚠ 环境档位提醒：跑完 oidc 后编排停在 **auth 档**。
+> `e2e:visual` / `e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` /
+> `e2e:playbooks` / `e2e:ruler` 走 header 档，跑它们前需要：
+> `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
