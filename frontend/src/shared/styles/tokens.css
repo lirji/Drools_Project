@@ -157,6 +157,9 @@
   --on-deep: #DDE3F0;
   --on-deep-soft: #A6B0C6;
   --on-deep-faint: #8892A8;
+  /* 压在深色面上的强调色**也必须是主题无关的**：直接用 --accent-2 会在浅色档拿到压暗版
+     #0C6B85，落在 --surface-deep 上只有 2.9:1（不达标）。这里恒取亮青，on --surface-deep = 10.58:1 ✓ */
+  --on-deep-accent: #22D3EE;
   --hero-bg: linear-gradient(135deg, #141033 0%, #17214A 52%, #0D2436 100%);
 
   /* ---- 动效（主题无关）：此前全仓零 cubic-bezier、48 次裸 ease，各页各写各的 ---- */

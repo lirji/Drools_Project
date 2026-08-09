@@ -644,7 +644,9 @@ onBeforeRouteLeave(async () => {
 .pv-status { font-size: 12px; }
 .pv-ok { color: var(--green); } .pv-err { color: var(--err); } .pv-pending { color: var(--text-soft); }
 .mono-box { font-family: var(--mono); font-size: 12px; background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--sp-2); white-space: pre-wrap; word-break: break-all; margin: var(--sp-2) 0; }
-.rail { align-self: start; position: sticky; top: var(--sp-4); scroll-margin-top: var(--sp-4); }
+/* 粘住点必须让开顶栏（56px）+ 一档留白，否则 rail 顶部会被 sticky 顶栏遮掉约 40px。
+   与 F5 同源的漏网：全站 sticky 元素的 top 都要以 --shell-topbar-h 为基准。 */
+.rail { align-self: start; position: sticky; top: calc(var(--shell-topbar-h) + var(--sp-4)); scroll-margin-top: calc(var(--shell-topbar-h) + var(--sp-4)); }
 .rail-card { overflow: hidden; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-md); }
 .rail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); }.rail-head > div > span, .rail-head > div > strong { display: block; }.rail-head > div > span { color: var(--text-soft); font-size: 10px; }.rail-head > div > strong { margin-top: 2px; font-size: 25px; font-variant-numeric: tabular-nums; line-height: 1; }.readiness { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: var(--radius-pill); background: var(--gold-soft); color: var(--gold); font-size: 9px; font-weight: var(--fw-semibold); }.readiness i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }.readiness.ready { background: var(--green-soft); color: var(--green); }
 .progress { overflow: hidden; height: 5px; margin: var(--sp-3) 0; border-radius: var(--radius-pill); background: var(--bg-soft); }.progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s ease; }

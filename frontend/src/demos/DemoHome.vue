@@ -217,7 +217,11 @@ function clearFilters(): void {
 .catalog { scroll-margin-top: var(--sp-5); }
 .catalog-heading { margin-bottom: var(--sp-3); }
 .result-count { color: var(--text-faint); font-size: var(--fs-xs); }
-.catalog-tools { position: sticky; top: 0; z-index: var(--z-sticky); display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-4); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--bg-elev) 92%, transparent); box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
+/* 缺陷 F5：真正的 bug 不是 backdrop-filter，是 `top: 0`——文档级滚动下它与 .shell-topbar
+   （同为 sticky、同 z-index、且 DOM 在后）会在滚动时**盖住顶栏**。粘住点必须让开顶栏高度。
+   backdrop-filter 一并去掉：它是「滚动容器内的大面积 sticky」，正是性能红线要防的形态，
+   且 /demos 上同屏已有顶栏 + hero-stats 两处，配额（≤2）没有余量给它。 */
+.catalog-tools { position: sticky; top: var(--shell-topbar-h); z-index: var(--z-sticky); display: flex; gap: var(--sp-3); align-items: center; margin-bottom: var(--sp-4); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
 .search-box { flex: 0 1 320px; display: flex; align-items: center; gap: var(--sp-2); min-height: 38px; padding: 0 var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text-faint); }
 .search-box:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .search-box input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-sm); }
