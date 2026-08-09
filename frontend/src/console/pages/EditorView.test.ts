@@ -23,6 +23,7 @@ async function setup(authEnabled = false, target = '/console/activities/new') {
     routes: [
       { path: '/console/activities', name: 'activities', component: { template: '<div />' } },
       { path: '/console/activities/new', name: 'activity-new', component: EditorView },
+      { path: '/console/activities/:id/edit', name: 'activity-edit', component: EditorView },
       { path: '/console/playbooks', name: 'playbooks', component: { template: '<div />' } },
       { path: '/login', name: 'login', component: { template: '<div />' } },
     ],
@@ -170,5 +171,76 @@ describe('EditorView 玩法模板预填', () => {
     const { wrapper } = await setup(false, '/console/activities/new?playbook=不存在的玩法')
     expect(wrapper.find('[data-testid="playbook-applied"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="form-name"]').exists()).toBe(true)
+  })
+
+  /**
+   * 编辑回读的**形态保真**。
+   *
+   * <p>这条链路此前一行测试都没有（测试路由表里根本没有 activity-edit），
+   * 于是「回读认不出一口价」这件事一直没人发现：'价' 落进兜底分支被读成「固定金额 9.9」，
+   * 表单全绿，再保存时 submit 从 redMode 反推出 '元' —— 一个「9.9 元卖」的秒杀
+   * 被静默改写成「减 9.9 元」的立减券。**回读丢形态 = 编辑一次就改钱**，所以这几条守的是钱不是体验。
+   */
+  describe('EditorView 编辑回读（形态保真）', () => {
+    function detailOf(rule: Record<string, unknown>) {
+      return {
+        manage: {
+          activityType: 1, activityName: '回读用例', bizLine: 'mall', activityRule: '',
+          priority: 1, inventory: 100, activityAreaType: 1, districtIds: '',
+          activityStartTime: '2026-08-01T10:00:00Z', activityEndTime: '2026-08-08T10:00:00Z',
+        },
+        rules: [rule], conditions: [], gifts: [], bindings: [], poolRefs: [],
+      }
+    }
+
+    function backendReturns(rule: Record<string, unknown>) {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(response(200, String(url).includes('/field-dict') ? FIELD_DICT : detailOf(rule)))))
+    }
+
+    it('一口价（单位=价）回读成一口价，绝不降级成固定金额红包', async () => {
+      backendReturns({ redPackageTakeType: 1, redPackageAmountUnit: '价', redPackageAmount: 9.9, redPackageRangeAmount: null })
+      const { wrapper } = await setup(false, '/console/activities/A1/edit')
+
+      expect(wrapper.get('[data-testid="mode-price"]').attributes('aria-pressed')).toBe('true')
+      expect((wrapper.get('[data-testid="form-price"]').element as HTMLInputElement).value).toBe('9.9')
+      // 关键否定断言：一旦这里又出现「红包金额」输入框，说明形态被读丢了，保存就会改钱
+      expect(wrapper.find('[data-testid="form-amount"]').exists()).toBe(false)
+    })
+
+    it('第 N 件折（单位=件折）连 N 一起回读，N 来自 {"nth":N} 而不是表单默认值', async () => {
+      backendReturns({ redPackageTakeType: 1, redPackageAmountUnit: '件折', redPackageAmount: 5, redPackageRangeAmount: '{"nth":3}' })
+      const { wrapper } = await setup(false, '/console/activities/A2/edit')
+
+      expect(wrapper.get('[data-testid="mode-nth"]').attributes('aria-pressed')).toBe('true')
+      // 默认值是 2；读回 3 才能证明 N 真的是从活动里来的
+      expect((wrapper.get('[data-testid="form-nth"]').element as HTMLInputElement).value).toBe('3')
+      expect((wrapper.get('[data-testid="form-nth-zhe"]').element as HTMLInputElement).value).toBe('5')
+      // {"nth":3} 是对象，绝不能被当成阶梯分档
+      expect(wrapper.find('[data-testid="tier-plain"]').exists()).toBe(false)
+    })
+
+    it('折扣型与阶梯型回读不受影响（旧行为零变更）', async () => {
+      backendReturns({ redPackageTakeType: 1, redPackageAmountUnit: '折', redPackageAmount: 8, redPackageMaxDiscount: 50, redPackageRangeAmount: null })
+      const { wrapper } = await setup(false, '/console/activities/A3/edit')
+      expect((wrapper.get('[data-testid="form-zhe"]').element as HTMLInputElement).value).toBe('8')
+      expect((wrapper.get('[data-testid="form-max-discount"]').element as HTMLInputElement).value).toBe('50')
+
+      backendReturns({ redPackageTakeType: 1, redPackageAmountUnit: '元', redPackageAmount: null, redPackageRangeAmount: '[{"min":300,"max":600,"reward":50}]' })
+      const second = await setup(false, '/console/activities/A4/edit')
+      expect(second.wrapper.get('[data-testid="tier-plain"]').text()).toContain('300')
+    })
+
+    it('五种形态都能用 chip 切到——不存在只进不出的单向门', async () => {
+      dictOk()
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flash')
+
+      // 从模板进来是一口价；点走再点回来，必须还能回到一口价
+      expect(wrapper.get('[data-testid="mode-price"]').attributes('aria-pressed')).toBe('true')
+      await wrapper.get('[data-testid="mode-ratio"]').trigger('click')
+      expect(wrapper.find('[data-testid="form-price"]').exists()).toBe(false)
+      await wrapper.get('[data-testid="mode-price"]').trigger('click')
+      expect(wrapper.find('[data-testid="form-price"]').exists()).toBe(true)
+    })
   })
 })

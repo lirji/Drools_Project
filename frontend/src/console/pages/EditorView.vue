@@ -8,7 +8,7 @@ import { useToast } from '@/shared/useToast'
 import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import {
-  uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder, parseLadder,
+  uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder, parseLadder, parseNth,
   pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons, type LadderRow,
 } from '../logic'
 import type { ActivityCreateRequest, FieldDict, GroupNode } from '@/shared/types'
@@ -16,7 +16,7 @@ import ConditionGroup from '../condition-tree/ConditionGroup.vue'
 import DynRowTable from '../DynRowTable.vue'
 import TierRuler from '../benefit/TierRuler.vue'
 import { normalizeTiers, plainLanguage } from '../benefit/tierLogic'
-import { findPlaybook } from '../playbooks'
+import { findPlaybook, CREATABLE_ACTIVITY_TYPES } from '../playbooks'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
 import Banner from '@/shared/ui/Banner.vue'
@@ -123,7 +123,11 @@ const treeErrors = computed(() =>
 )
 
 const dictData = computed(() => dict.cache['__default__'] || null)
-const enabledTypes = computed(() => (dictData.value?.activityTypes || []).filter((t) => t.code === 1 || t.code === 5))
+// 白名单只有一份（playbooks.ts 的 CREATABLE_ACTIVITY_TYPES，与写平面 validateCommon 同源）。
+// 从前这里写死 1/5，而玩法目录另有一份手抄的 [1,5,6]——两份白名单不一致，正是加价购模板
+// 能跳进这个编辑器、却选不中自己类型的原因。
+const enabledTypes = computed(() =>
+  (dictData.value?.activityTypes || []).filter((t) => CREATABLE_ACTIVITY_TYPES.includes(t.code)))
 const strategies = computed(() => dictData.value?.strategies || [])
 const distModes = computed(() => dictData.value?.distributionModes || [])
 
@@ -161,6 +165,7 @@ const completionChecks = computed(() => [
   { label: dr.activityType === 1 ? '红包规则' : '赠品明细', done: dr.activityType === 1
       ? (dr.redMode === 'ladder' ? cleanLadder(dr.ladder).length > 0
         : dr.redMode === 'ratio' ? dr.amount !== '' && dr.maxDiscount !== ''
+        : dr.redMode === 'nth' ? dr.amount !== '' && dr.nth !== ''
         : dr.amount !== '')
       : dr.gifts.length > 0 },
   { label: '商品绑定', done: dr.bindMode === 'manual' ? dr.spu.some((item) => item.spuId !== '') : dr.pool.some((item) => item.poolId !== '') },
@@ -263,6 +268,9 @@ function applyPlaybook(id: string | undefined): void {
   dr.redMode = ps.redMode
   if (ps.strategy) dr.strategy = ps.strategy
   if (ps.amount !== undefined) dr.amount = ps.amount
+  // 模板自己带 N 时必须用模板的：不带过来就会沉默地用表单默认值 2，
+  // 于是「第三件半价」这类模板将来配了 nth=3 也照样建出第二件半价
+  if (ps.nth !== undefined) dr.nth = ps.nth
   if (ps.maxDiscount !== undefined) dr.maxDiscount = ps.maxDiscount
   if (ps.ladder) dr.ladder = ps.ladder.map((t) => ({ ...t }))
   if (ps.conditions?.length) {
@@ -285,17 +293,24 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   dr.startLocal = isoToLocal(m.activityStartTime); dr.endLocal = isoToLocal(m.activityEndTime)
   if (rule) {
     dr.takeType = rule.redPackageTakeType || 1; dr.unit = rule.redPackageAmountUnit || '元'
-    // 随机区间是对象、阶梯是数组。原来这里无条件当阶梯，会把随机活动的区间误读成分档
-    // （parseLadder 拿到对象返回空 → 编辑一次就把区间丢了，静默降级成"没配区间的阶梯"）。
-    if (dr.takeType === 2 && rule.redPackageRangeAmount?.trim().startsWith('{')) {
-      dr.redMode = 'fixed'
-      try {
-        const r = JSON.parse(rule.redPackageRangeAmount)
-        dr.rangeMin = r?.min ?? ''
-        dr.rangeMax = r?.max ?? ''
-      } catch { /* 脏数据：留空，让必填校验拦住 */ }
+    const range: string | null = rule.redPackageRangeAmount ?? null
+    // **先按判别位分形态**，再填表单。redPackageAmountUnit 与后端 BenefitForm.of() 一一对应，
+    // 它是「redPackageAmount 这个数字是什么意思」的唯一权威。
+    //
+    // 原来这条链先看 range、再看 '折'，其余一律当固定金额——于是 '价'（一口价）落进最后的兜底，
+    // 被读成「固定金额红包 9.9」，表单还全绿没有任何提示；再保存时 submit 又从 redMode 反推出 '元'，
+    // 一个「9.9 元卖」的秒杀就被静默改写成「减 9.9 元」的立减券。**回读丢形态 = 编辑一次就改钱**，
+    // 这是这条链路唯一一处无声的资金错误，所以形态判别必须排在最前面。
+    if (dr.unit === '价') {
+      dr.redMode = 'price'
+      dr.amount = rule.redPackageAmount ?? ''
     }
-    else if (rule.redPackageRangeAmount) { dr.redMode = 'ladder'; dr.ladder = parseLadder(rule.redPackageRangeAmount) }
+    else if (dr.unit === '件折') {
+      dr.redMode = 'nth'
+      dr.amount = rule.redPackageAmount ?? ''   // 折数，不是钱
+      // N 解析不出来就留空，让必填校验拦住——绝不回落成默认的 2，那等于替运营改了发放规则
+      dr.nth = parseNth(range) ?? ''
+    }
     else if (dr.unit === '折') {
       // 折扣型：amount 是折数，还要把封顶带回来——不带回来的话，一次「改个错别字」的编辑
       // 就会提交一个没有封顶的折扣券，被写平面拒成 400，而运营完全不知道少了什么
@@ -303,6 +318,17 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
       dr.amount = rule.redPackageAmount ?? ''
       dr.maxDiscount = rule.redPackageMaxDiscount ?? ''
     }
+    // 以下都是「元」：随机区间是对象、阶梯是数组。无条件当阶梯会把随机活动的区间误读成分档
+    // （parseLadder 拿到对象返回空 → 编辑一次就把区间丢了，静默降级成"没配区间的阶梯"）。
+    else if (dr.takeType === 2 && range?.trim().startsWith('{')) {
+      dr.redMode = 'fixed'
+      try {
+        const r = JSON.parse(range)
+        dr.rangeMin = r?.min ?? ''
+        dr.rangeMax = r?.max ?? ''
+      } catch { /* 脏数据：留空，让必填校验拦住 */ }
+    }
+    else if (range) { dr.redMode = 'ladder'; dr.ladder = parseLadder(range) }
     else { dr.redMode = 'fixed'; dr.amount = rule.redPackageAmount ?? '' }
   }
   if (cond && cond.conditionTreeJson) {
@@ -361,7 +387,9 @@ async function submit(): Promise<void> {
     redPackageTakeType: dr.activityType === 1 && dr.redMode === 'fixed' ? dr.takeType : null,
     // 折扣型把「折数」放在 redPackageAmount 里，靠 unit 判别（与后端 BenefitForm 一致）
     redPackageAmount: dr.activityType === 1 && dr.redMode !== 'ladder' ? numOrNull(dr.amount) : null,
-    // unit 是「这个数字什么意思」的判别位，与后端 BenefitForm 一一对应
+    // unit 是「这个数字什么意思」的判别位，与后端 BenefitForm 一一对应。
+    // 从 redMode 反推是**可逆**的，前提是 redMode 五个取值都能被 loadForEdit 还原出来、
+    // 也都能由 chip 切到——两个前提缺一个，这里就会把一种形态写成另一种（曾经 '价' 就是这么丢的）。
     redPackageAmountUnit: dr.activityType !== 1 ? '元'
       : dr.redMode === 'ratio' ? '折'
       : dr.redMode === 'price' ? '价'
@@ -497,11 +525,17 @@ onBeforeRouteLeave(async () => {
         </Section>
 
         <!-- ② 红包 / ③ 买赠 -->
-        <Section v-if="dr.activityType === 1" id="activity-benefit" :num="2" title="红包规则" desc="选择固定金额或按订单金额配置阶梯奖励。">
+        <Section v-if="dr.activityType === 1" id="activity-benefit" :num="2" title="红包规则" desc="先选权益形态——它决定下面那个数字是「减多少」「几折」还是「卖多少」。">
+          <!-- 五个 chip 必须与 Draft.redMode 的五个取值一一对应。
+               原来只有前三个，而 price/nth 只能由玩法模板 preset 写入 → 单向门：
+               从模板进来的「一口价」「第二件半价」误点一次 chip 就再也切不回去，
+               dr.amount 却原样留着，同一个数字的语义被悄悄换掉（9.9 从"卖 9.9"变"减 9.9"）。 -->
           <div class="seg">
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'fixed' }" :aria-pressed="dr.redMode === 'fixed'" @click="dr.redMode = 'fixed'; markDirty()">固定金额</button>
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ladder' }" :aria-pressed="dr.redMode === 'ladder'" @click="dr.redMode = 'ladder'; markDirty()">阶梯分档</button>
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ratio' }" :aria-pressed="dr.redMode === 'ratio'" data-testid="mode-ratio" @click="dr.redMode = 'ratio'; markDirty()">折扣</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'price' }" :aria-pressed="dr.redMode === 'price'" data-testid="mode-price" @click="dr.redMode = 'price'; markDirty()">一口价</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'nth' }" :aria-pressed="dr.redMode === 'nth'" data-testid="mode-nth" @click="dr.redMode = 'nth'; markDirty()">第 N 件折</button>
           </div>
           <div v-if="dr.redMode === 'fixed'" class="fg">
             <label v-if="dr.takeType !== 2">红包金额<input v-model="dr.amount" type="number" placeholder="0 ~ 999999" data-testid="form-amount" /></label>

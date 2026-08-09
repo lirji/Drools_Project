@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   PLAYBOOKS, PLAYBOOK_GROUPS, filterPlaybooks, countByGroup, findPlaybook, isReady,
+  CREATABLE_ACTIVITY_TYPES,
 } from './playbooks'
 
 /**
@@ -48,14 +49,26 @@ describe('玩法目录', () => {
     }
   })
 
-  it('可用的玩法必须给 preset，且活动类型只能是后端放行的 1 / 5 / 6', () => {
+  it('可用的玩法必须给 preset，且活动类型只能是写平面真正放行的那几个', () => {
     const ready = PLAYBOOKS.filter((p) => p.group !== 'blocked')
     expect(ready.length).toBeGreaterThan(0)
     for (const p of ready) {
       expect(p.preset, p.id).toBeDefined()
-      expect([1, 5, 6], p.id).toContain(p.preset!.activityType)
+      // 从前这里写的是手抄的 [1, 5, 6]：它替加价购背了书，而写平面只放行 1/5，
+      // 于是「测试全绿 + 保存 400」同时成立。白名单必须与能力契约同源，不能再手抄一份。
+      expect(CREATABLE_ACTIVITY_TYPES, p.id).toContain(p.preset!.activityType)
       expect(isReady(p)).toBe(true)
     }
+  })
+
+  it('isReady 由写平面能力推导：类型不在白名单里，有 preset 也不算可用', () => {
+    // 这是结构性护栏——将来谁给一张卡配上写平面不收的类型，它当场就不是「可用」，
+    // 而不是等运营填完整张表在保存时撞 400。
+    const notCreatable = [2, 3, 4, 6].find((t) => !CREATABLE_ACTIVITY_TYPES.includes(t))!
+    expect(isReady({
+      id: 'x', name: 'x', plain: 'x'.repeat(10), group: 'reduce', receipt: [],
+      preset: { activityType: notCreatable as 1 | 5 | 6, redMode: 'fixed', amount: 1 },
+    })).toBe(false)
   })
 
   it('条件种子只能用 field-dict 真实存在的字段与该字段允许的算子', () => {
@@ -103,7 +116,7 @@ describe('玩法目录', () => {
     expect(ladder[ladder.length - 1].max, '最后一档必须无上限，否则超过它就一分钱不减').toBe('')
   })
 
-  it('曾经不可用的三个玩法已解锁，且各自落到正确的形态上', () => {
+  it('第二件半价 / 限时秒杀已解锁并落到正确形态；加价购仍卡在写入口', () => {
     const byId = Object.fromEntries(PLAYBOOKS.map((p) => [p.id, p]))
     // 第二件半价：靠决策入口新增的订单行（逐行单价）才算得出来
     expect(byId['second-half'].group).not.toBe('blocked')
@@ -112,9 +125,10 @@ describe('玩法目录', () => {
     // 限时秒杀：一口价形态 + 写平面的库存原子抢占
     expect(byId['flash'].group).not.toBe('blocked')
     expect(byId['flash'].preset!.redMode).toBe('price')
-    // 加价购：两阶段决策，活动类型 6
-    expect(byId['addon'].group).not.toBe('blocked')
-    expect(byId['addon'].preset!.activityType).toBe(6)
+    // 加价购：决策侧两阶段是通的，但写平面只放行 1/5 → 建不出来，卡片必须是灰的。
+    // 等写入口放行 type=6 且编辑器能配换购品，再把它点亮（改 CREATABLE_ACTIVITY_TYPES 一处即可）。
+    expect(isReady(byId['addon'])).toBe(false)
+    expect(byId['addon'].blockedReason).toContain('写入口')
   })
 
   it('折扣类已可用（2026-08 引擎加了按比例形态），且模板自带封顶', () => {

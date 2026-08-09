@@ -63,6 +63,46 @@ export function parseLadder(json: string): LadderRow[] {
   }
 }
 
+/**
+ * 解析「第 N 件折」的 N —— 与后端 `RandomRangeParser.parseNth` 同规矩。
+ *
+ * <p>`redPackageRangeAmount` 是三用途列（数组=阶梯、`{min,max}`=随机区间、`{nth:N}`=第 N 件），
+ * 这里只认对象形态的 `nth`，且 **N<2 视为无效**：N=1 等于全场打折，那是折扣型，配成 1 更像配错。
+ * 解析不出来返回 null，由调用方决定怎么提示——绝不回落成某个默认值，那会让一次编辑改掉发放规则。
+ */
+export function parseNth(json: string | null | undefined): number | null {
+  if (!json) return null
+  try {
+    const o = JSON.parse(json) as { nth?: unknown }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null
+    const n = Number(o.nth)
+    return Number.isInteger(n) && n >= 2 ? n : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 解析随机红包的区间 —— 与后端 `RandomRangeParser.parse` 同规矩。
+ *
+ * <p>与 {@link parseNth} 共用「对象形态」，靠 `redPackageAmountUnit` + `redPackageTakeType`
+ * 区分用途，不靠猜键名。min>max / 负数 / 缺字段一律 null（不可计算），由调用方决定怎么提示。
+ */
+export function parseRandomRange(json: string | null | undefined): { min: number; max: number } | null {
+  if (!json) return null
+  try {
+    const o = JSON.parse(json) as { min?: unknown; max?: unknown }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null
+    const min = Number(o.min)
+    const max = Number(o.max)
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+    if (min < 0 || max < 0 || min > max) return null
+    return { min, max }
+  } catch {
+    return null
+  }
+}
+
 // ---- 时间转换（平移 toEpoch/toLocalInput/isoToLocal）----
 export function toEpoch(local: string): number | null {
   return local ? new Date(local).getTime() : null

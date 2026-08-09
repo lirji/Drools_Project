@@ -15,7 +15,7 @@ import Badge from '@/shared/ui/Badge.vue'
 import WindowBar from '@/shared/viz/WindowBar.vue'
 import Receipt from '@/shared/viz/Receipt.vue'
 import Seam from '@/shared/viz/Seam.vue'
-import { parseLadder } from '../logic'
+import { parseLadder, parseNth, parseRandomRange } from '../logic'
 import Icon from '@/shared/ui/Icon.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 
@@ -48,6 +48,31 @@ const ladderLines = computed(() => {
     amount: t.reward,
   }))
 })
+
+/**
+ * 权益形态 —— 与后端 `BenefitForm.of()` 同一个判别位（`redPackageAmountUnit`）。
+ *
+ * <p>复核屏和编辑器犯过同一个错：先看 `redPackageRangeAmount` 再看 `'折'`、其余一律「固定优惠金额」。
+ * 于是一口价被显示成「9.90 价」，而第 N 件折与随机红包（它们的 range 是**对象**不是数组）
+ * 会渲染出一张标题写着「按订单金额分档计算」的<b>空票据</b>。
+ * 复核屏显示错等于四眼形同虚设——审批人照着屏幕核对，核到的是另一个活动。
+ */
+const benefitForm = computed<'ratio' | 'price' | 'nth' | 'random' | 'ladder' | 'fixed'>(() => {
+  const r = rule.value
+  if (!r) return 'fixed'
+  if (r.redPackageAmountUnit === '折') return 'ratio'
+  if (r.redPackageAmountUnit === '价') return 'price'
+  if (r.redPackageAmountUnit === '件折') return 'nth'
+  if (randomRange.value) return 'random'
+  // 阶梯以「真解析出档位」为准，不以「这一列非空」为准：脏数据不该显示成一张空的阶梯票据
+  return ladderLines.value.length ? 'ladder' : 'fixed'
+})
+
+const nthValue = computed(() => parseNth(rule.value?.redPackageRangeAmount as string | null))
+const randomRange = computed(() =>
+  rule.value?.redPackageTakeType === 2
+    ? parseRandomRange(rule.value?.redPackageRangeAmount as string | null)
+    : null)
 
 /** 生效窗是否已过——决定甘特条用「已结束」的灰斜纹还是实心。 */
 const windowEnded = computed(() => {
@@ -159,7 +184,8 @@ onUnmounted(() => {
           <Card title="优惠配置">
             <div v-if="rule" class="benefit-card">
               <span class="benefit-icon"><Icon :name="manage.activityType === 1 ? 'badge-check' : 'inbox'" :size="21" /></span>
-              <div v-if="rule.redPackageRangeAmount" class="ladder-block">
+              <!-- 分支顺序按**判别位**来（见 benefitForm）：先认形态，再谈怎么画。 -->
+              <div v-if="benefitForm === 'ladder'" class="ladder-block">
                 <small>阶梯红包规则</small><strong>按订单金额分档计算</strong>
                 <Seam />
                 <!-- 票据式排版：小数点对齐后，档位之间的量级差是"看"出来的 -->
@@ -167,13 +193,31 @@ onUnmounted(() => {
               </div>
               <!-- 折扣型：redPackageAmount 是**折数**不是钱。按金额渲染的话，
                    「打 8 折」会显示成「8 元」——运营据此复核就会以为配错了（或者更糟，以为配对了） -->
-              <div v-else-if="rule.redPackageAmountUnit === '折'" data-testid="detail-ratio">
+              <div v-else-if="benefitForm === 'ratio'" data-testid="detail-ratio">
                 <small>折扣优惠</small>
                 <strong class="amount">{{ rule.redPackageAmount }} <i>折</i></strong>
                 <span>最多减 {{ money(rule.redPackageMaxDiscount) }} 元 · 减免向下取整到分</span>
               </div>
+              <!-- 一口价：这个数字是「卖多少」，不是「减多少」。两者在复核屏上必须一眼可辨，
+                   否则「9.9」既可能是一件 9.9 元的秒杀，也可能是一张减 9.9 元的券 -->
+              <div v-else-if="benefitForm === 'price'" data-testid="detail-price">
+                <small>一口价（秒杀）</small>
+                <strong class="amount">{{ money(rule.redPackageAmount) }} <i>元/件</i></strong>
+                <span>不管原价多少就卖这个数 · 减免 = 订单金额 − 一口价</span>
+              </div>
+              <div v-else-if="benefitForm === 'nth'" data-testid="detail-nth">
+                <small>第 N 件折</small>
+                <strong class="amount">第 {{ nthValue ?? '?' }} 件 <i>{{ rule.redPackageAmount }} 折</i></strong>
+                <span v-if="nthValue">按同款逐行计算 · 调用方须传订单行，否则本活动不适用</span>
+                <span v-else class="warn-line">第几件（nth）缺失或非法，决策侧会判定本活动不适用</span>
+              </div>
+              <div v-else-if="benefitForm === 'random'" data-testid="detail-random">
+                <small>随机金额红包</small>
+                <strong class="amount">{{ money(randomRange!.min) }} ~ {{ money(randomRange!.max) }} <i>元</i></strong>
+                <span>确定性随机：同一用户同一购物车金额固定，刷新不变价</span>
+              </div>
               <div v-else>
-                <small>固定优惠金额</small><strong class="amount">{{ money(rule.redPackageAmount) }} <i>{{ rule.redPackageAmountUnit || '元' }}</i></strong>
+                <small>固定优惠金额</small><strong class="amount">{{ money(rule.redPackageAmount) }} <i>元</i></strong>
                 <span>领取方式 {{ rule.redPackageTakeType || '-' }}</span>
               </div>
             </div>
@@ -259,6 +303,8 @@ onUnmounted(() => {
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-4); }.summary-grid article { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); }.summary-grid article > span { display: inline-flex; padding: var(--sp-2); border-radius: 9px; background: var(--bg-soft); color: var(--accent); }.summary-grid small, .summary-grid strong { display: block; }.summary-grid small { color: var(--text-faint); font-size: var(--fs-2xs); }.summary-grid strong { overflow: hidden; max-width: 140px; margin-top: 1px; font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
 .detail-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .75fr); gap: var(--sp-4); align-items: start; }.main-column, .side-column { min-width: 0; }.side-column { position: sticky; top: var(--sp-4); }
 .benefit-card { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4); border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--accent-soft); }.benefit-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; background: var(--bg-elev); color: var(--accent); }.benefit-card div { min-width: 0; }.benefit-card small, .benefit-card strong, .benefit-card span, .benefit-card code { display: block; }.benefit-card small { color: var(--text-faint); font-size: var(--fs-2xs); }.benefit-card strong { margin-top: 2px; font-size: var(--fs-sm); }.benefit-card .amount { color: var(--accent); font-size: 24px; font-variant-numeric: tabular-nums; }.benefit-card .amount i { font-size: 11px; font-style: normal; }.benefit-card span, .benefit-card code { overflow: hidden; margin-top: 3px; color: var(--text-soft); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
+/* 配置残缺的说明必须比正常说明显眼：它讲的是「这个活动上线了但不会生效」 */
+.benefit-card .warn-line { color: var(--warn); white-space: normal; }
 .gift-list, .binding-list { display: flex; flex-direction: column; }.gift-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); }.gift-row:last-child { border-bottom: 0; }.gift-index { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-soft); color: var(--text-faint); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }.gift-row strong, .gift-row small { display: block; }.gift-row strong { font-size: var(--fs-xs); }.gift-row small { color: var(--text-faint); font-size: var(--fs-2xs); }.gift-row b { color: var(--text-soft); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .card-note { display: flex; align-items: flex-start; gap: var(--sp-2); margin-bottom: var(--sp-3); color: var(--text-soft); font-size: var(--fs-xs); line-height: 1.6; }.code-panel { overflow: hidden; border: 1px solid color-mix(in srgb, var(--on-deep) 14%, transparent); border-radius: var(--radius-sm); background: var(--surface-deep); }.code-head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid color-mix(in srgb, var(--on-deep) 14%, transparent); background: var(--surface-deep-2); color: var(--on-deep-faint); font-family: var(--mono); font-size: var(--fs-2xs); }.code-head span { display: inline-flex; align-items: center; gap: var(--sp-2); }.code-head i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }.code-head small { font-size: var(--fs-2xs); }.code-panel pre { max-height: 360px; overflow: auto; margin: 0; padding: var(--sp-3); color: var(--on-deep); font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.65; white-space: pre-wrap; word-break: break-word; }.code-panel.drl { margin-top: var(--sp-2); }.sub-label { margin-top: var(--sp-4); color: var(--text-soft); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }.pass-all { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--green-soft); color: var(--green); }.pass-all strong, .pass-all small { display: block; }.pass-all strong { font-size: var(--fs-xs); }.pass-all small { font-size: var(--fs-2xs); }
 .binding-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); }.binding-row:last-child { border-bottom: 0; }.binding-row > span { display: inline-flex; padding: 6px; border-radius: 7px; background: var(--bg-soft); color: var(--text-faint); }.binding-row strong, .binding-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.binding-row strong { font-size: var(--fs-xs); }.binding-row small { color: var(--text-faint); font-size: var(--fs-2xs); }.binding-row > i { padding: 3px 6px; border-radius: var(--radius-pill); font-size: var(--fs-2xs); font-style: normal; }.binding-row > i.effective { background: var(--green-soft); color: var(--green); }.binding-row > i.inactive { background: var(--red-soft); color: var(--red); }

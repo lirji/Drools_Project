@@ -11,6 +11,18 @@
  * 也不用「敬请期待」搪塞）。运营看得到边界，才不会拿一个配不出来的玩法去排期。
  */
 
+/**
+ * **写平面当前放行的活动类型**——与后端 `ActivityMarketingService.validateCommon` 的白名单同源。
+ *
+ * <p>它是这一屏与后端之间唯一的能力契约。加价购(6) 的决策链路早就通了，但写入口至今只放行 1/5，
+ * 于是「用它新建」会在保存时吃一个 400；目录层却因为只判「有没有 preset」而照样把卡片标成可用。
+ * 把类型白名单提出来、让 {@link isReady} 从它推导，是为了让这种「目录跑到能力前面」在结构上不可能发生——
+ * 将来后端放行 6，改这一行就够了，不必再去逐张卡片回忆哪些该点亮。
+ *
+ * <p>编辑器的活动类型下拉（`EditorView.enabledTypes`）也读这里，两处不会再各写一份。
+ */
+export const CREATABLE_ACTIVITY_TYPES: number[] = [1, 5]
+
 /** 分组。blocked = 后端确实做不到，卡上必须写明缺什么 */
 export type PlaybookGroup = 'reduce' | 'targeted' | 'gift' | 'blocked'
 
@@ -193,16 +205,20 @@ export const PLAYBOOKS: Playbook[] = [
       conditions: [],
     },
   },
+  // 加价购的**决策侧**已经通了（两阶段 /decision/v1/addon/{options,quote}），但写平面建不出来：
+  // ActivityMarketingService.validateCommon 只放行红包(1)/买赠(5)，type=6 直接 400。
+  // 它一度带着 preset 挂在「赠品类」里给「用它新建」——运营填完整张表才在保存时撞墙。
+  // 按 D6 的规矩退回 blocked 并写明缺什么，比留一张点得动的死卡诚实。
   {
     id: 'addon',
     name: '加价购',
     plain: '买主商品后，可以加少量钱换购指定商品。',
-    group: 'gift',
+    group: 'blocked',
     receipt: [{ label: '加 9.9 元换购', amount: 9.9 }],
-    preset: {
-      activityType: 6, redMode: 'fixed', strategy: MAX,
-      conditions: [],
-    },
+    blockedReason:
+      '决策侧的两阶段换购（列选项 → 权威报价）已经能跑，缺的是写入口：'
+      + '写平面的活动类型白名单只放行红包与买赠，加价购（类型 6）保存时会被拒；'
+      + '编辑器也还没有配换购品清单的地方。这两件事补齐后这张卡才会点亮。',
   },
 ]
 
@@ -227,7 +243,12 @@ export function filterPlaybooks(key: PlaybookGroup | 'all'): Playbook[] {
   return key === 'all' ? PLAYBOOKS : PLAYBOOKS.filter((p) => p.group === key)
 }
 
-/** 可用 = 有 preset。不可用的卡不给「用它新建」，否则运营会配出一个保存不了的活动 */
+/**
+ * 可用 = 有 preset **且**这个活动类型写平面真的收。
+ *
+ * <p>第二个条件不是冗余：`addon` 就是靠只判第一个条件混成「可用」的——决策侧能跑不等于建得出来，
+ * 而运营是在填完整张表、点了保存之后才知道的。判据必须落在「写入口收不收」上。
+ */
 export function isReady(p: Playbook): boolean {
-  return p.preset !== undefined
+  return p.preset !== undefined && CREATABLE_ACTIVITY_TYPES.includes(p.preset.activityType)
 }

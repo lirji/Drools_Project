@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  pruneTree, cleanLadder, parseLadder, validateTree, emptyValue, operandOf,
+  pruneTree, cleanLadder, parseLadder, parseNth, validateTree, emptyValue, operandOf,
   toEpoch, isoToLocal, splitNums, splitStrs, assignIds, nodeId,
   invalidLeafReasons, leafErrorReason,
 } from './logic'
@@ -143,6 +143,30 @@ describe('时间与拆分', () => {
   it('splitNums/splitStrs 去空白去空', () => {
     expect(splitNums(' 1, 2 ,,3 ')).toEqual([1, 2, 3])
     expect(splitStrs('a, ,b')).toEqual(['a', 'b'])
+  })
+})
+
+describe('parseNth（第 N 件折的 N）', () => {
+  it('对象形态的 nth 读出来，N≥2', () => {
+    expect(parseNth('{"nth":2}')).toBe(2)
+    expect(parseNth('{"nth":3}')).toBe(3)
+  })
+  it('N<2 / 缺字段 / 非整数一律 null——绝不回落成默认值', () => {
+    // N=1 等于全场打折（那是折扣型），配成 1 更像配错，宁可让必填校验拦住
+    expect(parseNth('{"nth":1}')).toBeNull()
+    expect(parseNth('{"nth":0}')).toBeNull()
+    expect(parseNth('{"nth":2.5}')).toBeNull()
+    expect(parseNth('{}')).toBeNull()
+  })
+  it('数组归阶梯管，不许两条解析路径抢同一份数据', () => {
+    expect(parseNth('[{"min":0,"max":100,"reward":5}]')).toBeNull()
+    // 反向也要成立：阶梯解析器看到 nth 对象返回空表（与后端 LadderRangeParser 同规矩）
+    expect(parseLadder('{"nth":2}')).toEqual([])
+  })
+  it('空 / 脏 JSON 不抛异常', () => {
+    expect(parseNth(null)).toBeNull()
+    expect(parseNth('')).toBeNull()
+    expect(parseNth('不是 JSON')).toBeNull()
   })
 })
 
