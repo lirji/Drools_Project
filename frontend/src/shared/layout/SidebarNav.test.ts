@@ -9,6 +9,7 @@ describe('SidebarNav 信息层级', () => {
       routes: [
         { path: '/home', name: 'home', component: { template: '<div />' } },
         { path: '/console/activities', name: 'activities', component: { template: '<div />' } },
+        { path: '/console/playbooks', name: 'playbooks', component: { template: '<div />' } },
         { path: '/console/activities/new', name: 'activity-new', component: { template: '<div />' } },
         { path: '/console/validate', name: 'validate', component: { template: '<div />' } },
         { path: '/demos', name: 'demos', component: { template: '<div />' } },

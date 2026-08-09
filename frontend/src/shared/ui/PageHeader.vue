@@ -6,6 +6,8 @@ defineProps<{
   title: string
   subtitle?: string
   breadcrumb?: { label: string; to?: object }[]
+  /** PR-2 新增：标题上方的小字眉标（纯拉丁，加大字距）。不传则不渲染，对既有调用点零影响。 */
+  kicker?: string
 }>()
 </script>
 
@@ -20,6 +22,7 @@ defineProps<{
     </nav>
     <div class="row">
       <div class="titles">
+        <span v-if="kicker" class="kicker">{{ kicker }}</span>
         <h1 class="title">{{ title }}</h1>
         <p v-if="subtitle" class="subtitle">{{ subtitle }}</p>
       </div>
@@ -35,6 +38,11 @@ defineProps<{
 .crumb.link:hover { color: var(--accent); }
 .sep { color: var(--text-faint); }
 .row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--sp-4); flex-wrap: wrap; }
+.kicker {
+  display: block; margin-bottom: 3px;
+  font-family: var(--mono); font-size: 10px; font-weight: var(--fw-bold);
+  letter-spacing: .16em; text-transform: uppercase; color: var(--text-faint);
+}
 .title { margin: 0; font-size: var(--fs-2xl); font-weight: var(--fw-bold); line-height: var(--lh-tight); letter-spacing: -.02em; }
 .subtitle { margin: var(--sp-2) 0 0; font-size: var(--fs-md); color: var(--text-soft); line-height: var(--lh-normal); }
 .actions { display: flex; align-items: center; gap: var(--sp-2); }

@@ -73,6 +73,21 @@ class ActivityMarketingEdgeTest {
         assertTrue(manageRepo.findFirstByActivityIdAndVersionAndIsDel(id, 2, 0).isPresent(), "新版本 v2 应存活");
     }
 
+    /**
+     * D12-3：库存是**声明式**的——存得下、决策不读取。创建响应必须显式回 warnings。
+     *
+     * <p>沉默才是最危险的：运营配了「秒杀总量 500」以为生效，线上却无限超发，
+     * 而界面和 API 都不提示。本轮不做预占（量级接近整个 S 档），但必须把这个落差说出来。
+     */
+    @Test
+    void declarativeInventoryIsWarnedNotSilentlyIgnored() {
+        CreateResult withInv = marketing.create(red("带库存", new BigDecimal("10"), null, 7009L, null, null));
+        assertTrue(withInv.warnings().stream().anyMatch(w -> w.contains("声明式")),
+                "配了库存必须回 warnings 说明它不生效，实得: " + withInv.warnings());
+        assertTrue(withInv.warnings().stream().anyMatch(w -> w.contains("不扣减")),
+                "warnings 要说清楚是『不扣减』，不能只说『暂不支持』");
+    }
+
     // ---- helpers ----
     private ConditionNode leaf(String field, String op, Object value) {
         ConditionNode n = new ConditionNode();

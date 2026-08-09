@@ -79,6 +79,22 @@ public class ActivityMarketingController {
         }
     }
 
+    /**
+     * 批量上下线（PR-5）。返回 {@code {succeeded[], failed[{activityId,reason}]}}——
+     * **部分失败是正常结果，不是错误**，故一律 200，由前端渲染回执。
+     *
+     * <p>入参是 {@code items:[{activityId, version}]} 而不是裸 id 列表：P0-4 之后线上版与草稿并存，
+     * 不传版本就会打到草稿、线上继续发钱（见
+     * {@link com.lrj.drools.activity.service.ActivityMarketingService#bulkChangeStatus}）。
+     */
+    @PostMapping("/bulk-status")
+    public ResponseEntity<?> bulkStatus(@RequestBody BulkStatusRequest req) {
+        return ResponseEntity.ok(marketing.bulkChangeStatus(req.items(), req.targetStatus()));
+    }
+
+    public record BulkStatusRequest(java.util.List<ActivityMarketingService.BulkStatusItem> items,
+                                    Integer targetStatus) {}
+
     @GetMapping("/list")
     public ResponseEntity<?> list() {
         return ResponseEntity.ok(marketing.list());
@@ -95,12 +111,13 @@ public class ActivityMarketingController {
 
     @PostMapping("/spu-discount")
     public ResponseEntity<?> spuDiscount(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(query.spuDiscount(req));
+        // 控制台试算是运营的调试入口，显式开 explain；决策平面 /decision/v1 走默认 false
+        return ResponseEntity.ok(query.spuDiscount(req, true));
     }
 
     @PostMapping("/gifts")
     public ResponseEntity<?> gifts(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(query.buyAndGetGifts(req));
+        return ResponseEntity.ok(query.buyAndGetGifts(req, true));
     }
 
     @PostMapping("/preview")

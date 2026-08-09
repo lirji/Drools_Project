@@ -43,6 +43,7 @@ public class ActivityDrlBuilder {
                 "import " + FACT + ".ActivityRuleResult;\n" +
                 "import " + FACT + ".StackStrategy;\n" +
                 "import java.math.BigDecimal;\n" +
+                "import com.lrj.drools.activity.engine.BenefitMath;\n" +
                 "global " + FACT + ".ActivityRuleResult result;\n\n";
     }
 
@@ -102,10 +103,26 @@ public class ActivityDrlBuilder {
     public String buildDiscountDrl(StackStrategy strategy, boolean explain) {
         StringBuilder sb = new StringBuilder(header("discount"));
         // 共享：算额规则（把红包金额落到 computedAmount，amountComputed 防重复触发）
+        // 折扣型：redPackageAmount 是折数不是钱。salience 比金额型更高，先把它算掉并置 amountComputed，
+        // 免得下面那条把折数当成元覆盖进去。
+        // RHS 调 BenefitMath —— 与 BenefitEvaluator 走的是**同一个函数**，
+        // 取整与封顶不可能在两条路上漂移（漂移的表现是同一张券少发/多发几分钱）。
+        sb.append("rule \"discount-compute-ratio\"\n")
+                .append("    salience 110\n")
+                .append("    when\n")
+                .append("        $ctx : ActivityRuleContext( )\n")
+                .append("        $c : ActivityCandidate( eligible == true, amountComputed == false,\n")
+                .append("                                redPackageAmount != null, benefitForm == \"RATIO_ZHE\" )\n")
+                .append("        eval( BenefitMath.ratioDiscount($ctx.getOrderAmount(), $c.getRedPackageAmount(), $c.getRedPackageMaxDiscount()) != null )\n")
+                .append("    then\n")
+                .append("        modify($c) { setComputedAmount(BenefitMath.ratioDiscount($ctx.getOrderAmount(), $c.getRedPackageAmount(), $c.getRedPackageMaxDiscount())), setAmountComputed(true) }\n")
+                .append("end\n\n");
+
         sb.append("rule \"discount-compute-amount\"\n")
                 .append("    salience 100\n")
                 .append("    when\n")
-                .append("        $c : ActivityCandidate( eligible == true, amountComputed == false, redPackageAmount != null )\n")
+                .append("        $c : ActivityCandidate( eligible == true, amountComputed == false,\n")
+                .append("                                redPackageAmount != null, benefitForm != \"RATIO_ZHE\" )\n")
                 .append("    then\n")
                 .append("        modify($c) { setComputedAmount($c.getRedPackageAmount()), setAmountComputed(true) }\n")
                 .append("end\n\n");

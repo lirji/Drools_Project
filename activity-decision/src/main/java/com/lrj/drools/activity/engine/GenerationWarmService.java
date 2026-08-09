@@ -4,6 +4,9 @@ import com.lrj.drools.activity.persistence.ActivityArtifactEntity;
 import com.lrj.drools.activity.persistence.ActivityArtifactRepository;
 import com.lrj.drools.activity.persistence.ActivityGenerationEntity;
 import com.lrj.drools.activity.persistence.ActivityGenerationRepository;
+import com.lrj.drools.activity.snapshot.DecisionSnapshot;
+import com.lrj.drools.activity.snapshot.DecisionSnapshotBuilder;
+import com.lrj.drools.activity.snapshot.DecisionSnapshotStore;
 import com.lrj.drools.activity.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,16 +38,22 @@ public class GenerationWarmService {
     private final ActivityGenerationRepository genRepo;
     private final ActivityArtifactRepository artifactRepo;
     private final ActivityRuleRuntimeService ruleRuntime;
+    private final DecisionSnapshotBuilder snapshotBuilder;
+    private final DecisionSnapshotStore snapshotStore;
 
     /** key = tenant|bizLine → 已预热到的 generation。generation 从 1 起，故基线 0L 让首见即预热。 */
     private final Map<String, Long> lastSeen = new ConcurrentHashMap<>();
 
     public GenerationWarmService(ActivityGenerationRepository genRepo,
                                  ActivityArtifactRepository artifactRepo,
-                                 ActivityRuleRuntimeService ruleRuntime) {
+                                 ActivityRuleRuntimeService ruleRuntime,
+                                 DecisionSnapshotBuilder snapshotBuilder,
+                                 DecisionSnapshotStore snapshotStore) {
         this.genRepo = genRepo;
         this.artifactRepo = artifactRepo;
         this.ruleRuntime = ruleRuntime;
+        this.snapshotBuilder = snapshotBuilder;
+        this.snapshotStore = snapshotStore;
     }
 
     /**
@@ -73,8 +82,23 @@ public class GenerationWarmService {
         return futures;
     }
 
-    /** 读该租户 bizLine 下全部 ACTIVE artifact，对有 DRL 的提交异步预热，返回提交数。 */
+    /**
+     * 该 {@code (tenant, bizLine)} 代际推进后的两件事：
+     * <ol>
+     *   <li><b>构建并发布决策快照</b>（P1-1）——把整条业务线的决策物料在<b>本后台线程</b>捞齐、
+     *       组织成不可变快照，就绪后原子切指针。此后该租户的决策请求零数据库查询。</li>
+     *   <li>预热 ACTIVE artifact 的资格 DRL（M1.4 既有行为，保留）。</li>
+     * </ol>
+     * 顺序不能反：先建好快照再切指针，请求线程永远读到自洽的物料。
+     */
     private int warmTenantBizLine(String tenant, String bizLine, List<Future<?>> sink) {
+        // ① 快照：构建 → 就绪 → 切换（构建期的异常不能让指针指向半成品，故构建成功才 publish）
+        TenantContext.callWith(tenant, () -> {
+            DecisionSnapshot snap = snapshotBuilder.build(tenant, bizLine, lastSeen.getOrDefault(tenant + "|" + bizLine, 0L) + 1);
+            snapshotStore.publish(snap);
+            return null;
+        });
+
         List<ActivityArtifactEntity> active = TenantContext.callWith(tenant,
                 () -> artifactRepo.findByBizLineAndStatus(bizLine, ActivityArtifactEntity.ACTIVE));
         int warmed = 0;

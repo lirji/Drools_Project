@@ -10,7 +10,7 @@ import PageHeader from '@/shared/ui/PageHeader.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 import Icon from '@/shared/ui/Icon.vue'
 
-const form = ref({ spu: '', user: '1001', district: '', tags: '', amount: '200', qty: '1' })
+const form = ref({ spu: '', user: '1001', district: '', tags: '', amount: '200', qty: '1', store: '' })
 const busy = ref(false)
 const err = ref('')
 const result = ref<Record<string, unknown> | null>(null)
@@ -37,12 +37,12 @@ function fmtMoney(value: unknown): string {
 }
 
 function applyExample(): void {
-  form.value = { spu: '990011,990012', user: '1001', district: '110000', tags: 'vip,new', amount: '200', qty: '1' }
+  form.value = { spu: '990011,990012', user: '1001', district: '110000', tags: 'vip,new', amount: '200', qty: '1', store: '1' }
   resetResult()
 }
 
 function clearForm(): void {
-  form.value = { spu: '', user: '1001', district: '', tags: '', amount: '200', qty: '1' }
+  form.value = { spu: '', user: '1001', district: '', tags: '', amount: '200', qty: '1', store: '' }
   resetResult()
 }
 
@@ -68,6 +68,7 @@ async function run(kind: 'discount' | 'gifts'): Promise<void> {
     userTags: splitStrs(form.value.tags),
     orderAmount: numOrNull(form.value.amount),
     quantity: numOrNull(form.value.qty),
+    storeId: numOrNull(form.value.store),
   }
   try {
     const response = kind === 'discount'
@@ -134,6 +135,7 @@ onUnmounted(() => {
           <div class="field-grid">
             <label class="field"><span>用户 ID</span><div class="input-wrap"><Icon name="badge-check" :size="15" /><input v-model="form.user" type="number" /></div></label>
             <label class="field"><span>用户地域</span><div class="input-wrap"><Icon name="radio" :size="15" /><input v-model="form.district" placeholder="例如 110000" /></div></label>
+            <label class="field"><span>店铺 ID</span><div class="input-wrap"><Icon name="workflow" :size="15" /><input v-model="form.store" type="number" placeholder="这一单来自哪个门店" /></div></label>
           </div>
           <label class="field full"><span>用户标签 <i>多个标签使用逗号分隔</i></span><div class="input-wrap"><Icon name="layers" :size="15" /><input v-model="form.tags" placeholder="例如 vip,new" /></div></label>
         </div>

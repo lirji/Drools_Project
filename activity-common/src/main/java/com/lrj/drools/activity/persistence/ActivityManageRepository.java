@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -16,6 +17,16 @@ public interface ActivityManageRepository extends JpaRepository<ActivityManageEn
 
     /** 当前生效版本（未删除里 version 最大的）。 */
     Optional<ActivityManageEntity> findFirstByActivityIdAndIsDelOrderByVersionDesc(String activityId, Integer isDel);
+
+    /**
+     * P0-3 批量版：一次取回多个活动的**全部未删除版本**，由调用方在内存里挑每个活动的最高版本。
+     * 取代决策热路径上「逐个 activityId 查当前版本」的 N 次往返（评估报告 D1）。
+     */
+    List<ActivityManageEntity> findByActivityIdInAndIsDel(Collection<String> activityIds, Integer isDel);
+
+    /** P0-4：某活动当前处于某状态的全部版本。发布新版本时用它把旧的线上版本退役（原子指针切换的实现基础）。 */
+    List<ActivityManageEntity> findByActivityIdAndActivityStatusAndIsDel(
+            String activityId, Integer activityStatus, Integer isDel);
 
     /** 幂等：同 requestId 首次结果。 */
     Optional<ActivityManageEntity> findFirstByRequestIdAndIsDel(String requestId, Integer isDel);

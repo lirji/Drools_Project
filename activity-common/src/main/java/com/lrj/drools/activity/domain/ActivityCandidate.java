@@ -28,6 +28,8 @@ public class ActivityCandidate {
     private Integer redPackageTakeType;
     private BigDecimal redPackageAmount;
     private String redPackageAmountUnit;
+    /** 折扣型的封顶减免额（元）。null = 不封顶 */
+    private BigDecimal redPackageMaxDiscount;
     /** 阶梯/区间金额配置（JSON 串），LADDER 场景解析。 */
     private String redPackageRangeAmount;
 
@@ -92,6 +94,12 @@ public class ActivityCandidate {
 
     public BigDecimal getRedPackageAmount() { return redPackageAmount; }
     public void setRedPackageAmount(BigDecimal redPackageAmount) { this.redPackageAmount = redPackageAmount; }
+
+    public BigDecimal getRedPackageMaxDiscount() { return redPackageMaxDiscount; }
+    public void setRedPackageMaxDiscount(BigDecimal redPackageMaxDiscount) { this.redPackageMaxDiscount = redPackageMaxDiscount; }
+
+    /** 权益形态。DRL 的 LHS 用它做判别（{@code benefitForm == "RATIO_ZHE"}），故返回名字而不是枚举 */
+    public String getBenefitForm() { return BenefitForm.of(redPackageAmountUnit).name(); }
 
     public String getRedPackageAmountUnit() { return redPackageAmountUnit; }
     public void setRedPackageAmountUnit(String redPackageAmountUnit) { this.redPackageAmountUnit = redPackageAmountUnit; }

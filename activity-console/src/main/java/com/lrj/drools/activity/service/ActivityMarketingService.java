@@ -3,6 +3,7 @@ package com.lrj.drools.activity.service;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
@@ -23,7 +24,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -108,7 +112,7 @@ public class ActivityMarketingService {
             var dup = idempotencyRepo.findFirstByRequestId(reqId);
             if (dup.isPresent()) {
                 ActivityIdempotencyEntity e = dup.get();
-                return new CreateResult(e.getActivityId(), e.getVersion(), e.getActivityStatus(), true, 0);
+                return new CreateResult(e.getActivityId(), e.getVersion(), e.getActivityStatus(), true, 0, List.of());
             }
         }
 
@@ -125,12 +129,29 @@ public class ActivityMarketingService {
             if (ActivityStatus.OFFLINE.code() == current.getActivityStatus()) {
                 throw new IllegalArgumentException("已下线活动不可编辑: " + activityId);
             }
-            // 并发保护：逻辑删除旧版本，影响行数为 0 说明被并发改过
-            int affected = manageRepo.softDeleteVersion(activityId, current.getVersion(), now);
-            if (affected == 0) {
-                throw new IllegalStateException("活动版本冲突（并发编辑），请重试: " + activityId);
-            }
             version = current.getVersion() + 1;
+
+            // P0-4：**编辑不再下线正在服务的版本**。
+            //
+            // 旧实现无条件软删当前版本再建 v+1(状态 NORMAL)，而决策取「未删除的最高版本」再判 ONLINE——
+            // 于是运营改一个错别字，该活动在下一次决策里立刻消失，直到重新走一遍上线（四眼开着还得换人审批）。
+            //
+            // 新语义：线上版本与草稿并存。
+            //   · 当前版本已上线 → 保留它继续服务，另建 v+1 草稿；发布草稿时才做指针切换（见 changeStatus）
+            //   · 当前版本是草稿 → 直接顶掉（草稿不该堆积），沿用原子软删做并发保护
+            if (ActivityStatus.ONLINE.code() == current.getActivityStatus()) {
+                // 线上版本要留着，只能用「目标版本号是否已被占」做并发保护。
+                // 比软删弱（非原子），但同 activityId 的并发编辑在本 demo 不是真实场景；
+                // 真要收紧应给 (tenant_id, activity_id, version) 加唯一约束，由 DB 兜底。
+                if (manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, version, NOT_DEL).isPresent()) {
+                    throw new IllegalStateException("活动版本冲突（并发编辑），请重试: " + activityId);
+                }
+            } else {
+                int affected = manageRepo.softDeleteVersion(activityId, current.getVersion(), now);
+                if (affected == 0) {
+                    throw new IllegalStateException("活动版本冲突（并发编辑），请重试: " + activityId);
+                }
+            }
         } else {
             activityId = generateActivityId();
             version = 1;
@@ -167,7 +188,7 @@ public class ActivityMarketingService {
         // ISSUE-07：登记幂等结果（create/edit 统一）。同事务内 flush，并发相同 requestId 撞唯一约束 → 整事务回滚(无孤儿) → 409。
         recordIdempotency(reqId, activityId, version, status, now);
 
-        return new CreateResult(activityId, version, status, false, autoBound);
+        return new CreateResult(activityId, version, status, false, autoBound, declarativeOnlyWarnings(req));
     }
 
     /** 登记 requestId → 首次结果。null=不启用幂等，跳过。 */
@@ -208,6 +229,18 @@ public class ActivityMarketingService {
         if (fourEyesEnabled && target == ActivityStatus.ONLINE) {
             enforceFourEyes(row);
         }
+        // P0-4 原子指针切换：新版本上线的同一事务里，把该活动其它仍处于 ONLINE 的版本退役。
+        // 没有这一步，编辑不下线之后会出现「v1 与 v2 同时在线」，决策取谁取决于实现细节而非发布动作。
+        if (target == ActivityStatus.ONLINE) {
+            for (ActivityManageEntity old : manageRepo.findByActivityIdAndActivityStatusAndIsDel(
+                    activityId, ActivityStatus.ONLINE.code(), NOT_DEL)) {
+                if (old.getVersion() != null && !old.getVersion().equals(row.getVersion())) {
+                    old.setActivityStatus(ActivityStatus.OFFLINE.code());
+                    old.setModifiedStime(Instant.now());
+                    manageRepo.save(old);
+                }
+            }
+        }
         row.setActivityStatus(target.code());
         row.setModifiedStime(Instant.now());
         manageRepo.save(row);
@@ -215,8 +248,63 @@ public class ActivityMarketingService {
         if (target == ActivityStatus.ONLINE) {
             artifactService.onPublish(row.getActivityId(), row.getVersion());
         }
-        return new CreateResult(row.getActivityId(), row.getVersion(), row.getActivityStatus(), false, 0);
+        return new CreateResult(row.getActivityId(), row.getVersion(), row.getActivityStatus(), false, 0, List.of());
     }
+
+    /**
+     * 批量改状态（PR-5）。**逐条独立事务**——一条失败不能回滚已成功的那些。
+     *
+     * <p>大促前批量下线几十个活动是真实场景，而「全成功或全失败」在这里是错的语义：
+     * 运营要的是「尽量都下线，然后告诉我哪几个没成功、为什么」。
+     * 所以本方法不加 {@code @Transactional}，由 {@link #changeStatus} 各自的事务边界兜底，
+     * 失败逐条记进回执。
+     *
+     * <p>评审点名四家设计稿共同缺失的正是这个回执——只给「批量操作条」而不给部分失败反馈，
+     * 运营点完不知道到底成了几个。
+     *
+     * <p><b>入参携带显式 version，不是只给 id</b>。最初的实现传 {@code version=null}，落到
+     * {@link #changeStatus} 就是「取最高未删除版本」——而 P0-4 之后线上 v1 与草稿 v2 是**并存**的
+     * （见 {@link #create} 里编辑不软删线上版的分支），最高版本恰恰是那个还没发布的草稿。
+     * 于是「批量下线 23 个」把 23 个草稿置成下线，**正在发钱的线上版一个都没停**，
+     * 而回执还报 23 个全部成功——这正是本功能要消灭的那类静默失败。
+     * 现在由调用方按它在列表里看到的那一行传 version：下线传当前 ONLINE 版本，发布传要发的草稿版本。
+     * {@code version} 仍允许为 null（表示「随便哪一版，取最高」），但工作台不该这么用。
+     */
+    public BulkStatusResult bulkChangeStatus(List<BulkStatusItem> items, Integer targetStatus) {
+        List<String> succeeded = new ArrayList<>();
+        List<BulkFailure> failed = new ArrayList<>();
+        if (items == null) {
+            return new BulkStatusResult(succeeded, failed);
+        }
+        // 按 activityId 去重（首个胜出）：同一活动在一个批次里出现两次是矛盾指令，
+        // 「先下 v1 再下 v2」不是运营的意图，只会是前端选择模型漏了归并。
+        List<BulkStatusItem> distinct = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (BulkStatusItem item : items) {
+            if (item != null && item.activityId() != null && seen.add(item.activityId())) {
+                distinct.add(item);
+            }
+        }
+        for (BulkStatusItem item : distinct) {
+            try {
+                changeStatus(item.activityId(), item.version(), targetStatus);
+                succeeded.add(item.activityId());
+            } catch (RuntimeException e) {
+                failed.add(new BulkFailure(item.activityId(), e.getMessage()));
+            }
+        }
+        return new BulkStatusResult(succeeded, failed);
+    }
+
+    /**
+     * @param version 要操作的**那一版**。null = 取最高未删除版本（与单条接口一致）；
+     *                工作台必须传显式版本，否则会打到草稿而不是正在服务的版本。
+     */
+    public record BulkStatusItem(String activityId, Integer version) {}
+
+    /** @param failed 逐条失败原因——不给这个，运营点完不知道成了几个 */
+    public record BulkStatusResult(List<String> succeeded, List<BulkFailure> failed) {}
+    public record BulkFailure(String activityId, String reason) {}
 
     /**
      * P1-8 四眼：发布(上线)必须由**非提交人**的审批人执行。
@@ -254,6 +342,54 @@ public class ActivityMarketingService {
 
     // ------------------------------------------------------------------ 校验
 
+    /**
+     * 权益形态校验（折扣类落地）。
+     *
+     * <p>此前 {@code redPackageAmountUnit} 是**零校验的自由文本**（默认「元」，其余原样入库），
+     * 因为从来没有任何计算读过它。现在引擎按它判别形态，这个字段就从装饰品变成了「决定发多少钱」的开关，
+     * 必须收进白名单——否则一个拼错的单位就能让活动按另一种形态发钱。
+     *
+     * <p><b>折扣类强制封顶</b>：「打 8 折」在一笔 10 万的订单上就是 2 万。不封顶等于开一个无上限的支出口子，
+     * 而这类事故只有在对账时才会被发现。宁可让运营多填一个字段。
+     */
+    private void validateBenefitForm(ActivityCreateRequest req, boolean hasFixed, boolean hasLadder) {
+        String unit = req.redPackageAmountUnit();
+        if (!BenefitForm.isSupportedUnit(unit)) {
+            throw new IllegalArgumentException(
+                    "金额单位仅支持「元」(金额型) 或「折」(折扣型)，收到: " + unit);
+        }
+        if (BenefitForm.of(unit) != BenefitForm.RATIO_ZHE) {
+            if (hasFixed && (req.redPackageAmount().signum() < 0 || req.redPackageAmount().compareTo(MAX_AMOUNT) > 0)) {
+                throw new IllegalArgumentException("红包金额需在 [0, " + MAX_AMOUNT + "] 内");
+            }
+            if (req.redPackageMaxDiscount() != null) {
+                throw new IllegalArgumentException("封顶减免额只对折扣型(单位=折)有意义");
+            }
+            return;
+        }
+
+        // ---- 折扣型 ----
+        if (hasLadder) {
+            // 阶梯的 reward 是「元」，与折扣型的语义冲突；同时配等于两种形态打架，
+            // 而现有 computeAmounts 的覆盖语义会让结果取决于执行顺序——不如直接拒。
+            throw new IllegalArgumentException("折扣型(单位=折)不支持阶梯分档，请二选一");
+        }
+        if (!hasFixed) {
+            throw new IllegalArgumentException("折扣型需填折数（redPackageAmount）");
+        }
+        BigDecimal zhe = req.redPackageAmount();
+        if (zhe.signum() <= 0 || zhe.compareTo(BigDecimal.TEN) >= 0) {
+            throw new IllegalArgumentException("折数须在 (0,10) 之间，10 折=不打折、0 折=白送，均按配置错误拒绝，收到: " + zhe);
+        }
+        BigDecimal cap = req.redPackageMaxDiscount();
+        if (cap == null || cap.signum() <= 0) {
+            throw new IllegalArgumentException("折扣型必须填封顶减免额（redPackageMaxDiscount>0）——不封顶等于无上限支出");
+        }
+        if (cap.compareTo(MAX_AMOUNT) > 0) {
+            throw new IllegalArgumentException("封顶减免额需在 (0, " + MAX_AMOUNT + "] 内");
+        }
+    }
+
     private void validateCommon(ActivityCreateRequest req) {
         if (req.activityName() == null || req.activityName().isBlank()) {
             throw new IllegalArgumentException("活动名称不能为空");
@@ -281,9 +417,7 @@ public class ActivityMarketingService {
             if (!hasFixed && !hasLadder) {
                 throw new IllegalArgumentException("红包活动需填固定金额或阶梯分档");
             }
-            if (hasFixed && (req.redPackageAmount().signum() < 0 || req.redPackageAmount().compareTo(MAX_AMOUNT) > 0)) {
-                throw new IllegalArgumentException("红包金额需在 [0, " + MAX_AMOUNT + "] 内");
-            }
+            validateBenefitForm(req, hasFixed, hasLadder);
         }
         if (type == ActivityType.BUY_AND_GET && (req.gifts() == null || req.gifts().isEmpty())) {
             throw new IllegalArgumentException("买赠活动至少需配置一个赠品");
@@ -345,7 +479,8 @@ public class ActivityMarketingService {
         r.setActivityType(req.activityType());
         r.setRedPackageTakeType(req.redPackageTakeType());
         r.setRedPackageAmount(req.redPackageAmount());
-        r.setRedPackageAmountUnit(req.redPackageAmountUnit() == null ? "元" : req.redPackageAmountUnit());
+        r.setRedPackageAmountUnit(req.redPackageAmountUnit() == null ? BenefitForm.UNIT_YUAN : req.redPackageAmountUnit());
+        r.setRedPackageMaxDiscount(req.redPackageMaxDiscount());
         r.setRedPackageRangeAmount(req.redPackageRangeAmount());
         r.setVersion(version);
         r.setIsDel(NOT_DEL);
@@ -480,8 +615,28 @@ public class ActivityMarketingService {
 
     // ------------------------------------------------------------------ 返回结构
 
+    /**
+     * 库存/限次是**声明式**的：字段存得下、决策不读取（拍板 D12-3 选 B）。
+     *
+     * <p>已核实 {@code inventory} / {@code userInventory} 读进 {@code ActivityCandidate} 后全仓零读取，
+     * 也就是说运营配了「秒杀总量 500」线上会无限超发。本轮不做预占（量级接近整个 S 档），
+     * 但**必须说清楚**——沉默才是最危险的：运营以为配了就生效。
+     */
+    public static List<String> declarativeOnlyWarnings(ActivityCreateRequest req) {
+        List<String> warnings = new ArrayList<>();
+        if (req.inventory() != null && req.inventory() > 0) {
+            warnings.add("库存（" + req.inventory() + "）当前为声明式：决策链路不读取、不扣减，不构成超发防护。"
+                    + "如需限量，请在下游发放/核销环节实现预占。");
+        }
+        return warnings;
+    }
+
+    /**
+     * @param warnings 配置被接受、但**当前实现不会执行**的部分（如库存声明式不扣减）。
+     *                 空列表表示没有此类落差。前端据此在详情页挂 warn Banner。
+     */
     public record CreateResult(String activityId, Integer version, Integer status,
-                               boolean idempotentHit, int autoBoundCount) {}
+                               boolean idempotentHit, int autoBoundCount, List<String> warnings) {}
 
     public record PreviewResult(boolean ok, String constraint, String drl, String message) {}
 

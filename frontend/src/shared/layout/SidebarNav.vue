@@ -19,6 +19,7 @@ const consoleTab = computed(() => {
   const n = route.name as string
   if (n === 'activity-detail' || n === 'activity-edit' || n === 'activities') return 'activities'
   if (n === 'activity-new') return 'activity-new'
+  if (n === 'playbooks') return 'playbooks'
   if (n === 'validate') return 'validate'
   return ''
 })
@@ -60,6 +61,16 @@ const inHome = computed(() => route.name === 'home')
         >
           <span class="ic"><Icon name="list" :size="18" /></span>
           <span class="txt"><span class="label">活动列表</span><span class="desc">浏览 · 复核 · 上下线</span></span>
+        </router-link>
+        <router-link
+          class="nav-item item"
+          :class="{ active: consoleTab === 'playbooks' }"
+          :to="{ name: 'playbooks' }"
+          data-testid="tab-playbooks"
+          @click="emit('navigate')"
+        >
+          <span class="ic"><Icon name="layers" :size="18" /></span>
+          <span class="txt"><span class="label">玩法模板</span><span class="desc">挑一个玩法开始</span></span>
         </router-link>
         <router-link
           class="nav-item item"

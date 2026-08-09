@@ -10,6 +10,28 @@ const props = defineProps<{
   minWidth?: number
 }>()
 
+// 稳定行 key —— **禁 index 作 key**：删中间行时 Vue 会把后续行的 DOM 节点原地复用，
+// 未受控的行内状态（已输入未提交的值、焦点、滚动位）跟着位置走而不是跟着数据走，表现为"串值"。
+// 条件树那边早就踩过并写进了 logic.ts:6 的注释（30 号决策已实证），但本组件一直遗留 :key="i"，
+// 而阶梯档 / 赠品 / SPU 绑定 / 商品池四处都在用它。
+//
+// 用 WeakMap 把 id 挂在行对象外部，而不是往行里写 `_rid` 字段：
+// 行对象会被**原样提交给后端**（EditorView 的 gifts / spuBindings 都是直传），注入字段会漏进请求体。
+// WeakMap 无需清理，行对象被回收时条目自动消失。
+let ridSeq = 0
+const rid = new WeakMap<object, string>()
+function keyOf(row: T, i: number): string | number {
+  // 原始值行没有对象身份可挂，退回下标（本仓库四处用法传的都是对象，这里只是兜底）
+  if (row === null || typeof row !== 'object') return i
+  const o = row as object
+  let k = rid.get(o)
+  if (k === undefined) {
+    k = 'r' + (++ridSeq).toString(36)
+    rid.set(o, k)
+  }
+  return k
+}
+
 function add(): void {
   props.rows.push(props.makeRow())
 }
@@ -28,7 +50,7 @@ function remove(i: number): void {
         <span class="act" />
       </div>
       <div v-if="!rows.length" class="empty">暂无，点下方添加</div>
-      <div v-for="(row, i) in rows" :key="i" class="row" data-testid="dyn-row">
+      <div v-for="(row, i) in rows" :key="keyOf(row, i)" class="row" data-testid="dyn-row">
         <span class="idx">{{ i + 1 }}</span>
         <slot :row="row" :index="i" />
         <button type="button" class="del" :aria-label="'删除第' + (i + 1) + '行'" @click="remove(i)"><Icon name="trash" :size="14" /></button>

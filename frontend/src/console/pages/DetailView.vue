@@ -12,6 +12,10 @@ import Banner from '@/shared/ui/Banner.vue'
 import PageHeader from '@/shared/ui/PageHeader.vue'
 import Button from '@/shared/ui/Button.vue'
 import Badge from '@/shared/ui/Badge.vue'
+import WindowBar from '@/shared/viz/WindowBar.vue'
+import Receipt from '@/shared/viz/Receipt.vue'
+import Seam from '@/shared/viz/Seam.vue'
+import { parseLadder } from '../logic'
 import Icon from '@/shared/ui/Icon.vue'
 
 const route = useRoute()
@@ -33,6 +37,22 @@ const conditionTree = computed(() => prettyCode(condition.value?.conditionTreeJs
 function typeLabel(code: number): string {
   return dict.cache['__default__']?.activityTypes.find((item) => item.code === code)?.label ?? String(code)
 }
+
+/** 阶梯档位 → 票据行。命中判定留给决策沙盘，这里只做展示。 */
+const ladderLines = computed(() => {
+  const json = rule.value?.redPackageRangeAmount
+  if (!json) return []
+  return parseLadder(String(json)).map((t) => ({
+    label: t.max === '' || t.max == null ? `满 ${t.min} 以上` : `满 ${t.min} 至 ${t.max}`,
+    amount: t.reward,
+  }))
+})
+
+/** 生效窗是否已过——决定甘特条用「已结束」的灰斜纹还是实心。 */
+const windowEnded = computed(() => {
+  const end = manage.value?.activityEndTime
+  return end ? new Date(end as string).getTime() < Date.now() : false
+})
 
 function statusLabel(code: number): string {
   return dict.cache['__default__']?.statuses.find((item) => item.code === code)?.label ?? String(code)
@@ -103,7 +123,8 @@ onUnmounted(() => {
           <span class="hero-icon"><Icon name="badge-check" :size="22" /></span>
           <div>
             <div class="hero-status">
-              <Badge :kind="manage.activityStatus === 1 ? 'ok' : 'neutral'"><i /> {{ statusLabel(manage.activityStatus) }}</Badge>
+              <Badge :kind="manage.activityStatus === 1 ? 'ok' : (manage.activityStatus === 3 ? 'blue' : 'neutral')"
+                     :shape="manage.activityStatus === 1 ? 'dot' : (manage.activityStatus === 3 ? 'triangle' : (manage.activityStatus === 2 ? 'hatch' : 'square'))">{{ statusLabel(manage.activityStatus) }}</Badge>
               <span class="version">VERSION {{ manage.version }}</span>
             </div>
             <h2>{{ manage.activityName }}</h2>
@@ -114,6 +135,12 @@ onUnmounted(() => {
           <span><small>生效时间</small><strong>{{ isoToLocal(manage.activityStartTime) }}</strong></span>
           <Icon name="arrow-right" :size="15" />
           <span><small>结束时间</small><strong>{{ isoToLocal(manage.activityEndTime) }}</strong></span>
+        </div>
+        <!-- 共享时间轴：不读两个日期就知道「还剩几天 / 几天后开跑 / 已经跑完」 -->
+        <div class="hero-window">
+          <WindowBar :start="manage.activityStartTime" :end="manage.activityEndTime"
+                     :muted="manage.activityStatus === 2"
+                     :state="manage.activityStatus === 3 ? 'warmup' : (windowEnded ? 'ended' : 'live')" />
         </div>
       </section>
 
@@ -129,8 +156,18 @@ onUnmounted(() => {
           <Card title="优惠配置">
             <div v-if="rule" class="benefit-card">
               <span class="benefit-icon"><Icon :name="manage.activityType === 1 ? 'badge-check' : 'inbox'" :size="21" /></span>
-              <div v-if="rule.redPackageRangeAmount">
-                <small>阶梯红包规则</small><strong>按订单金额分档计算</strong><code>{{ rule.redPackageRangeAmount }}</code>
+              <div v-if="rule.redPackageRangeAmount" class="ladder-block">
+                <small>阶梯红包规则</small><strong>按订单金额分档计算</strong>
+                <Seam />
+                <!-- 票据式排版：小数点对齐后，档位之间的量级差是"看"出来的 -->
+                <Receipt :lines="ladderLines" />
+              </div>
+              <!-- 折扣型：redPackageAmount 是**折数**不是钱。按金额渲染的话，
+                   「打 8 折」会显示成「8 元」——运营据此复核就会以为配错了（或者更糟，以为配对了） -->
+              <div v-else-if="rule.redPackageAmountUnit === '折'" data-testid="detail-ratio">
+                <small>折扣优惠</small>
+                <strong class="amount">{{ rule.redPackageAmount }} <i>折</i></strong>
+                <span>最多减 {{ money(rule.redPackageMaxDiscount) }} 元 · 减免向下取整到分</span>
               </div>
               <div v-else>
                 <small>固定优惠金额</small><strong class="amount">{{ money(rule.redPackageAmount) }} <i>{{ rule.redPackageAmountUnit || '元' }}</i></strong>
@@ -195,6 +232,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* 甘特条挂在 hero 里，占满一行 */
+.hero-window { grid-column: 1 / -1; margin-top: var(--gap-inline); }
+/* 撕线的缺口底色必须等于「卡片背后那一层」——券面是白的，背后是页底 */
+.ladder-block { --notch-bg: var(--bg-elev); }
+
 .detail-error { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-4); }.detail-error span { font-size: var(--fs-xs); }.detail-error button { margin-top: var(--sp-1); padding: var(--sp-1) var(--sp-3); border: 1px solid currentColor; border-radius: var(--radius-sm); background: transparent; color: inherit; cursor: pointer; }
 .activity-hero { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); margin-bottom: var(--sp-4); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--radius-lg); background: linear-gradient(110deg, var(--bg-elev), color-mix(in srgb, var(--accent-soft) 68%, var(--bg-elev))); box-shadow: var(--shadow-sm); }
 .hero-main { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }.hero-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 48px; height: 48px; border-radius: 14px; background: var(--accent); color: #fff; box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 22%, transparent); }.hero-status { display: flex; align-items: center; gap: var(--sp-2); }.hero-status :deep(.badge) i { display: inline-block; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; background: currentColor; }.version { color: var(--text-faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }.hero-main h2 { overflow: hidden; margin: 5px 0 1px; font-size: var(--fs-xl); text-overflow: ellipsis; white-space: nowrap; }.hero-main code { color: var(--text-faint); font-size: 10px; }

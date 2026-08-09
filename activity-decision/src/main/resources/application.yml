@@ -10,9 +10,11 @@ spring:
 
   jpa:
     hibernate:
-      # M2.1：dev 标准 profile 用 update 让 decision 可独立启动建表。
-      # M2.2 起：decision 连**只读账号** + 改 validate（不碰 DDL，DDL 由 console 独占）。
-      ddl-auto: update
+      # decision 是**只读平面**：连只读账号、不碰 DDL，建表由 console 独占（M2.2 定的边界）。
+      # 此前这里遗留 update，只有 compose 的环境变量盖住了它——按文档化的本地命令
+      # `./mvnw -pl activity-decision spring-boot:run` 起，只读平面会带着 DDL 权限跑。
+      # 现改回 validate，并由 DecisionDdlGuardTest 钉死，防止再次漂回 update。
+      ddl-auto: validate
     open-in-view: false
     show-sql: false
 

@@ -75,7 +75,9 @@ onUnmounted(() => {
 .scrim {
   position: fixed; inset: 0; z-index: var(--z-modal);
   display: flex; align-items: center; justify-content: center; padding: var(--sp-4);
-  background: rgba(15, 17, 23, .45);
+  /* PR-0 把 AppLayout 的硬编码遮罩提成了 --scrim，但漏了这一处（全仓最后一个硬编码颜色）。
+     深色下 rgba(15,17,23,.45) 压不住内容。 */
+  background: var(--scrim);
 }
 .dialog {
   width: 100%; max-width: 400px; background: var(--bg-elev);
@@ -98,7 +100,9 @@ onUnmounted(() => {
   transition: background .12s ease, border-color .12s ease;
 }
 .btn:hover { background: var(--bg-hover); }
-.btn.ok { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 压在 accent 上的字走 --text-invert，不写死 #fff——深色态 accent 是浅粉 #f45ca0，
+   白字对比度不够（评审 X7 点名的正是这条，token 在 PR-1 就加了但这里没接上）。 */
+.btn.ok { background: var(--accent); border-color: var(--accent); color: var(--text-invert); }
 .btn.ok:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.ok.danger { background: var(--err); border-color: var(--err); }
 .btn.ok.danger:hover { filter: brightness(1.06); }

@@ -33,6 +33,13 @@ defineEmits<{ (e: 'update:modelValue', v: string | number): void }>()
   background: transparent; color: var(--text-soft); font-size: var(--fs-sm); cursor: pointer; font-family: inherit;
 }
 .chip:hover { color: var(--text); }
-.chip.active { background: var(--bg-elev); color: var(--accent); border-color: var(--border); box-shadow: var(--shadow-sm); font-weight: var(--fw-medium); }
+/* PR-2：选中态改「底部下划线」。原先靠 抬升面+阴影+描边 三层表达，在换代后的纸色阶上
+   与未选中差别过弱；下划线是明确的、且不随主题明暗改变可辨识度。
+   刻意不做滑块位移动画——chip 组会换行，滑块在换行处必然错位。 */
+.chip.active {
+  background: var(--bg-elev); color: var(--accent); border-color: var(--border);
+  box-shadow: inset 0 -2px 0 var(--accent);
+  font-weight: var(--fw-bold);
+}
 @media (pointer: coarse) { .chip { min-height: var(--touch-min); } }
 </style>

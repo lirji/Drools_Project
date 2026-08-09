@@ -63,7 +63,7 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
 ./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
 
-./mvnw test                   # 跑全 reactor 测试（common 63 + console 40 + decision 8 = 111）
+./mvnw test                   # 跑全 reactor 测试（common 66 + console 137 + decision 17 = 220）
 ./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
 # 单模块：./mvnw -pl activity-common test（-am 连带先构建依赖模块）
@@ -131,4 +131,6 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 - `docs/drools-use-cases.md` — Drools 应用场景与定位（风控/保险/信贷/计费，以及什么时候不该上 Drools）
 - `examples/aviator/AviatorDemo.java` — Aviator 独立学习示例（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
 - `deploy/` — 微服务本地编排：`docker-compose.yml`（console 8081 / decision 8082 / nginx 网关 host `:8095` / MySQL 单库双账号 / Prometheus `:9090` / Grafana `:3001`）+ `nginx.conf`（API 网关原位替身）+ `mysql-init/`（decision 只读账号）+ `Dockerfile`
+  - **前端 `/ui/` 由 gateway 镜像托管，不在 console 的 JAR 里**（`Dockerfile.frontend` → `activity-frontend:latest`）。改了前端只 `--build console` 是**没用的**，页面纹丝不动——要 `docker compose -f deploy/docker-compose.yml up -d --build gateway`。反过来改了后端才重建 console
+  - 编排**默认 auth 档**（`DROOLS_AUTH_ENABLED` 默认 true），需要本机 Casdoor `:8000`；跑 `e2e:dev` / `e2e:tablet` / `e2e:phone` / `e2e:catalog` / `e2e:bench` 这些走 `tenant-chip` 的脚本要切 header 档：`DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose ... up -d`
 - `docs/plans/prod-arch-refactor-0719-1330/` — 本次「微服务化 + 前后端分离」重构的评估 / 决策 / 计划 / 评审归档（模块拆分细节）

@@ -47,8 +47,18 @@ public class ActivityRuleEntity {
     @Column(name = "red_package_amount", precision = 12, scale = 2)
     private BigDecimal redPackageAmount;
 
+    /** 权益形态判别位：元 = 金额型，折 = 折扣型（此时 redPackageAmount 是折数）。见 BenefitForm */
     @Column(name = "red_package_amount_unit", length = 8)
     private String redPackageAmountUnit;
+
+    /**
+     * 折扣型的封顶减免额（元）。null = 不封顶。
+     *
+     * <p>金额型用不到它；折扣型**必须**有——「打 8 折」在一笔 10 万的订单上就是 2 万，
+     * 没有封顶等于给出一个无上限的支出口子。写平面对折扣型强制要求非空。
+     */
+    @Column(name = "red_package_max_discount", precision = 12, scale = 2)
+    private BigDecimal redPackageMaxDiscount;
 
     /** 随机红包范围值 / LADDER 分档 JSON。 */
     @JdbcTypeCode(SqlTypes.LONGVARCHAR)
@@ -88,6 +98,9 @@ public class ActivityRuleEntity {
 
     public String getRedPackageAmountUnit() { return redPackageAmountUnit; }
     public void setRedPackageAmountUnit(String redPackageAmountUnit) { this.redPackageAmountUnit = redPackageAmountUnit; }
+
+    public BigDecimal getRedPackageMaxDiscount() { return redPackageMaxDiscount; }
+    public void setRedPackageMaxDiscount(BigDecimal redPackageMaxDiscount) { this.redPackageMaxDiscount = redPackageMaxDiscount; }
 
     public String getRedPackageRangeAmount() { return redPackageRangeAmount; }
     public void setRedPackageRangeAmount(String redPackageRangeAmount) { this.redPackageRangeAmount = redPackageRangeAmount; }

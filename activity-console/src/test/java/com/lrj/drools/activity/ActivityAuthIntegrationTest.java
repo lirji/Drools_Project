@@ -149,7 +149,10 @@ class ActivityAuthIntegrationTest {
                         .content(createBody("acme 认证红包", 88101L)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
-        String activityId = created.replaceAll(".*\"activityId\":\"([^\"]+)\".*", "$1");
+        // 用真解析取字段，不要正则切 JSON：响应体加字段（如 P0-4/D12-3 的 warnings）就会让正则悄悄截错，
+        // 而失败信息会指向"租户隔离断言失败"这种完全不相干的地方。
+        String activityId = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readTree(created).get("activityId").asText();
         assertTrue(activityId.startsWith("ACT"), "应创建成功返回 activityId，实得: " + created);
 
         // acme 自己看得到

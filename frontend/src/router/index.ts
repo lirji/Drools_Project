@@ -13,6 +13,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: '/console/activities' },
       { path: 'activities', name: 'activities', component: () => import('@/console/pages/ListView.vue') },
+      { path: 'playbooks', name: 'playbooks', component: () => import('@/console/pages/PlaybooksView.vue') },
       { path: 'activities/new', name: 'activity-new', component: () => import('@/console/pages/EditorView.vue') },
       { path: 'activities/:id', name: 'activity-detail', component: () => import('@/console/pages/DetailView.vue') },
       { path: 'activities/:id/edit', name: 'activity-edit', component: () => import('@/console/pages/EditorView.vue') },

@@ -59,7 +59,9 @@ defineEmits<{ (e: 'close'): void }>()
   .shell-sidebar.open { transform: translateX(0); }
   .scrim {
     position: fixed; inset: var(--shell-topbar-h) 0 0 0;
-    background: rgba(15, 17, 23, .45); z-index: calc(var(--z-drawer) - 1);
+    /* 原为硬编码 rgba(15,17,23,.45)——全仓唯一一处不走 token 的颜色，暗色下偏浅、压不住内容。
+       现走 --scrim，浅/深各自定义（见 tokens.css 四处主题块）。 */
+    background: var(--scrim); z-index: calc(var(--z-drawer) - 1);
   }
 }
 </style>

@@ -3,6 +3,7 @@ import { api } from '@/shared/apiClient'
 import type {
   ActivityListRow, ActivityCreateRequest, ActivityCreateResult,
   ConditionNode, SpuDiscountRequest, ApiResult,
+  BulkStatusItem, BulkStatusResult,
 } from '@/shared/types'
 
 export function listActivities(signal?: AbortSignal): Promise<ApiResult<ActivityListRow[]>> {
@@ -19,6 +20,14 @@ export function createActivity(body: ActivityCreateRequest, signal?: AbortSignal
 
 export function changeStatus(id: string, version: number, targetStatus: number): Promise<ApiResult> {
   return api('marketing', 'POST', '/' + encodeURIComponent(id) + '/status', { version, targetStatus })
+}
+
+/**
+ * 批量上下线。**部分失败一律 200**——它是正常结果不是错误，回执由调用方渲染。
+ * items 必须带显式 version（见 {@link BulkStatusItem}）。
+ */
+export function bulkChangeStatus(items: BulkStatusItem[], targetStatus: number): Promise<ApiResult<BulkStatusResult>> {
+  return api<BulkStatusResult>('marketing', 'POST', '/bulk-status', { items, targetStatus })
 }
 
 export function previewTree(tree: ConditionNode, signal?: AbortSignal): Promise<ApiResult<{ ok: boolean; message?: string; drl?: string }>> {

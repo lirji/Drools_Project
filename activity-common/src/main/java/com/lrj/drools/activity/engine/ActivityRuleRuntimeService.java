@@ -8,6 +8,7 @@ import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.tenant.TenantContext;
 import org.kie.api.KieBase;
 import org.kie.api.builder.Message;
@@ -19,6 +20,7 @@ import org.kie.api.runtime.StatelessKieSession;
 import org.kie.internal.utils.KieHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -79,14 +81,26 @@ public class ActivityRuleRuntimeService {
      */
     private final ThreadPoolExecutor compileExecutor;
 
+    /** B0-3 决策链路指标：编译耗时 / fire 触顶 / 缓存命中率。回退计数在 safeRun 里打。 */
+    private final DecisionMetrics metrics;
+
+    /** 测试用的无指标构造（{@code ActivityWarmTest} / {@code ActivityFireCeilingTest} 直接 new，不起 Spring 上下文）。 */
+    public ActivityRuleRuntimeService(
+            ActivityDrlBuilder drlBuilder, long cacheMaxWeightKb, int maxFiresBase, int maxFiresPerRule) {
+        this(drlBuilder, cacheMaxWeightKb, maxFiresBase, maxFiresPerRule, DecisionMetrics.noop());
+    }
+
+    @Autowired
     public ActivityRuleRuntimeService(
             ActivityDrlBuilder drlBuilder,
             @Value("${activity.marketing.rule-engine.cache-max-weight-kb:262144}") long cacheMaxWeightKb,
             @Value("${activity.marketing.rule-engine.max-fires-base:2000}") int maxFiresBase,
-            @Value("${activity.marketing.rule-engine.max-fires-per-rule:200}") int maxFiresPerRule) {
+            @Value("${activity.marketing.rule-engine.max-fires-per-rule:200}") int maxFiresPerRule,
+            DecisionMetrics metrics) {
         this.drlBuilder = drlBuilder;
         this.maxFiresBase = maxFiresBase;
         this.maxFiresPerRule = maxFiresPerRule;
+        this.metrics = metrics;
         // 权重 = 该 KieBase 的实测足迹(KB)，非「1 个」；maximumWeight = 堆+Metaspace 预算(KB)。
         this.cache = Caffeine.newBuilder()
                 .maximumWeight(cacheMaxWeightKb)
@@ -98,6 +112,8 @@ public class ActivityRuleRuntimeService {
                 new LinkedBlockingQueue<>(256),
                 r -> { Thread t = new Thread(r, "activity-drl-warm"); t.setDaemon(true); return t; },
                 new ThreadPoolExecutor.CallerRunsPolicy());
+        // Caffeine 一直在 recordStats()，但此前没有任何出口——绑成 Gauge 才看得见（评估报告 D2 的观测手段）
+        metrics.bindKieBaseCache(this.cache);
         log.info("[ActivityRuleRuntimeService] KieBase 缓存足迹加权：预算 {} KB (~{} MB)，权重≈{}KB+{}KB×生成规则数；"
                         + "fire 上界≈{}+{}×规则数(per-artifact)；预热编译池 max={} 线程",
                 cacheMaxWeightKb, cacheMaxWeightKb / 1024, FOOTPRINT_BASE_KB, FOOTPRINT_PER_RULE_KB,
@@ -211,6 +227,11 @@ public class ActivityRuleRuntimeService {
     }
 
     private KieBase compile(String drl) {
+        // 编译落在请求线程上时，这个 Timer 就是 P99 尖刺的直接证据（评估报告 D3）
+        return metrics.timeCompile(() -> doCompile(drl));
+    }
+
+    private KieBase doCompile(String drl) {
         KieHelper helper = new KieHelper();
         helper.addContent(drl, ResourceType.DRL);
         Results results = helper.verify();
@@ -230,6 +251,8 @@ public class ActivityRuleRuntimeService {
             KieBase kieBase = compileOrGet(drl);
             return run(kieBase, ctx);
         } catch (Exception e) {
+            // 回退会改变实际发放金额，必须计数——此前只有一条 log.warn，线上完全静默（评估报告 D7）
+            metrics.fallback(scene.name(), fallbackReason(e));
             log.warn("规则执行失败, 回退旧逻辑. scene={}, bizLine={}, err={}", scene, ctx.getBizLine(), e.toString());
             return null;
         }
@@ -253,11 +276,22 @@ public class ActivityRuleRuntimeService {
         session.execute(facts);
 
         if (ceiling.hitCeiling) {
+            metrics.fireCeiling(ctx.getScene() == null ? null : ctx.getScene().name());
             log.warn("规则 fire 触顶 halt：fires>{}（规则数={}，bizLine={}）—疑似 runaway，本次决策由 safeRun 回退旧逻辑",
                     maxFires, rules, ctx.getBizLine());
             throw new IllegalStateException("规则 fire 超上界 " + maxFires + "（runaway 护栏）");
         }
         return result;
+    }
+
+    /**
+     * 把异常归类成**有限**的 reason 标签。绝不能把异常全文塞进标签——
+     * 编译错误里含行号与 DRL 片段，会让 Prometheus 的标签基数直接爆掉。
+     */
+    private static String fallbackReason(Exception e) {
+        if (e instanceof IllegalArgumentException) return "compile-error";   // DRL 编译失败（带行号）
+        if (e instanceof IllegalStateException) return "fire-ceiling";       // runaway 护栏 halt
+        return "eval-error";
     }
 
     /** 编译后的实际规则数（跨 package 求和）——fire 上界的派生量。 */

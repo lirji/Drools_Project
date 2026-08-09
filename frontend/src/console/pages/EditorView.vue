@@ -14,6 +14,9 @@ import {
 import type { ActivityCreateRequest, FieldDict, GroupNode } from '@/shared/types'
 import ConditionGroup from '../condition-tree/ConditionGroup.vue'
 import DynRowTable from '../DynRowTable.vue'
+import TierRuler from '../benefit/TierRuler.vue'
+import { normalizeTiers, plainLanguage } from '../benefit/tierLogic'
+import { findPlaybook } from '../playbooks'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
 import Banner from '@/shared/ui/Banner.vue'
@@ -36,7 +39,7 @@ interface Draft {
   activityId: string | null
   requestId: string
   activityType: number
-  redMode: 'fixed' | 'ladder'
+  redMode: 'fixed' | 'ladder' | 'ratio'
   bindMode: 'manual' | 'pool'
   areaType: number
   name: string
@@ -48,6 +51,7 @@ interface Draft {
   endLocal: string
   districtIds: string
   amount: number | string
+  maxDiscount: number | string
   takeType: number
   unit: string
   strategy: string
@@ -64,13 +68,33 @@ function newDraft(): Draft {
     activityType: 1, redMode: 'fixed', bindMode: 'manual', areaType: 1,
     name: '', bizLine: 'mall', rule: '', priority: 1, inventory: 100,
     startLocal: toLocalInput(Date.now() - 3600000), endLocal: toLocalInput(Date.now() + 7 * 86400000),
-    districtIds: '', amount: '', takeType: 1, unit: '元', strategy: 'MAX',
+    districtIds: '', amount: '', maxDiscount: '', takeType: 1, unit: '元', strategy: 'MAX',
     ladder: [], gifts: [], spu: [{ storeId: 1, spuId: '' }], pool: [{ poolId: '' }],
     tree: emptyGroup(),
   }
 }
 
 const dr = reactive<Draft>(newDraft())
+/** 人话预览：把档位参数实时翻译成运营看得懂的一句话（PR-4）。 */
+const tierPlain = computed(() => plainLanguage(normalizeTiers(dr.ladder), '取最高档，不与其它满减叠加'))
+
+/**
+ * 折扣的人话预览。与 TierRuler 的人话预览同一个理由：
+ * 「折数 8 / 封顶 50」是两个参数，运营真正要确认的是「这张券最多能减多少、什么时候封顶」。
+ * 说清封顶在多少订单额上开始生效，比只回显参数有用得多。
+ */
+const ratioPlain = computed(() => {
+  const zhe = Number(dr.amount)
+  const cap = Number(dr.maxDiscount)
+  if (!zhe || Number.isNaN(zhe) || zhe <= 0 || zhe >= 10) return '填入折数后这里会显示这张券的人话说明。'
+  const offRate = (10 - zhe) / 10
+  const pct = Math.round(offRate * 1000) / 10
+  if (!cap || Number.isNaN(cap) || cap <= 0) return `订单打 ${zhe} 折（减免 ${pct}%）。还需填封顶减免额。`
+  const threshold = Math.ceil(cap / offRate)
+  return `订单打 ${zhe} 折，即减免 ${pct}%，最多减 ${cap.toLocaleString('zh-CN')} 元；`
+    + `订单满 ${threshold.toLocaleString('zh-CN')} 元起减免就到顶了。不足一分的部分向下取整。`
+})
+
 const submitting = ref(false)
 const submitErr = ref('')
 const saved = ref<{ activityId: string; version: number; autoBoundCount: number; idempotentHit: boolean } | null>(null)
@@ -79,6 +103,8 @@ const initialLoading = ref(true)
 const initialErr = ref('')
 const dictWarning = ref('')
 const dictRetrying = ref(false)
+/** 本次表单是从哪个玩法模板起步的（PR-6）。只作提示，不影响提交内容 */
+const appliedPlaybook = ref('')
 const submitAttempted = ref(false)
 const previewState = ref<{ kind: 'idle' | 'pending' | 'ok' | 'err'; msg: string; drl?: string }>({ kind: 'idle', msg: '' })
 let initialCtrl: AbortController | null = null
@@ -105,6 +131,14 @@ const validationErrs = computed(() => {
   if (dr.startLocal && dr.endLocal && toEpoch(dr.startLocal)! >= toEpoch(dr.endLocal)!) errs.push('开始时间须早于结束时间')
   if (dr.activityType === 1 && dr.redMode === 'fixed' && (dr.amount === '' || dr.amount == null)) errs.push('固定红包金额必填')
   if (dr.activityType === 1 && dr.redMode === 'ladder' && !cleanLadder(dr.ladder).length) errs.push('阶梯档至少一档有奖励')
+  if (dr.activityType === 1 && dr.redMode === 'ratio') {
+    const zhe = Number(dr.amount)
+    if (dr.amount === '' || dr.amount == null || Number.isNaN(zhe)) errs.push('折数必填')
+    else if (zhe <= 0 || zhe >= 10) errs.push('折数须在 0 与 10 之间（8 = 八折；10 折=不打折、0 折=白送）')
+    // 封顶是硬要求不是建议：打 8 折在一笔 10 万的订单上就是 2 万
+    const cap = Number(dr.maxDiscount)
+    if (dr.maxDiscount === '' || dr.maxDiscount == null || Number.isNaN(cap) || cap <= 0) errs.push('折扣券必须填封顶减免额（不封顶等于无上限支出）')
+  }
   const treeErrs = validateTree(pruneTree(dr.tree), dictData.value?.operators || [])
   if (treeErrs.length) errs.push('条件树有 ' + treeErrs.length + ' 处未填完整')
   return errs
@@ -112,7 +146,11 @@ const validationErrs = computed(() => {
 const formValid = computed(() => validationErrs.value.length === 0)
 const completionChecks = computed(() => [
   { label: '基础信息', done: !!dr.name.trim() && !!dr.startLocal && !!dr.endLocal },
-  { label: dr.activityType === 1 ? '红包规则' : '赠品明细', done: dr.activityType === 1 ? (dr.redMode === 'fixed' ? dr.amount !== '' : cleanLadder(dr.ladder).length > 0) : dr.gifts.length > 0 },
+  { label: dr.activityType === 1 ? '红包规则' : '赠品明细', done: dr.activityType === 1
+      ? (dr.redMode === 'ladder' ? cleanLadder(dr.ladder).length > 0
+        : dr.redMode === 'ratio' ? dr.amount !== '' && dr.maxDiscount !== ''
+        : dr.amount !== '')
+      : dr.gifts.length > 0 },
   { label: '商品绑定', done: dr.bindMode === 'manual' ? dr.spu.some((item) => item.spuId !== '') : dr.pool.some((item) => item.poolId !== '') },
   { label: '资格条件', done: validateTree(pruneTree(dr.tree), dictData.value?.operators || []).length === 0 },
 ])
@@ -143,6 +181,7 @@ async function initialize(): Promise<void> {
   submitAttempted.value = false
   showTreeErrors.value = false
   dirty.value = false
+  appliedPlaybook.value = ''
   initialCtrl?.abort()
   const controller = new AbortController()
   initialCtrl = controller
@@ -165,7 +204,11 @@ async function initialize(): Promise<void> {
       if (!dictWarning.value) dictWarning.value = '字段配置暂时不可用。你仍可填写基础信息，恢复后再配置资格条件并保存。'
     }
     if (editId.value) await loadForEdit(editId.value, controller.signal)
-    else assignIds(dr.tree)
+    else {
+      // 玩法模板预填（PR-6）：模板只是**起点**，不是锁定——填完之后每一项都还能改。
+      applyPlaybook(route.query.playbook as string | undefined)
+      assignIds(dr.tree)
+    }
   } catch (error) {
     if ((error as Error).name !== 'AbortError') initialErr.value = (error as Error).message
   } finally {
@@ -195,6 +238,28 @@ async function retryDictionary(): Promise<void> {
 
 watch(editId, () => { void initialize() }, { immediate: true })
 
+/**
+ * 应用玩法模板（PR-6）。模板只填**起点**，不锁定任何字段——填完之后每一项都还能改。
+ *
+ * <p>刻意不设 `dirty`：用户还没动过手，此时提示「有未保存改动」会让离开守卫误伤。
+ */
+function applyPlaybook(id: string | undefined): void {
+  const pb = findPlaybook(id)
+  if (!pb?.preset) return
+  const ps = pb.preset
+  dr.activityType = ps.activityType
+  dr.redMode = ps.redMode
+  if (ps.strategy) dr.strategy = ps.strategy
+  if (ps.amount !== undefined) dr.amount = ps.amount
+  if (ps.maxDiscount !== undefined) dr.maxDiscount = ps.maxDiscount
+  if (ps.ladder) dr.ladder = ps.ladder.map((t) => ({ ...t }))
+  if (ps.conditions?.length) {
+    dr.tree = { logic: 'AND', children: ps.conditions.map((c) => ({ ...c })) } as GroupNode
+  }
+  if (!dr.name) dr.name = pb.name
+  appliedPlaybook.value = pb.name
+}
+
 async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   const r = await getDetail(id, signal)
   if (!r.ok) throw new Error(errText(r))
@@ -209,6 +274,13 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   if (rule) {
     dr.takeType = rule.redPackageTakeType || 1; dr.unit = rule.redPackageAmountUnit || '元'
     if (rule.redPackageRangeAmount) { dr.redMode = 'ladder'; dr.ladder = parseLadder(rule.redPackageRangeAmount) }
+    else if (dr.unit === '折') {
+      // 折扣型：amount 是折数，还要把封顶带回来——不带回来的话，一次「改个错别字」的编辑
+      // 就会提交一个没有封顶的折扣券，被写平面拒成 400，而运营完全不知道少了什么
+      dr.redMode = 'ratio'
+      dr.amount = rule.redPackageAmount ?? ''
+      dr.maxDiscount = rule.redPackageMaxDiscount ?? ''
+    }
     else { dr.redMode = 'fixed'; dr.amount = rule.redPackageAmount ?? '' }
   }
   if (cond && cond.conditionTreeJson) {
@@ -265,8 +337,10 @@ async function submit(): Promise<void> {
     priority: numOrNull(dr.priority),
     inventory: numOrNull(dr.inventory),
     redPackageTakeType: dr.activityType === 1 && dr.redMode === 'fixed' ? dr.takeType : null,
-    redPackageAmount: dr.activityType === 1 && dr.redMode === 'fixed' ? numOrNull(dr.amount) : null,
-    redPackageAmountUnit: dr.unit,
+    // 折扣型把「折数」放在 redPackageAmount 里，靠 unit 判别（与后端 BenefitForm 一致）
+    redPackageAmount: dr.activityType === 1 && dr.redMode !== 'ladder' ? numOrNull(dr.amount) : null,
+    redPackageAmountUnit: dr.activityType === 1 && dr.redMode === 'ratio' ? '折' : '元',
+    redPackageMaxDiscount: dr.activityType === 1 && dr.redMode === 'ratio' ? numOrNull(dr.maxDiscount) : null,
     redPackageRangeAmount: dr.activityType === 1 && dr.redMode === 'ladder' ? JSON.stringify(cleanLadder(dr.ladder)) : null,
     discountStrategy: dr.strategy,
     eligibilityConditionTree: pruneTree(dr.tree),
@@ -341,6 +415,9 @@ onBeforeRouteLeave(async () => {
         {{ dictRetrying ? '重试中…' : '重新加载字段配置' }}
       </button>
     </Banner>
+    <Banner v-if="appliedPlaybook" kind="info" class="dict-warning" data-testid="playbook-applied">
+      <span>已按「<strong>{{ appliedPlaybook }}</strong>」模板预填。模板只是起点——下面每一项都可以改。</span>
+    </Banner>
     <nav class="workflow-bar" aria-label="活动配置步骤">
       <a href="#activity-basic"><span>1</span><div><strong>基础信息</strong><small>名称 · 时间 · 地域</small></div></a>
       <Icon name="chevron-right" :size="15" />
@@ -367,7 +444,12 @@ onBeforeRouteLeave(async () => {
               />
             </label>
             <label>优先级 (越小越优先)<input v-model="dr.priority" type="number" /></label>
-            <label>库存<input v-model="dr.inventory" type="number" /></label>
+            <label class="declarative">
+              库存
+              <input v-model="dr.inventory" type="number" disabled
+                     title="本期为声明式：决策链路不读取、不扣减，不构成超发防护" />
+              <small>声明式 · 决策不扣减</small>
+            </label>
             <label>开始时间 *<input v-model="dr.startLocal" type="datetime-local" data-testid="form-start" /></label>
             <label>结束时间 *<input v-model="dr.endLocal" type="datetime-local" data-testid="form-end" /></label>
             <label>地域类型
@@ -383,18 +465,51 @@ onBeforeRouteLeave(async () => {
           <div class="seg">
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'fixed' }" :aria-pressed="dr.redMode === 'fixed'" @click="dr.redMode = 'fixed'; markDirty()">固定金额</button>
             <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ladder' }" :aria-pressed="dr.redMode === 'ladder'" @click="dr.redMode = 'ladder'; markDirty()">阶梯分档</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ratio' }" :aria-pressed="dr.redMode === 'ratio'" data-testid="mode-ratio" @click="dr.redMode = 'ratio'; markDirty()">折扣</button>
           </div>
           <div v-if="dr.redMode === 'fixed'" class="fg">
             <label>红包金额<input v-model="dr.amount" type="number" placeholder="0 ~ 999999" data-testid="form-amount" /></label>
             <label>发放方式
-              <select v-model.number="dr.takeType"><option v-for="m in distModes" :key="m.code" :value="m.code">{{ m.label }}</option></select>
+              <!-- 「随机金额」(code 2) 置灰：redPackageTakeType 全链路只被搬运，
+                   BenefitEvaluator.computeAmounts 直接把 redPackageAmount 抄给 computedAmount，
+                   从不看它——配成随机，线上照样发固定值。与 inventory 同族的声明式字段，
+                   按库存红线 B 的先例「置灰 + 明示」，而不是留着让运营配了以为生效。 -->
+              <select v-model.number="dr.takeType" data-testid="form-take-type">
+                <option v-for="m in distModes" :key="m.code" :value="m.code" :disabled="m.code !== 1">
+                  {{ m.label }}{{ m.code === 1 ? '' : '（未实现）' }}
+                </option>
+              </select>
+              <small>随机金额尚未实现：决策链路不读取该字段，配了仍按固定金额发</small>
             </label>
           </div>
-          <DynRowTable v-else :rows="dr.ladder" :headers="['起(min)', '止(max,空=无上限)', '奖励(reward)']" :make-row="() => ({ min: '', max: '', reward: '' })" label="阶梯档" v-slot="{ row }">
+          <div v-else-if="dr.redMode === 'ratio'" class="fg">
+            <label>折数 *
+              <input v-model="dr.amount" type="number" step="0.1" min="0.1" max="9.9"
+                     placeholder="8 = 八折" data-testid="form-zhe" />
+              <small>8 = 八折（按原价 80% 收，减免 20%）</small>
+            </label>
+            <label>封顶减免额 (元) *
+              <input v-model="dr.maxDiscount" type="number" min="0.01"
+                     placeholder="例如 50" data-testid="form-max-discount" />
+              <!-- 封顶不是可选项：不封顶的折扣券在大额订单上就是无上限支出 -->
+              <small>必填。打 8 折在一笔 10 万的订单上就是减 2 万</small>
+            </label>
+            <p class="plain-preview full" data-testid="ratio-plain">{{ ratioPlain }}</p>
+          </div>
+          <template v-else>
+            <!-- PR-4：档位改用刻度尺。顺序 / 间距 / 覆盖是否连续，在尺上一眼可见，不用在 N 行输入框里心算 -->
+            <TierRuler v-model="dr.ladder" />
+            <!-- 人话预览：本屏成败的分水岭。运营填完必须知道自己配出了什么，否则不敢按发布 -->
+            <p class="plain-preview" data-testid="tier-plain">{{ tierPlain }}</p>
+            <details class="raw-tiers">
+              <summary>精确编辑（起 / 止 / 奖励）</summary>
+          <DynRowTable :rows="dr.ladder" :headers="['起(min)', '止(max,空=无上限)', '奖励(reward)']" :make-row="() => ({ min: '', max: '', reward: '' })" label="阶梯档" v-slot="{ row }">
             <input type="number" v-model="(row as LadderRow).min" />
             <input type="number" v-model="(row as LadderRow).max" />
             <input type="number" v-model="(row as LadderRow).reward" />
           </DynRowTable>
+            </details>
+          </template>
         </Section>
         <Section v-else-if="dr.activityType === 5" id="activity-benefit" :num="2" title="买赠赠品明细" desc="配置命中活动后返回的赠品与权益。">
           <DynRowTable :rows="dr.gifts" :headers="['批次', '赠品名', '类型', '数量', '金额', '权益类型']" :make-row="() => ({ batchId: '', giftName: '', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 0, rightType: 'GIFT' })" label="赠品" :min-width="600" v-slot="{ row }">
@@ -497,6 +612,17 @@ onBeforeRouteLeave(async () => {
 </template>
 
 <style scoped>
+.plain-preview {
+  margin: var(--gap-inline) 0 0; padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-soft); border-left: 3px solid var(--accent-line);
+  font-size: var(--fs-lg); line-height: var(--lh-relaxed); color: var(--text);
+}
+.raw-tiers { margin-top: var(--gap-group); }
+.raw-tiers summary { font-size: var(--fs-sm); color: var(--text-faint); cursor: pointer; }
+
+/* 声明式字段：配置存得下但当前实现不执行。置灰 + 明示，避免运营以为配了就生效（DECISION_RECORD D12-3）。 */
+.declarative input[disabled] { background: var(--bg-soft); color: var(--text-faint); cursor: not-allowed; }
+.declarative small { display: block; margin-top: 2px; font-size: 11px; color: var(--warn); }
 .initial-error { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-4); }.initial-error span { font-size: var(--fs-xs); }.initial-error button { margin-top: var(--sp-1); padding: var(--sp-1) var(--sp-3); border: 1px solid currentColor; border-radius: var(--radius-sm); background: transparent; color: inherit; cursor: pointer; }
 .dict-warning { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }.dict-warning span, .dict-warning strong { display: block; }.dict-warning strong { margin-bottom: 2px; }.dict-warning button { flex: 0 0 auto; padding: var(--sp-1) var(--sp-3); border: 1px solid currentColor; border-radius: var(--radius-sm); background: transparent; color: inherit; cursor: pointer; }.dict-warning button:disabled { opacity: .55; cursor: wait; }
 .workflow-bar { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }

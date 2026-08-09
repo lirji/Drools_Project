@@ -70,7 +70,10 @@ export interface ActivityCreateRequest {
   inventory: number | null
   redPackageTakeType: number | null
   redPackageAmount: number | null
+  /** 权益形态判别位：'元' = 金额型（amount 是钱），'折' = 折扣型（amount 是折数） */
   redPackageAmountUnit: string
+  /** 折扣型的封顶减免额（元）。后端对折扣型强制非空——不封顶等于无上限支出 */
+  redPackageMaxDiscount?: number | null
   redPackageRangeAmount: string | null
   discountStrategy: string
   eligibilityConditionTree: ConditionNode | null
@@ -86,6 +89,8 @@ export interface ActivityCreateResult {
   status: number
   autoBoundCount: number
   idempotentHit: boolean
+  /** 配置被接受、但当前实现不会执行的部分（如库存声明式不扣减）。见 DECISION_RECORD D12-3。 */
+  warnings?: string[]
 }
 
 /** GET /activity-marketing/list 行 */
@@ -96,6 +101,23 @@ export interface ActivityListRow {
   activityType: number
   activityStatus: number
   version: number
+  /** 以下三项后端 list() 一直返回（它返回的是完整 ActivityManageEntity），只是此前 TS 没声明。 */
+  activityStartTime?: string | number | null
+  activityEndTime?: string | number | null
+  inventory?: number | null
+}
+
+/** POST /activity-marketing/bulk-status —— 一项 = 「哪个活动的哪一版」。
+ *  必须带显式 version：P0-4 之后线上版与草稿并存，不传版本会打到草稿、线上继续发钱。 */
+export interface BulkStatusItem {
+  activityId: string
+  version: number
+}
+
+/** bulk-status 回执。部分失败是正常结果（HTTP 恒 200），由前端渲染。 */
+export interface BulkStatusResult {
+  succeeded: string[]
+  failed: Array<{ activityId: string; reason: string }>
 }
 
 /** POST /activity-marketing/spu-discount | /gifts 请求 */
@@ -106,6 +128,9 @@ export interface SpuDiscountRequest {
   userTags: string[]
   orderAmount: number | null
   quantity: number | null
+  /** 「这一单来自哪个门店」。条件白名单里的 storeId 靠它取值——此前后端入参没有该字段，
+   *  导致配了 storeId 条件的活动永远不命中（静默不发）。见 DECISION_RECORD D12-4。 */
+  storeId: number | null
 }
 
 export interface ApiResult<T = unknown> {
