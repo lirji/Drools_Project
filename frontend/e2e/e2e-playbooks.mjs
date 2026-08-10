@@ -73,8 +73,8 @@ try {
   await p.waitForSelector('[data-testid="editor-view"]', { timeout: 10000 })
   await p.waitForSelector('[data-testid="playbook-applied"]', { timeout: 10000 })
   const banner = await p.locator('[data-testid="playbook-applied"]').innerText()
-  check(/阶梯满减/.test(banner) && /都可以改/.test(banner),
-    '编辑器提示「已按阶梯满减模板预填，每一项都可以改」', brief(banner))
+  check(/起点/.test(banner) && /阶梯满减/.test(banner) && /都可以改/.test(banner),
+    '编辑器提示「起点为阶梯满减模板，每一项都可以改」', brief(banner))
 
   const plain = await p.locator('[data-testid="tier-plain"]').innerText()
   check(/300/.test(plain) && /600/.test(plain) && /1,?000/.test(plain),
@@ -101,24 +101,20 @@ try {
   await p.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('折扣券可保存 —— 写平面强制封顶，能存下来就说明封顶真的提交了')
 
-  // ---- ⑤ 「随机金额」已接入决策链路：可选，且选中后换成区间输入 ----
-  // 原断言是「保留但禁用」——那编码的是 redPackageTakeType 全链路零读取的旧现实，
-  // 已被 BenefitEvaluator.drawRandom 推翻。断言随之翻面。
+  // ---- ⑤ 「随机金额」是一等权益形态：独立 chip，且选中后换成区间输入 ----
   await p.goto(`${BASE}/ui/console/activities/new?playbook=flat`)
-  await p.waitForSelector('[data-testid="form-take-type"]', { timeout: 10000 })
-  const disabled = await p.$$eval('[data-testid="form-take-type"] option',
-    (os) => os.filter((o) => o.textContent.includes('随机金额')).map((o) => o.disabled))
-  check(disabled.length === 1 && disabled[0] === false,
-    '「随机金额」已可选（决策链路已接入）', JSON.stringify(disabled))
+  await p.waitForSelector('[data-testid="mode-random"]', { timeout: 10000 })
+  const legacyTakeType = await p.locator('[data-testid="form-take-type"]').count()
+  check(legacyTakeType === 0, '发放方式下拉已撤掉，不再形成随机形态的第二权威', `旧下拉数 ${legacyTakeType}`)
 
-  await p.selectOption('[data-testid="form-take-type"]', '2')
+  await p.locator('[data-testid="mode-random"]').click()
   await p.waitForSelector('[data-testid="form-range-min"]', { timeout: 10000 })
   const hasRange = await p.locator('[data-testid="form-range-max"]').count()
   const hasFixed = await p.locator('[data-testid="form-amount"]').count()
   check(hasRange === 1 && hasFixed === 0,
     '选中随机后固定金额输入让位给区间两端', `range=${hasRange} fixed=${hasFixed}`)
   // 必须写明它不是真抽奖——否则运营会以为多刷几次能拿到不同金额
-  const takeHint = await p.locator('[data-testid="form-take-type"]').locator('xpath=..').innerText()
+  const takeHint = await p.locator('[data-testid="form-range-min"]').locator('xpath=../..').innerText()
   check(/确定性随机/.test(takeHint), '写明是确定性随机（刷新不变价）', brief(takeHint))
 
   // ---- ⑥ 零横向溢出 ----

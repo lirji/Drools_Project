@@ -117,15 +117,64 @@
 | `tab-playbooks` | `SidebarNav` 控制台子导航 | 新增第 2 项，插在 `tab-list` 与 `tab-new` 之间（两者均未改名） |
 | `playbooks-view` | `PlaybooksView` | 模板屏容器 |
 | `playbooks-note` | `PlaybooksView` | 「这些模板不新增后端能力」说明卡 |
-| `playbook-filter-{all\|reduce\|targeted\|gift\|blocked}` | `PlaybooksView` | 分类筛选 chip |
+| `playbook-filter-{all\|reduce\|targeted\|gift\|blocked}` | `PlaybooksView` | 分类筛选 chip；计数为 0 的分组不渲染 |
 | `playbook-card-{id}` | `PlaybooksView` | 玩法券卡（id 见 `playbooks.ts`） |
 | `playbook-use-{id}` | `PlaybooksView` | 「用它新建」；**不可用的玩法刻意没有这个 testid** |
 | `playbook-blank` | `PlaybooksView` 页头 | 从空白新建 |
-| `playbook-applied` | `EditorView` | 「已按 X 模板预填」提示条 |
-| `form-take-type` | `EditorView` 发放方式下拉 | 发放方式（1 固定 / 2 随机）。~~「随机金额」恒 disabled~~ —— **2026-08 已接入决策链路，该选项现在可选**，选中后 `form-amount` 让位给 `form-range-min/max` |
+| `playbook-applied` | `EditorView` | 「起点：X」提示条；普通编辑后追加「已改动」，切活动类型/权益形态后失效 |
+| `mode-random` | `EditorView` 权益形态 chip | 随机金额一等形态；旧 `form-take-type` 下拉已撤销，`redPackageTakeType` 由形态推导 |
 
 新增 e2e：`e2e-playbooks.mjs`（`npm run e2e:playbooks`），覆盖侧栏入口 / 12 张卡 /
-不可用玩法写明缺什么且无按钮 / 筛选 / **跨屏预填链路** / 随机金额可选且换成区间输入 / 1440 与 390 零横向溢出。
+不可用玩法写明缺什么且无按钮 / 筛选 / **跨屏预填链路** / 随机形态切换与区间输入 / 1440 与 390 零横向溢出。
+
+## 2026-08 优惠验证全玩法
+
+> 共用一页承载三条真实决策通道。玩法场景只准备输入形状与选择通道，不把玩法断言写进 URL，
+> 也不保证命中；E2E 在独立租户内创建并上线唯一 SPU 活动，命中与否仍由服务端候选和资格条件决定。
+
+### 场景与通道
+
+| testid / value | 位置 | 说明 |
+|---|---|---|
+| `v-scenario` | ValidateView 场景选择 | 稳定 value：`flat` / `threshold` / `ladder` / `quantity` / `discount` / `tagged` / `store` / `region` / `gift` / `second-half` / `flash` / `addon` / `random` |
+| `v-scenario-note` | 场景说明 | 明示场景只准备上下文、不指定活动且不保证命中 |
+| `validate-mode-discount` | 通道选择 | 红包优惠；对应 `POST /activity-marketing/spu-discount` |
+| `validate-mode-gifts` | 通道选择 | 买赠赠品；对应 `POST /activity-marketing/gifts` |
+| `validate-mode-addon` | 通道选择 | 加价购；对应 options → 用户选择 → quote 两阶段 |
+| `v-discount` / `v-gifts` / `v-addon-options` | 当前通道运行按钮 | 三者按当前场景互斥渲染；切场景会清除旧结果 |
+
+### 决策上下文与结果
+
+| testid | 位置 | 说明 |
+|---|---|---|
+| `v-spu` | 普通汇总模式 | 逗号分隔 SPU；只接受安全范围内的有限正整数 |
+| `v-order-amount` / `v-quantity` | 普通汇总模式 | 有限正金额 / 正整数数量 |
+| `v-user` / `v-district` / `v-store` / `v-tags` | 用户与订单上下文 | 用户、地域、门店、标签资格事实 |
+| `v-lines` / `v-line-{i}` | `second-half` 明细模式 | 订单行容器 / 第 i 行；此模式不渲染汇总输入 |
+| `v-line-spu-{i}` / `v-line-price-{i}` / `v-line-qty-{i}` | 明细行 | SPU、单价、数量；唯一导出 `spuIdList/orderAmount/quantity/lines` |
+| `v-line-add` / `v-line-remove-{i}` / `v-line-summary` | 明细编辑 | 增行、删行、只读汇总 |
+| `validate-result` | 统一结果摘要 | discount 的 hit/miss、gifts 的 hit/empty、addon 的 options/empty |
+| `v-error` | 请求失败 | 输入校验或非 409 请求错误；残缺/NaN 输入不会发请求 |
+| `v-inventory-note` | flash / addon | 明示试算不扣减、不占用库存 |
+| `v-price-breakdown` | flash 命中结果 | 原价 / 减免 / 应付；决策只是报价 |
+
+### 加价购两阶段
+
+稳定交互顺序：`v-scenario=addon` → 填 `v-spu` 与订单上下文 → `v-addon-options` →
+用户勾选 `v-addon-option-{i}` → `v-addon-quote`。不得自动替用户选择选项。
+
+| testid | 说明 |
+|---|---|
+| `v-addon-option-{i}` | options 返回的第 i 个用户可选 radio |
+| `v-addon-quote` | 以所选 `activityId + itemName` 请求服务端权威报价 |
+| `v-addon-quote-result` | 200 且 `ok=true`；明示未下单、未占库存 |
+| `v-addon-conflict` | 伪造、资格变化或活动/选项失效导致的独立 409 状态 |
+
+新增真链路 e2e：`e2e-validation.mjs`（`npm run e2e:validate`，默认 BASE=8095，header-only）。
+脚本覆盖 12 个模板场景 + random 的正向，threshold / ladder / quantity / targeting / gift 499→500 /
+nth / flash / addon 的反向，random 同上下文复跑与区间，addon options→radio→quote + 伪造/失效 409，
+flash 试算前后库存不变，以及 390 / 768 / 1440 零页面级横向溢出。测试数据按时间戳隔离，失败截图写 `/tmp`，
+`finally` 尽力下线本次创建的全部活动。
 
 **图标系统**：全站 emoji/几何字形已统一为内联 SVG `Icon.vue`（`shared/ui/Icon.vue`）。装饰性图标 `aria-hidden`，语义图标透传 `aria-label`。
 **路由过渡**：`PageTransition.vue` 落 AppShell / ConsoleShell / DemoShell 三出口；被全局 `prefers-reduced-motion` 兜底禁用。
@@ -142,14 +191,17 @@
 
 | testid | 出现条件 | 说明 |
 |---|---|---|
+| `mode-fixed` / `mode-random` / `mode-ladder` | 活动类型=红包 | 形态切换到固定金额 / 随机金额 / 阶梯分档 |
 | `mode-ratio` | 活动类型=红包 | 形态切换到折扣型 |
 | `form-zhe` / `form-max-discount` | `redMode='ratio'` | 折数 (0,10) 与**必填**封顶额 |
 | `form-price` | `redMode='price'` | 一口价（秒杀）卖多少；配 `form-seckill-inventory` |
 | `form-seckill-inventory` | `redMode='price'` | 秒杀库存；真扣减走写平面 `/{id}/claim` |
 | `form-nth` / `form-nth-zhe` | `redMode='nth'` | 第几件（≥2）与折数；需决策入参带 `lines` |
-| `form-range-min` / `form-range-max` | `takeType=2` | 随机红包区间两端（存成 `{"min","max"}` 对象，与阶梯的数组互斥） |
+| `form-range-min` / `form-range-max` | `redMode='random'` | 随机红包区间两端（存成 `{"min","max"}` 对象，与阶梯的数组互斥） |
 | `ratio-plain` | `EditorView` 折扣型 | 人话预览（封顶额与到顶门槛） |
 | `detail-ratio` | `DetailView` | 折扣型详情展示（折数不能按金额渲染） |
+| `detail-benefit-form` / `panel-benefit-form` | `DetailView` / `ListView` 侧板 | 从 rule 数据导出的权益形态徽标 |
+| `undo-red-mode` | 切换权益形态后的 toast | 撤销本次切换并恢复被清理的形态字段 |
 
 ### 阶梯刻度尺（`TierRuler`）
 

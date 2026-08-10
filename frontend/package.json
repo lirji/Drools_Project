@@ -19,6 +19,7 @@
     "e2e:ruler": "node e2e/e2e-tier-ruler.mjs",
     "e2e:bench": "node e2e/e2e-bench.mjs",
     "e2e:playbooks": "node e2e/e2e-playbooks.mjs",
+    "e2e:validate": "node e2e/e2e-validation.mjs",
     "e2e:visual": "node e2e/e2e-visual-guard.mjs"
   },
   "dependencies": {
