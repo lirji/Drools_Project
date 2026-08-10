@@ -46,7 +46,7 @@ Observed result（**首轮 QA，2026-08-10 14:44 前**）：
 
 Re-verification（**返工后复跑，2026-08-10 晚**）：
 
-- Maven full reactor: common 143（3 skipped）+ console **200** + decision 17 = **360 tests / 3 skipped / 0 failures / BUILD SUCCESS**。
+- Maven full reactor: common 150（3 skipped）+ console **204** + decision 17 = **371 tests / 3 skipped / 0 failures / BUILD SUCCESS**。
   （console 由 197→200 是 `ActivityAuthIntegrationTest` 新增 claim / bulk-status 写权限边界用例；
   与 357 的差异**只**来自这 3 个新用例，不存在「用例神秘消失」。用例数以 `Tests run:` 汇总为准，
   求和 surefire XML 会少数 50 个，见 `CLAUDE.md` 坑 14。）
@@ -71,7 +71,7 @@ BASE=http://localhost:8095 npm --prefix frontend run e2e:validate
 
 ## Quality Gate
 
-- Backend: 全反应堆 **360 tests**，0 failures/errors，3 skipped（返工后复跑）。
+- Backend: 全反应堆 **371 tests**，0 failures/errors，3 skipped（返工后复跑）。
 - Frontend: 25 files / 270 component tests、typecheck 和 production build 均通过（返工后复跑）。
 - Runtime: 返工后整栈重建 `e2e:validate` **472/0**。
 - Side effects: flash/add-on 库存前后不变，验证流程无 claim。

@@ -13,12 +13,12 @@
 
 > ⚠️ 本报告记录的是 **2026-08-10 14:44 前的首轮 QA**。之后 14:58–15:10 又有一批返工，
 > 下列数字**不覆盖最终代码**。返工后的复跑证据见 `DELIVERY_REPORT.md` 的 Re-verification 段
-> （Maven **360 / 3 skip**、前端 274 + typecheck + build、`e2e:validate` **472/0**）。
+> （Maven **371 / 3 skip**、前端 274 + typecheck + build、`e2e:validate` **472/0**）。
 
 - Verdict: **PASS**（仅对首轮那版代码成立）
 - Automated browser result: **pass=472 / fail=0**
 - Full Maven reactor: **BUILD SUCCESS — 357 tests, 3 skipped, 0 failures/errors**
-  （返工后为 360；差异只来自 `ActivityAuthIntegrationTest` 新增的 3 个写权限边界用例）
+  （返工后为 371；差异来自 ActivityAuthIntegrationTest 的 3 个写权限边界用例，以及 H-1 修复配套的 7+2 例阶梯守卫，其中金标那 2 例因子类继承会各跑两遍）
 - Manual Chrome acceptance: **PASS**，console `warning/error=[]`
 
 ## Acceptance Results

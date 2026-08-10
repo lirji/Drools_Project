@@ -1,7 +1,7 @@
 # QA 环境档案 · drools-demo（活动营销多租户）
 
 > 首次由 /qa-test 勘察生成（2026-07-19）。人工可改，下次直接复用。
-> 能力与端点最后同步 2026-08-10（全玩法优惠验证 + 三通道资格收敛）。下文标注 2026-08-09 的数字仅作历史基线；本批最新实跑（2026-08-10 晚，**返工后复跑**）是 Maven **360 tests / 3 skip / BUILD SUCCESS**（common 143 含 3 skip / console 200 / decision 17）+ vitest **25 文件 270 passed** + `vue-tsc` 与生产构建通过，与 Docker header 档（`DROOLS_FOUR_EYES_ENABLED=true`）`e2e:validate` **pass=472 / fail=0**。
+> 能力与端点最后同步 2026-08-10（全玩法优惠验证 + 三通道资格收敛）。下文标注 2026-08-09 的数字仅作历史基线；本批最新实跑（2026-08-10 晚，**返工后复跑**）是 Maven **371 tests / 3 skip / BUILD SUCCESS**（common 150 含 3 skip / console 204 / decision 17）+ vitest **25 文件 270 passed** + `vue-tsc` 与生产构建通过，与 Docker header 档（`DROOLS_FOUR_EYES_ENABLED=true`）`e2e:validate` **pass=472 / fail=0**。
 >
 > ⚠️ 用例数只认 `./mvnw test` 输出的 `Tests run:` 汇总。**求和 surefire XML 会少数 50 个**（`DroolsBenefitGoldenSetTest` 让父类的 `@Nested` 用例重跑一遍并覆盖同名报告，见 `CLAUDE.md` 坑 14）。本文件早先版本里的 307 与 357 都源自这个陷阱，已作废。
 
@@ -55,7 +55,7 @@
 
 ## 测试素材
 - 接口 + curl 示例：`docs/activity-marketing.md`。
-- 回归单测历史基线：`./mvnw test`（**2026-08-09** 本机实跑 **BUILD SUCCESS**，共 **314 跑 / 3 skip**：common **121**(3 skip) / drools-lab **0**（该模块无测试）/ console **176** / decision **17**）。含 `DecisionAuthIntegrationTest` 的 decision 401/403/200 边界、`DecisionGoldenSetTest` 金标集（当时确实 Java 与全 Drools 两条路各跑一遍；灰度开关现已退役，见下「旧 DRL 不能当六形态回退」）、`DecisionDdlGuardTest`（decision 的 `ddl-auto` 漂回 `update` 即红）。这组数字只保留作历史对照；本批当前全反应堆证据是本文顶部记录的 **360 tests / 3 skip**。
+- 回归单测历史基线：`./mvnw test`（**2026-08-09** 本机实跑 **BUILD SUCCESS**，共 **314 跑 / 3 skip**：common **121**(3 skip) / drools-lab **0**（该模块无测试）/ console **176** / decision **17**）。含 `DecisionAuthIntegrationTest` 的 decision 401/403/200 边界、`DecisionGoldenSetTest` 金标集（当时确实 Java 与全 Drools 两条路各跑一遍；灰度开关现已退役，见下「旧 DRL 不能当六形态回退」）、`DecisionDdlGuardTest`（decision 的 `ddl-auto` 漂回 `update` 即红）。这组数字只保留作历史对照；本批当前全反应堆证据是本文顶部记录的 **371 tests / 3 skip**。
   - 跑不绿先看坑2 的 `FixedPriceAndClaimTest` 那条，多半是 H2 file 锁而不是真回归。
 - 前端单测历史基线：`cd frontend && npm run test`（vitest **154 绿 / 22 文件**，**2026-08-09** 实跑；不作为本批 ValidateView 新测试的当前总数）。
 - 前端 E2E 历史基线为 **9 套**：`e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:ruler` / `e2e:bench` / `e2e:playbooks` / `e2e:visual` / `e2e:oidc`，全部使用 `BASE=http://localhost:8095 npm --prefix frontend run <script>`。

@@ -100,10 +100,13 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
 ./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
 
-./mvnw test                   # 跑全 reactor 测试（common 143（含 3 skipped）+ console 200 + decision 17 = 360，2026-08-10 本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
+./mvnw test                   # 跑全 reactor 测试（common 150（含 3 skipped）+ console 204 + decision 17 = 371，2026-08-10 本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
 ./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
-# 单模块：./mvnw -pl activity-common test（-am 连带先构建依赖模块）
+# 单模块：./mvnw -pl activity-common test
+# ⚠ 改了 activity-common 却只跑 `-pl activity-console test`，Maven 会用 ~/.m2 里的**旧 jar**，
+#   你的改动根本没进去。表现极具迷惑性：common 的单测绿、console 的集成测试红。
+#   跑下游模块前先 `./mvnw -pl activity-common install -DskipTests`，或直接加 `-am`。
 
 # 起整套微服务编排（nginx 网关 :8095 + console + decision + MySQL 单库双账号 + Prometheus :9090 + Grafana :3001）
 docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 http://localhost:8095/ui/console

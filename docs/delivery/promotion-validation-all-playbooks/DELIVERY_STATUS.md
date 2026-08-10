@@ -6,12 +6,12 @@
 
 ## State
 
-- Phase: Phase 6 — 返工后已复验，待提交
-- Status: 代码与文档就绪；**工作树尚未提交**，且有 2 条既有金额缺陷未修（见 `POST-REWORK-REVIEW.md`）
+- Phase: Phase 7 — 返工已复验，H-1 已修
+- Status: 已提交并合入 main（2026-08-10 晚）。剩余 L-1（SPU 作用域建模缺口）需单独立项，见 `POST-REWORK-REVIEW.md`
 - Last updated: 2026-08-10 晚 Asia/Taipei
 
 > 首轮交付（14:44）之后又有一批返工（14:58–15:10），当时记录的 357 tests / 472 E2E **不覆盖返工后的代码**。
-> 返工后已完整复跑：Maven **360 / 3 skip / BUILD SUCCESS**、前端 **274** + typecheck + build、Docker `e2e:validate` **472/0**。
+> 返工后已完整复跑：Maven **371 / 3 skip / BUILD SUCCESS**、前端 **274** + typecheck + build、Docker `e2e:validate` **472/0**。
 
 ## Completed
 
@@ -97,7 +97,8 @@
 
 ## Next Action
 
-1. 读 `POST-REWORK-REVIEW.md`，决定两条既有金额缺陷（阶梯未落档的 0 元候选在 PRIORITY 下挤掉真优惠；第 N 件折跨 SPU 超发）是本批一起修还是单独立项——它们都会改变发放金额，需要金标集配套更新。
-2. 决定 `frontend/src/console/logic.ts` 的「阶梯 + 底价」往返丢字段是否本批修（属本批新引入的共享 helper）。
-3. 上述决定后再提交工作树（当前 48 改 + 10 新，一行未提交）。
-4. 本机编排目前停在 **header 档**（`DROOLS_AUTH_ENABLED=false` + dev-default + four-eyes）。要回默认 auth 档：`./deploy.sh --skip-build --core-only`。
+1. **L-1 单独立项**：给 `ActivityCandidate` 带上绑定 SPU 集合，并统一六形态的作用域语义
+   （现在六形态一律吃整单上下文，只改其中一种会让各形态口径不一）。需要产品先定「优惠是否只作用于绑定商品」。
+2. `NotApplicableCandidateTest#negativeLadderTierIsNotApplied` 覆盖偏弱——只断言金额、不断言 `eligible`，
+   建议顺手补齐。
+3. 本机编排目前停在 **header 档**（`DROOLS_AUTH_ENABLED=false` + dev-default + four-eyes）。要回默认 auth 档：`./deploy.sh --skip-build --core-only`。
