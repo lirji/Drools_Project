@@ -2,21 +2,30 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
+import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
+import com.lrj.drools.activity.engine.ConditionTreeEvaluator;
+import com.lrj.drools.activity.engine.RuleSchemaRegistry;
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.DecisionDataLoader;
+import com.lrj.drools.activity.service.DecisionEligibilityService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -48,15 +57,45 @@ class AddOnPurchaseTest {
 
     /** 用桩 loader 隔掉数据库：这批测试要证的是两阶段协议，不是取数。 */
     private static AddOnPurchaseService serviceReturning(List<ActivityCandidate> candidates) {
+        return serviceReturning(new DecisionDataLoader.Materials(candidates, List.of(), Map.of()));
+    }
+
+    private static AddOnPurchaseService serviceReturning(DecisionDataLoader.Materials materials) {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
-        DecisionDataLoader.Materials m = mock(DecisionDataLoader.Materials.class);
-        when(m.candidates()).thenReturn(candidates);
-        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(m);
-        return new AddOnPurchaseService(loader);
+        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(materials);
+        return service(loader);
+    }
+
+    private static AddOnPurchaseService service(DecisionDataLoader loader) {
+        DecisionEligibilityService eligibility = new DecisionEligibilityService(
+                new ConditionTreeEvaluator(), new RuleSchemaRegistry(), DecisionMetrics.noop());
+        return new AddOnPurchaseService(loader, eligibility);
     }
 
     private static SpuDiscountRequest req() {
-        return new SpuDiscountRequest(List.of(990011L), 1001L, null, null, new BigDecimal("200"), 1);
+        return req("200");
+    }
+
+    private static SpuDiscountRequest req(String orderAmount) {
+        return new SpuDiscountRequest(List.of(990011L), 1001L, null, null,
+                new BigDecimal(orderAmount), 1);
+    }
+
+    private static DecisionDataLoader.Materials minimumOrderMaterials(String activityId) {
+        return minimumOrderMaterials(activityId, 500);
+    }
+
+    private static DecisionDataLoader.Materials minimumOrderMaterials(String activityId, int minimum) {
+        ActivityCandidate candidate = withGifts(activityId, gift("保温杯", "9.9"));
+        ConditionNode threshold = new ConditionNode();
+        threshold.setField("orderAmount");
+        threshold.setOp("ge");
+        threshold.setValue(minimum);
+        return new DecisionDataLoader.Materials(
+                List.of(candidate),
+                List.of(new EligibilityRuleDef(activityId,
+                        "numberAttr(\"orderAmount\") >= " + minimum)),
+                Map.of(activityId, threshold));
     }
 
     @Test
@@ -89,6 +128,74 @@ class AddOnPurchaseTest {
         var r = svc.options(req());
         assertThat(r.options()).extracting(AddOnPurchaseService.AddOnOption::itemName)
                 .containsExactly("正常的");
+    }
+
+    @Test
+    @DisplayName("加价购资格边界：499 不出选项，500 才出选项，并带资格 trace")
+    void optionsRespectEligibilityBoundary() {
+        var below = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("499"));
+        assertThat(below.options()).isEmpty();
+        assertThat(below.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
+
+        var at = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("500"));
+        assertThat(at.options()).hasSize(1);
+        assertThat(at.traces()).contains("eligible: ACT-LIMIT");
+    }
+
+    @Test
+    @DisplayName("第二阶段重新加载后重跑同一资格，资格变化会拒绝旧选项并带 trace")
+    void quoteRechecksEligibility() {
+        var rejected = serviceReturning(minimumOrderMaterials("ACT-LIMIT"))
+                .quote(req("499"), "ACT-LIMIT", "保温杯");
+        assertThat(rejected.ok()).isFalse();
+        assertThat(rejected.addOnPrice()).isNull();
+        assertThat(rejected.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
+
+        var accepted = serviceReturning(minimumOrderMaterials("ACT-LIMIT"))
+                .quote(req("500"), "ACT-LIMIT", "保温杯");
+        assertThat(accepted.ok()).isTrue();
+        assertThat(accepted.traces()).contains("eligible: ACT-LIMIT");
+    }
+
+    @Test
+    @DisplayName("同一服务的两阶段间门槛变更：quote 必须重新 load/requalify 并拒绝旧选项")
+    void quoteReloadsAndRejectsWhenEligibilityChangesBetweenPhases() {
+        DecisionDataLoader loader = mock(DecisionDataLoader.class);
+        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(
+                minimumOrderMaterials("ACT-LIMIT", 100),
+                minimumOrderMaterials("ACT-LIMIT", 500));
+        AddOnPurchaseService svc = service(loader);
+
+        var first = svc.options(req("200"));
+        assertThat(first.options()).hasSize(1);
+
+        var quote = svc.quote(req("200"), "ACT-LIMIT", "保温杯");
+        assertThat(quote.ok()).isFalse();
+        assertThat(quote.addOnPrice()).isNull();
+        assertThat(quote.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
+        verify(loader, times(2)).load(any(), any(ActivityType.class), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("同一服务的两阶段间换购品删除：quote 不得沿用第一阶段价格")
+    void quoteReloadsAndRejectsWhenConfigurationChangesBetweenPhases() {
+        DecisionDataLoader loader = mock(DecisionDataLoader.class);
+        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(
+                new DecisionDataLoader.Materials(
+                        List.of(withGifts("ACT-A", gift("保温杯", "9.9"))), List.of(), Map.of()),
+                new DecisionDataLoader.Materials(
+                        List.of(withGifts("ACT-A", gift("雨伞", "19.9"))), List.of(), Map.of()));
+        AddOnPurchaseService svc = service(loader);
+
+        assertThat(svc.options(req()).options())
+                .extracting(AddOnPurchaseService.AddOnOption::itemName)
+                .containsExactly("保温杯");
+        var quote = svc.quote(req(), "ACT-A", "保温杯");
+
+        assertThat(quote.ok()).isFalse();
+        assertThat(quote.addOnPrice()).isNull();
+        assertThat(quote.reason()).contains("失效");
+        verify(loader, times(2)).load(any(), any(ActivityType.class), anyBoolean());
     }
 
     @Test

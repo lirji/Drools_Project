@@ -102,7 +102,9 @@ public class DecisionPlaneController {
      */
     @PostMapping("/addon/options")
     public ResponseEntity<?> addOnOptions(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(addOn.options(req));
+        // 决策热路径 explain=false：逐候选资格 trace 不外泄（与 spu-discount 的分档约定一致）。
+        // console 的 /activity-marketing/addon/* 别名是试算档，那边保持 true。
+        return ResponseEntity.ok(addOn.options(req, false));
     }
 
     /**
@@ -116,7 +118,7 @@ public class DecisionPlaneController {
     public ResponseEntity<?> addOnQuote(@RequestBody SpuDiscountRequest req,
                                         @RequestParam("activityId") String activityId,
                                         @RequestParam("item") String item) {
-        var q = addOn.quote(req, activityId, item);
+        var q = addOn.quote(req, activityId, item, false);
         return q.ok() ? ResponseEntity.ok(q) : ResponseEntity.status(409).body(q);
     }
 

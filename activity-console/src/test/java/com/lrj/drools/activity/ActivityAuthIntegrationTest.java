@@ -63,7 +63,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "activity.tenant.auth.enabled=true",
         "activity.tenant.auth.warmup-enabled=false",
         "activity.tenant.auth.issuer=https://test-issuer",
-        "activity.tenant.auth.audience-templates=activity-{tenant}-cid"
+        "activity.tenant.auth.audience-templates=activity-{tenant}-cid",
+        "activity.tenant.auth.console-write-authority=SCOPE_activity.write"
 })
 @Import(ActivityAuthIntegrationTest.TestDecoderConfig.class)
 class ActivityAuthIntegrationTest {
@@ -101,16 +102,21 @@ class ActivityAuthIntegrationTest {
 
     /** 复现实测：owner=admin（非组织），租户信息在 aud。 */
     private String mint(String aud) {
+        return mint(aud, false);
+    }
+
+    private String mint(String aud, boolean writer) {
         JwtEncoder encoder = new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(RSA)));
         Instant now = Instant.now();
-        JwtClaimsSet claims = JwtClaimsSet.builder()
+        JwtClaimsSet.Builder builder = JwtClaimsSet.builder()
                 .issuer("https://test-issuer")
                 .subject("admin/" + aud)
                 .audience(List.of(aud))
                 .claim("owner", "admin")
                 .issuedAt(now)
-                .expiresAt(now.plusSeconds(300))
-                .build();
+                .expiresAt(now.plusSeconds(300));
+        if (writer) builder.claim("scope", "activity.write");
+        JwtClaimsSet claims = builder.build();
         JwsHeader header = JwsHeader.with(SignatureAlgorithm.RS256).keyId(RSA.getKeyID()).build();
         return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     }
@@ -131,6 +137,50 @@ class ActivityAuthIntegrationTest {
     }
 
     @Test
+    void addOnValidationAliasWithoutToken_unauthorized() throws Exception {
+        mvc.perform(post("/activity-marketing/addon/options")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spuIdList\":[990011],\"userTags\":[],\"orderAmount\":200,\"quantity\":1}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void addOnQuoteAliasWithoutToken_unauthorized() throws Exception {
+        // 两阶段的第二阶段同样必须拦在门外——quote 会返回权威价格，比 options 更不能匿名读
+        mvc.perform(post("/activity-marketing/addon/quote")
+                        .param("activityId", "ACT-X").param("item", "保温杯")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spuIdList\":[990011],\"userTags\":[],\"orderAmount\":200,\"quantity\":1}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void addOnAliasTenantIsolation() throws Exception {
+        // 别名挂在 /activity-marketing/* 下，租户隔离必须与其它端点同规格：
+        // beta 的 token 打 acme 的加价购活动，应看不到任何选项（隔离到空，而不是 403 泄漏存在性）。
+        String acme = mint("activity-acme-cid", true);
+        long spuId = 990500L;
+        mvc.perform(post("/activity-marketing/create")
+                        .header("Authorization", "Bearer " + acme)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"requestId\":\"" + java.util.UUID.randomUUID() + "\",\"activityName\":\"acme 加价购\","
+                                + "\"activityType\":6,\"activityStartTime\":" + (System.currentTimeMillis() - 3600_000)
+                                + ",\"activityEndTime\":" + (System.currentTimeMillis() + 86400_000)
+                                + ",\"activityAreaType\":1,\"priority\":1,\"discountStrategy\":\"MAX\","
+                                + "\"spuBindings\":[{\"storeId\":1,\"spuId\":" + spuId + "}],"
+                                + "\"gifts\":[{\"giftName\":\"保温杯\",\"giftNum\":1,\"absoluteAmount\":9.9,\"rightType\":\"ADD_ON\"}]}"))
+                .andExpect(status().isOk());
+
+        String beta = mint("activity-beta-cid");
+        mvc.perform(post("/activity-marketing/addon/options")
+                        .header("Authorization", "Bearer " + beta)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"spuIdList\":[" + spuId + "],\"userTags\":[],\"orderAmount\":200,\"quantity\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("acme 加价购"))));
+    }
+
+    @Test
     void unknownAud_unauthorized() throws Exception {
         // aud 解析不到租户（家族外）→ 自写校验器拒 → 401
         String bad = mint("some-evil-client");
@@ -140,7 +190,7 @@ class ActivityAuthIntegrationTest {
 
     @Test
     void tenantIsolationOverHttp() throws Exception {
-        String acme = mint("activity-acme-cid");
+        String acme = mint("activity-acme-cid", true);
         String beta = mint("activity-beta-cid");
 
         String created = mvc.perform(post("/activity-marketing/create")
@@ -164,6 +214,46 @@ class ActivityAuthIntegrationTest {
         mvc.perform(get("/activity-marketing/list").header("Authorization", "Bearer " + beta))
                 .andExpect(status().isOk())
                 .andExpect(content().string(not(containsString(activityId))));
+    }
+
+    @Test
+    void claimRequiresConfiguredWriteAuthority() throws Exception {
+        String reader = mint("activity-acme-cid");
+        mvc.perform(post("/activity-marketing/ACT-NOT-FOUND/claim")
+                        .header("Authorization", "Bearer " + reader))
+                .andExpect(status().isForbidden());
+
+        String writer = mint("activity-acme-cid", true);
+        mvc.perform(post("/activity-marketing/ACT-NOT-FOUND/claim")
+                        .header("Authorization", "Bearer " + writer))
+                // 通过鉴权后才到业务层；不存在的活动按 claim 契约返回 409。
+                .andExpect(status().isConflict());
+    }
+
+    /**
+     * bulk-status 是两段路径，{@code /activity-marketing/*}{@code /status} 那条 ant 模式罩不住它——
+     * 这个洞的实际含义是「纯决策 M2M token 可批量上下线全租户活动」，比漏掉单条 status 更重。
+     * 这条用例存在的意义：将来有人重排 requestMatchers 时，少列 bulk-status 这一行就会红。
+     */
+    @Test
+    void bulkStatusRequiresConfiguredWriteAuthority() throws Exception {
+        String body = "{\"items\":[{\"activityId\":\"ACT-NOT-FOUND\",\"version\":1}],\"targetStatus\":0}";
+
+        String reader = mint("activity-acme-cid");
+        mvc.perform(post("/activity-marketing/bulk-status")
+                        .header("Authorization", "Bearer " + reader)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden());
+
+        String writer = mint("activity-acme-cid", true);
+        mvc.perform(post("/activity-marketing/bulk-status")
+                        .header("Authorization", "Bearer " + writer)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                // 鉴权放行后才进业务层；bulk 的部分失败契约是一律 200 + failed[] 回执。
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("ACT-NOT-FOUND")));
     }
 
     @Test

@@ -55,9 +55,15 @@ public class ActivityResourceServerConfig {
                 .authorizeHttpRequests(auth -> {
                     // 前端 OIDC 配置端点匿名可读（只暴露公开参数；JwtTenantFilter 同步跳过此路径，见 shouldNotFilter）
                     auth.requestMatchers(HttpMethod.GET, AuthConfigController.PATH).permitAll();
-                    // P1-k：配了 console-write-authority 时，运营写端点(create/status)要求该权限；其余活动端点只需 authenticated。
+                    // P1-k：配了 console-write-authority 时，所有会改状态的运营端点要求该权限。
+                    // bulk-status 是两段路径，`*/status` 那条模式匹配不到——漏了它，纯决策 M2M token
+                    // 就能批量上下线全租户活动，而且比单条 status 危害更大。新增写端点必须同步补这张表。
                     if (StringUtils.hasText(writeAuthority)) {
-                        auth.requestMatchers(HttpMethod.POST, "/activity-marketing/create", "/activity-marketing/*/status")
+                        auth.requestMatchers(HttpMethod.POST,
+                                        "/activity-marketing/create",
+                                        "/activity-marketing/*/status",
+                                        "/activity-marketing/bulk-status",
+                                        "/activity-marketing/*/claim")
                                 .hasAuthority(writeAuthority);
                     }
                     auth.anyRequest().authenticated();

@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
+import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
 import com.lrj.drools.activity.engine.BenefitMath;
 import com.lrj.drools.activity.engine.LadderRangeParser;
@@ -183,6 +184,18 @@ class RandomAmountTest {
         void rangeDoesNotCollideWithLadder() {
             assertThat(LadderRangeParser.parse("{\"min\":5,\"max\":20}")).isEmpty();
             assertThat(RandomRangeParser.parse("[{\"min\":0,\"max\":100,\"reward\":5}]")).isNull();
+        }
+
+        @Test
+        @DisplayName("BenefitForm 优先于 takeType：折 + takeType=2 仍按折扣算，不被随机分支抢走")
+        void benefitFormWinsOverDirtyTakeType() {
+            ActivityCandidate c = randomCandidate("{\"min\":5,\"max\":20}");
+            c.setRedPackageAmountUnit(BenefitForm.UNIT_ZHE);
+            c.setRedPackageAmount(new BigDecimal("8"));
+            c.setRedPackageMaxDiscount(new BigDecimal("50"));
+
+            assertThat(compute(c, ctx(1001L, new BigDecimal("200"))))
+                    .isEqualByComparingTo(new BigDecimal("40.00"));
         }
     }
 

@@ -192,10 +192,15 @@ class BenefitFormValidationTest {
     }
 
     @Test
-    @DisplayName("一口价：必须 >0，且不许配 range（结果与原价无关，配了也没人读）")
+    @DisplayName("一口价：卖价必须 >0、库存至少 1，且不许配 range")
     void fixedPriceGuards() {
         assertDoesNotThrow(() -> marketing.create(base(new BigDecimal("9.9"), "价", null, null)));
         assertThrows(IllegalArgumentException.class, () -> marketing.create(base(BigDecimal.ZERO, "价", null, null)));
+        for (Integer inventory : new Integer[]{null, 0, -1}) {
+            IllegalArgumentException inventoryError = assertThrows(IllegalArgumentException.class,
+                    () -> marketing.create(base(new BigDecimal("9.9"), "价", null, null, 1, inventory)));
+            assertTrue(inventoryError.getMessage().contains("库存"), inventoryError.getMessage());
+        }
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> marketing.create(base(new BigDecimal("9.9"), "价", "[{\"min\":0,\"reward\":5}]", null)));
         assertTrue(e.getMessage().contains("一口价"), e.getMessage());
@@ -222,10 +227,15 @@ class BenefitFormValidationTest {
     }
 
     private ActivityCreateRequest base(BigDecimal amount, String unit, String ladder, BigDecimal cap, Integer takeType) {
+        return base(amount, unit, ladder, cap, takeType, 100);
+    }
+
+    private ActivityCreateRequest base(BigDecimal amount, String unit, String ladder, BigDecimal cap,
+                                       Integer takeType, Integer inventory) {
         long now = System.currentTimeMillis();
         return new ActivityCreateRequest(
                 null, null, "形态校验-" + (++spu), "benefit-form", 1, null,
-                now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
+                now - 3_600_000L, now + 3_600_000L, 1, null, 1, inventory,
                 takeType, amount, unit, ladder, "MAX",
                 null, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null,
                 cap);

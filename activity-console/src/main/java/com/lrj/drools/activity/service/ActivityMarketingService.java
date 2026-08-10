@@ -374,6 +374,11 @@ public class ActivityMarketingService {
                 if (!hasFixed || req.redPackageAmount().signum() <= 0) {
                     throw new IllegalArgumentException("一口价(单位=价)必须填 redPackageAmount 且大于 0");
                 }
+                // claim 的原子 UPDATE 明确要求 inventory 非空且余量足够；null 并不是「不限量」，
+                // 而是任何 claim 都更新 0 行。必须在写入口拒绝这种看似健康、实际永远抢不到的活动。
+                if (req.inventory() == null || req.inventory() < 1) {
+                    throw new IllegalArgumentException("一口价(单位=价)必须配置至少 1 件库存，否则 claim 永远失败");
+                }
             } else if (form == BenefitForm.NTH_ZHE) {
                 // 这里的数字是折数不是钱，上面 [0, MAX_AMOUNT] 的金额护栏对它毫无意义
                 if (!hasFixed) {
@@ -407,6 +412,55 @@ public class ActivityMarketingService {
         }
         if (cap.compareTo(MAX_AMOUNT) > 0) {
             throw new IllegalArgumentException("封顶减免额需在 (0, " + MAX_AMOUNT + "] 内");
+        }
+    }
+
+    /**
+     * 加价购的换购品校验。**这几条不是表单洁癖，每一条都对着决策侧的一行代码**——
+     * 写平面放行了 type=6，就必须保证存进来的东西在
+     * {@link com.lrj.drools.activity.service.AddOnPurchaseService} 里跑得通：
+     *
+     * <ul>
+     *   <li><b>至少一个换购品</b>：{@code options()} 遍历 {@code c.getGifts()} 出选项，
+     *       一个都没有就返回空清单——活动在控制台显示「已上线」，用户侧什么都看不到。
+     *       这种「上线了但等于没上」的状态最难排查，宁可在创建时就拒。</li>
+     *   <li><b>加价金额 &gt; 0</b>：{@code options()} 对 {@code absoluteAmount <= 0} 的行
+     *       <b>静默 continue</b>（0 是白送、负数是倒贴，都不是加价购）。它在决策侧是 fail-closed 的正确做法，
+     *       但如果写入口放行，运营配的选项会一声不响地消失。</li>
+     *   <li><b>品名非空且活动内唯一</b>：{@code quote()} 的第二阶段<b>按 {@code itemName} 匹配</b>选项
+     *       （刻意不发 token，价格重新查，见该类注释）。重名会让第二个选项永远选不中，
+     *       且「用户选的到底是哪个」在服务端不可判定——那是在按错误的价格卖货。</li>
+     * </ul>
+     *
+     * <p>加价金额沿用 {@code activity_gift.absolute_amount} 承载，含义是<b>加多少钱换购</b>，
+     * 不是赠品价值——这是加价购复用买赠表时唯一需要记住的语义差别。
+     */
+    private void validateAddOnItems(ActivityCreateRequest req) {
+        List<ActivityCreateRequest.GiftInput> items = req.gifts();
+        if (items == null || items.isEmpty()) {
+            throw new IllegalArgumentException("加价购活动至少需配置一个换购品，否则上线后没有任何可换购选项");
+        }
+        Set<String> names = new HashSet<>();
+        for (ActivityCreateRequest.GiftInput g : items) {
+            String name = g.giftName() == null ? "" : g.giftName().trim();
+            if (name.isEmpty()) {
+                throw new IllegalArgumentException("换购品名称不能为空——第二阶段报价按品名匹配选项");
+            }
+            if (name.length() > 128) {
+                throw new IllegalArgumentException("换购品名称过长（≤128）: " + name);
+            }
+            if (!names.add(name)) {
+                throw new IllegalArgumentException(
+                        "换购品名称在同一活动内必须唯一，重复: " + name + "（第二阶段按品名匹配，重名会选不中）");
+            }
+            BigDecimal add = g.absoluteAmount();
+            if (add == null || add.signum() <= 0) {
+                throw new IllegalArgumentException(
+                        "换购品「" + name + "」的加价金额必须大于 0（这个数是「加多少钱换购」，不是赠品价值）");
+            }
+            if (add.compareTo(MAX_AMOUNT) > 0) {
+                throw new IllegalArgumentException("换购品「" + name + "」的加价金额需在 (0, " + MAX_AMOUNT + "] 内");
+            }
         }
     }
 
@@ -484,8 +538,10 @@ public class ActivityMarketingService {
             throw new IllegalArgumentException("业务线过长（≤64）");
         }
         ActivityType type = ActivityType.fromCode(req.activityType());
-        if (type != ActivityType.RED_PACKAGE && type != ActivityType.BUY_AND_GET) {
-            throw new IllegalArgumentException("demo 仅支持红包(1) / 买赠(5)，收到: " + req.activityType());
+        if (type != ActivityType.RED_PACKAGE && type != ActivityType.BUY_AND_GET
+                && type != ActivityType.ADD_ON_PURCHASE) {
+            throw new IllegalArgumentException(
+                    "demo 仅支持红包(1) / 买赠(5) / 加价购(6)，收到: " + req.activityType());
         }
         if (req.activityStartTime() == null || req.activityEndTime() == null) {
             throw new IllegalArgumentException("活动开始/结束时间必填");
@@ -503,6 +559,9 @@ public class ActivityMarketingService {
         }
         if (type == ActivityType.BUY_AND_GET && (req.gifts() == null || req.gifts().isEmpty())) {
             throw new IllegalArgumentException("买赠活动至少需配置一个赠品");
+        }
+        if (type == ActivityType.ADD_ON_PURCHASE) {
+            validateAddOnItems(req);
         }
         if (req.discountStrategy() != null && !req.discountStrategy().isBlank()) {
             StackStrategy.fromCode(req.discountStrategy()); // 非法策略抛异常
@@ -645,6 +704,9 @@ public class ActivityMarketingService {
     }
 
     private void saveStrategyIfPresent(ActivityCreateRequest req, Instant now) {
+        // discountStrategy 是 bizLine 级的红包合并策略，不是活动自身属性。
+        // 买赠/加价购表单即使夹带了默认 MAX，也不能把同业务线的 STACK/PRIORITY 改掉。
+        if (ActivityType.fromCode(req.activityType()) != ActivityType.RED_PACKAGE) return;
         if (req.discountStrategy() == null || req.discountStrategy().isBlank()) return;
         String strategy = StackStrategy.fromCode(req.discountStrategy()).name();
         String scene = RuleScene.DISCOUNT.code();

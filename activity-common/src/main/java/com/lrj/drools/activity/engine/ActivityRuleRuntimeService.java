@@ -5,9 +5,6 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.RuleScene;
-import com.lrj.drools.activity.domain.StackStrategy;
-import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
-import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.tenant.TenantContext;
 import org.kie.api.KieBase;
@@ -160,33 +157,11 @@ public class ActivityRuleRuntimeService {
     }
 
     // ------------------------------------------------------------------ 各场景（explain 默认 true 重载）
-
-    /** 资格：淘汰不满足条件的候选，返回通过的 eligibleCandidates。异常返回 null（回退）。 */
-    public ActivityRuleResult evalEligibility(ActivityRuleContext ctx, List<EligibilityRuleDef> defs) {
-        return evalEligibility(ctx, defs, true);
-    }
-
-    public ActivityRuleResult evalEligibility(ActivityRuleContext ctx, List<EligibilityRuleDef> defs, boolean explain) {
-        return safeRun(RuleScene.ELIGIBILITY, ctx, () -> drlBuilder.buildEligibilityDrl(defs, explain));
-    }
-
-    /** 折扣合并：按策略挑选/累加，返回命中活动与金额。异常返回 null（回退）。 */
-    public ActivityRuleResult evalDiscount(ActivityRuleContext ctx, StackStrategy strategy) {
-        return evalDiscount(ctx, strategy, true);
-    }
-
-    public ActivityRuleResult evalDiscount(ActivityRuleContext ctx, StackStrategy strategy, boolean explain) {
-        return safeRun(RuleScene.DISCOUNT, ctx, () -> drlBuilder.buildDiscountDrl(strategy, explain));
-    }
-
-    /** 阶梯结算：按订单金额落档。异常返回 null（回退）。 */
-    public ActivityRuleResult evalLadder(ActivityRuleContext ctx, List<LadderActivityDef> defs) {
-        return evalLadder(ctx, defs, true);
-    }
-
-    public ActivityRuleResult evalLadder(ActivityRuleContext ctx, List<LadderActivityDef> defs, boolean explain) {
-        return safeRun(RuleScene.LADDER, ctx, () -> drlBuilder.buildLadderDrl(defs, explain));
-    }
+    //
+    // D1 追认（2026-08-10）：evalEligibility / evalDiscount / evalLadder 已随灰度开关退役一并删除——
+    // 生产的资格淘汰走 DecisionEligibilityService、算额/合并走 BenefitEvaluator，DRL 侧只剩买赠一个场景。
+    // 保留这三个方法就是保留一个「第二权威」的调用面：旧 DRL 不认一口价/第 N 件折/随机红包，
+    // 谁调了它谁就在按错误形态发钱。eligibility DRL 的**编译**校验（预览/artifact）仍在，走 compileOrGet。
 
     /** 买赠：保留有奖品的候选并汇总奖品。异常返回 null（回退）。 */
     public ActivityRuleResult evalGift(ActivityRuleContext ctx) {

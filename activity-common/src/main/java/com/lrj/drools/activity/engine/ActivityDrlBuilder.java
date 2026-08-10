@@ -1,6 +1,5 @@
 package com.lrj.drools.activity.engine;
 
-import com.lrj.drools.activity.domain.StackStrategy;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -10,8 +9,9 @@ import java.util.regex.Pattern;
 /**
  * 生成各场景的 DRL 文本，运行时交给 {@link ActivityRuleRuntimeService} 用 KieHelper 编译。
  *
- * DRL 里引用的 fact 全是 {@code com.lrj.drools.activity.domain.*}；折扣合并规则直接照抄来源
- * {@code DiscountDbRuleSource.buildDrl} 的语义（MAX / MUTEX / STACK / PRIORITY），只改包名。
+ * DRL 里引用的 fact 全是 {@code com.lrj.drools.activity.domain.*}。D1 追认（2026-08-10）后
+ * 生产只剩买赠一个 DRL 场景；eligibility DRL 仅用于写平面预览/artifact 的编译校验，
+ * ladder DRL 仅作容量/预热测试的负载生成器（它们不再被任何 eval 调用）。
  *
  * <p><b>P0-1 通用化</b>：资格约束 / 阶梯闸门改用 Map fact 的方法左值访问器
  * （{@code numberAttr("orderAmount") >= …}），阶梯字段参数化（{@link LadderActivityDef#ladderField()}）。
@@ -95,103 +95,10 @@ public class ActivityDrlBuilder {
     }
 
     // ---------------------------------------------------------------- DISCOUNT
-
-    /**
-     * 折扣合并场景。先算每个候选的 computedAmount（= redPackageAmount），再按策略挑选/累加。
-     * 照抄来源 {@code DiscountDbRuleSource} 语义。
-     */
-    public String buildDiscountDrl(StackStrategy strategy, boolean explain) {
-        StringBuilder sb = new StringBuilder(header("discount"));
-        // 共享：算额规则（把红包金额落到 computedAmount，amountComputed 防重复触发）
-        // 折扣型：redPackageAmount 是折数不是钱。salience 比金额型更高，先把它算掉并置 amountComputed，
-        // 免得下面那条把折数当成元覆盖进去。
-        // RHS 调 BenefitMath —— 与 BenefitEvaluator 走的是**同一个函数**，
-        // 取整与封顶不可能在两条路上漂移（漂移的表现是同一张券少发/多发几分钱）。
-        sb.append("rule \"discount-compute-ratio\"\n")
-                .append("    salience 110\n")
-                .append("    when\n")
-                .append("        $ctx : ActivityRuleContext( )\n")
-                .append("        $c : ActivityCandidate( eligible == true, amountComputed == false,\n")
-                .append("                                redPackageAmount != null, benefitForm == \"RATIO_ZHE\" )\n")
-                .append("        eval( BenefitMath.ratioDiscount($ctx.getOrderAmount(), $c.getRedPackageAmount(), $c.getRedPackageMaxDiscount()) != null )\n")
-                .append("    then\n")
-                .append("        modify($c) { setComputedAmount(BenefitMath.ratioDiscount($ctx.getOrderAmount(), $c.getRedPackageAmount(), $c.getRedPackageMaxDiscount())), setAmountComputed(true) }\n")
-                .append("end\n\n");
-
-        sb.append("rule \"discount-compute-amount\"\n")
-                .append("    salience 100\n")
-                .append("    when\n")
-                .append("        $c : ActivityCandidate( eligible == true, amountComputed == false,\n")
-                .append("                                redPackageAmount != null, benefitForm != \"RATIO_ZHE\" )\n")
-                .append("    then\n")
-                .append("        modify($c) { setComputedAmount($c.getRedPackageAmount()), setAmountComputed(true) }\n")
-                .append("end\n\n");
-
-        switch (strategy) {
-            case STACK -> appendStackRules(sb, explain);
-            case MUTEX, PRIORITY -> appendPriorityRules(sb, strategy, explain);
-            default -> appendMaxRules(sb, explain);
-        }
-        return sb.toString();
-    }
-
-    private void appendMaxRules(StringBuilder sb, boolean explain) {
-        sb.append("rule \"discount-pick-max\"\n")
-                .append("    salience 10\n")
-                .append("    when\n")
-                .append("        $c : ActivityCandidate( eligible == true )\n")
-                .append("        not ActivityCandidate( eligible == true, computedAmount > $c.computedAmount )\n")
-                .append("    then\n")
-                .append("        result.setStrategy(StackStrategy.MAX);\n")
-                .append("        result.hit($c);\n");
-        trace(sb, explain, "        result.trace(\"hit by MAX: \" + $c.getActivityId() + \" amount=\" + $c.getComputedAmount());\n");
-        sb.append("end\n");
-    }
-
-    private void appendPriorityRules(StringBuilder sb, StackStrategy strategy, boolean explain) {
-        String name = strategy.name().toLowerCase();
-        sb.append("rule \"discount-pick-").append(name).append("\"\n")
-                .append("    salience 10\n")
-                .append("    when\n")
-                .append("        $c : ActivityCandidate( eligible == true )\n")
-                .append("        not ActivityCandidate( eligible == true,\n")
-                .append("                ( priority < $c.priority\n")
-                .append("                  || ( priority == $c.priority && computedAmount > $c.computedAmount ) ) )\n")
-                .append("    then\n")
-                .append("        result.setStrategy(StackStrategy.").append(strategy.name()).append(");\n")
-                .append("        result.hit($c);\n");
-        trace(sb, explain, "        result.trace(\"hit by " + strategy.name()
-                + ": \" + $c.getActivityId() + \" priority=\" + $c.getPriority() + \" amount=\" + $c.getComputedAmount());\n");
-        sb.append("end\n");
-    }
-
-    private void appendStackRules(StringBuilder sb, boolean explain) {
-        sb.append("rule \"discount-stack-sum\"\n")
-                .append("    salience 20\n")
-                .append("    when\n")
-                .append("        $total : BigDecimal() from accumulate(\n")
-                .append("                ActivityCandidate( eligible == true, $amt : computedAmount != null ),\n")
-                .append("                init( BigDecimal sum = BigDecimal.ZERO; ),\n")
-                .append("                action( sum = sum.add($amt); ),\n")
-                .append("                result( sum ) )\n")
-                .append("    then\n")
-                .append("        result.setStrategy(StackStrategy.STACK);\n")
-                .append("        result.setHitAmount($total);\n");
-        trace(sb, explain, "        result.trace(\"stack sum amount=\" + $total);\n");
-        sb.append("end\n\n");
-        sb.append("rule \"discount-stack-main\"\n")
-                .append("    salience 10\n")
-                .append("    when\n")
-                .append("        $c : ActivityCandidate( eligible == true )\n")
-                .append("        not ActivityCandidate( eligible == true,\n")
-                .append("                ( priority < $c.priority\n")
-                .append("                  || ( priority == $c.priority && computedAmount > $c.computedAmount ) ) )\n")
-                .append("    then\n")
-                .append("        result.setHitActivityId($c.getActivityId());\n")
-                .append("        result.setHitActivityName($c.getActivityName());\n");
-        trace(sb, explain, "        result.trace(\"stack main activityId=\" + $c.getActivityId());\n");
-        sb.append("end\n");
-    }
+    //
+    // D1 追认（2026-08-10）：buildDiscountDrl（算额 + MAX/MUTEX/PRIORITY/STACK 合并的 DRL 版本）已删——
+    // 生产合并固定走 BenefitEvaluator.merge()，运行时侧的 evalDiscount 已一并退役，这里没有调用方了。
+    // 取整/封顶的单一权威仍是 BenefitMath（当年两条路共用它防漂移；现在只剩一条路，更没有漂移面）。
 
     // ---------------------------------------------------------------- LADDER
 

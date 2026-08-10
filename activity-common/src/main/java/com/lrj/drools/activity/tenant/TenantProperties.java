@@ -115,7 +115,7 @@ public class TenantProperties {
         private long jwksOutageTtlMs = 3_600_000;
 
         /**
-         * 控制台写端点（create / status）所需权限（P1-k 决策/控制台分权）。空=仅需 authenticated（默认，不破坏 demo）。
+         * 控制台写端点（create / status / claim）所需权限（P1-k 决策/控制台分权）。空=仅需 authenticated（默认，不破坏 demo）。
          * 设为某 scope/角色（如 {@code SCOPE_activity.write} 或 {@code activity-admin}）后，纯决策 M2M token（无此权限）
          * 便无法调运营写接口——前提是 M2M 应用按最小权限发 scope。决策读端点（spu-discount/gifts）不受此限。
          */

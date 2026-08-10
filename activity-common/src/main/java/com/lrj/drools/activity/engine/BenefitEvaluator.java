@@ -100,10 +100,15 @@ public class BenefitEvaluator {
             if (!c.isEligible()) continue;
             if (c.isAmountComputed()) continue;
 
+            // BenefitForm 是「redPackageAmount 这个数是什么意思」的最高优先级判别位。
+            // takeType 只在金额型里区分固定/随机；否则 API 手造的「折 + takeType=2」会在这里
+            // 被错误抢进随机分支，永远走不到下面的折扣计算。
+            BenefitForm form = BenefitForm.of(c.getRedPackageAmountUnit());
+
             // 随机红包必须排在 `redPackageAmount == null` 那道 guard **之前**：
             // 它的金额来自区间（redPackageRangeAmount），而不是 redPackageAmount 那个字段，
             // 放在 guard 之后的话「只配了区间、没配固定金额」的随机活动会被静默跳过。
-            if (DistributionMode.RANDOM_AMOUNT == distributionOf(c)) {
+            if (form == BenefitForm.AMOUNT && DistributionMode.RANDOM_AMOUNT == distributionOf(c)) {
                 BigDecimal drawn = drawRandom(ctx, c);
                 // 算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 ratioDiscount 的规矩：
                 // 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
@@ -118,7 +123,7 @@ public class BenefitEvaluator {
             // 第 N 件折（第二件半价）：折数在 redPackageAmount、第几件在 redPackageRangeAmount 的 {"nth":N}。
             // 它必须有逐行单价才算得出来——缺 lines 时返回 null（不适用），
             // **绝不退化成拿整单均价算**：混着贵重与便宜商品的车会静默算错钱。
-            if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.NTH_ZHE) {
+            if (form == BenefitForm.NTH_ZHE) {
                 BigDecimal off = nthDiscount(ctx, c);
                 if (off == null) { notApplicable(c, "第 N 件折缺订单行或 N 非法"); continue; }
                 c.setComputedAmount(off);
@@ -129,7 +134,7 @@ public class BenefitEvaluator {
             // 一口价（秒杀）：redPackageAmount 是"卖多少"不是"减多少"，减免额与当笔订单强相关。
             // 秒杀还必须防超发，但决策服务连的是只读账号、物理上写不了库——所以这里**只算钱**，
             // 库存扣减在写平面的 claim 端点（决策 ≠ 提交），决策侧的余量判断只是建议性闸门。
-            if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.FIXED_PRICE) {
+            if (form == BenefitForm.FIXED_PRICE) {
                 BigDecimal off = BenefitMath.fixedPriceDiscount(
                         ctx == null ? null : ctx.getOrderAmount(), c.getRedPackageAmount());
                 // 订单比秒杀价还便宜 / 缺金额 → 本活动不适用
@@ -141,7 +146,7 @@ public class BenefitEvaluator {
 
             // 形态判别必须在最前面。漏了它，「打 8 折」会被当成「减 8 元」原样发出去——
             // 而且看起来毫无异常：金额是正数、决策成功、日志干净。
-            if (BenefitForm.of(c.getRedPackageAmountUnit()) == BenefitForm.RATIO_ZHE) {
+            if (form == BenefitForm.RATIO_ZHE) {
                 BigDecimal off = BenefitMath.ratioDiscount(
                         ctx == null ? null : ctx.getOrderAmount(),
                         c.getRedPackageAmount(),
@@ -243,7 +248,7 @@ public class BenefitEvaluator {
 
     /**
      * 「第 N 件打 X 折」求值。订单行从属性袋的 {@code orderLines} 取——
-     * 它由 {@code ActivityQueryService.requestAttributes} 唯一映射表写入。
+     * 它由 {@code DecisionEligibilityService.requestAttributes} 唯一映射表写入。
      *
      * <p>缺行项 / N 非法 / 折数越界 → null（不适用）。这是 fail-closed：
      * 宁可这个活动不生效，也不拿均价算出一个"看起来对"的错金额。

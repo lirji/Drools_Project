@@ -30,10 +30,14 @@ import java.util.List;
 @Service
 public class AddOnPurchaseService {
 
-    private final DecisionDataLoader loader;
+    private static final String SCENE_ADDON = "addon";
 
-    public AddOnPurchaseService(DecisionDataLoader loader) {
+    private final DecisionDataLoader loader;
+    private final DecisionEligibilityService eligibility;
+
+    public AddOnPurchaseService(DecisionDataLoader loader, DecisionEligibilityService eligibility) {
         this.loader = loader;
+        this.eligibility = eligibility;
     }
 
     /** 一个可换购选项。{@code addOnPrice} 是<b>加多少钱</b>，不是换购品原价。 */
@@ -48,15 +52,28 @@ public class AddOnPurchaseService {
      * （选项已失效 / 活动已下线 / 参数对不上）。
      */
     public record AddOnQuote(boolean ok, String activityId, String itemName,
-                             BigDecimal addOnPrice, String reason) {}
+                             BigDecimal addOnPrice, String reason, List<String> traces) {
+        /** 保留旧五参构造，避免只消费报价值、不关心 trace 的 Java 调用方源码失配。 */
+        public AddOnQuote(boolean ok, String activityId, String itemName,
+                          BigDecimal addOnPrice, String reason) {
+            this(ok, activityId, itemName, addOnPrice, reason, List.of());
+        }
+    }
 
     /**
      * 第一阶段：这一单能换购什么。
      *
      * <p>只回答「有哪些选项、各加多少钱」，**不替用户挑**。选项为空是正常结果，
      * 不是错误——调用方据此不展示换购入口即可。
+     *
+     * <p>{@code explain} 与 discount 链路同一分档约定：console 试算传 true（逐候选资格 trace 外显），
+     * 决策热路径传 false（只保留结构性 trace）。此前这里写死 true，资格淘汰明细恒随热路径响应外泄。
      */
     public AddOnOptions options(SpuDiscountRequest req) {
+        return options(req, true);
+    }
+
+    public AddOnOptions options(SpuDiscountRequest req, boolean explain) {
         List<String> traces = new ArrayList<>();
         DecisionDataLoader.Materials materials =
                 loader.load(req.spuIdList(), ActivityType.ADD_ON_PURCHASE, true);
@@ -66,8 +83,12 @@ public class AddOnPurchaseService {
             return new AddOnOptions(List.of(), traces);
         }
 
+        var ctx = eligibility.buildContext(req, candidates);
+        eligibility.applyJava(ctx, materials, SCENE_ADDON, explain, traces);
+
         List<AddOnOption> out = new ArrayList<>();
         for (ActivityCandidate c : candidates) {
+            if (!c.isEligible()) continue;
             for (GiftResult g : c.getGifts()) {
                 // 加价金额必须是正数：0 或负数意味着"白送"或"倒贴"，那不是加价购。
                 // 与其猜运营想干什么，不如把这条选项排除掉——fail-closed。
@@ -90,16 +111,27 @@ public class AddOnPurchaseService {
      * 此时返回 {@code ok=false} 而不是沿用第一阶段的价格——那等于按已经作废的配置卖货。
      */
     public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName) {
+        return quote(req, activityId, itemName, true);
+    }
+
+    public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName, boolean explain) {
         if (activityId == null || activityId.isBlank() || itemName == null || itemName.isBlank()) {
-            return new AddOnQuote(false, activityId, itemName, null, "缺 activityId 或换购品");
+            return new AddOnQuote(false, activityId, itemName, null,
+                    "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"));
         }
-        AddOnOptions fresh = options(req);
+        // 第二阶段必须重新装载并重跑资格：不能沿用第一阶段的候选或价格。
+        AddOnOptions fresh = options(req, explain);
         for (AddOnOption o : fresh.options()) {
             if (activityId.equals(o.activityId()) && itemName.equals(o.itemName())) {
-                return new AddOnQuote(true, o.activityId(), o.itemName(), o.addOnPrice(), null);
+                List<String> traces = new ArrayList<>(fresh.traces());
+                traces.add("加价购权威报价：" + o.activityId() + "/" + o.itemName());
+                return new AddOnQuote(true, o.activityId(), o.itemName(), o.addOnPrice(), null, traces);
             }
         }
         // 走到这里说明第一阶段给过的选项现在拿不到了。**不能回退到客户端给的价**。
-        return new AddOnQuote(false, activityId, itemName, null, "选项已失效或不适用于当前订单");
+        List<String> traces = new ArrayList<>(fresh.traces());
+        traces.add("加价购报价拒绝：选项已失效或资格不满足");
+        return new AddOnQuote(false, activityId, itemName, null,
+                "选项已失效或不适用于当前订单", traces);
     }
 }

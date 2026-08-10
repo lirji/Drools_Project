@@ -12,6 +12,7 @@ import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.tenant.TenantContext;
+import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import org.springframework.http.ResponseEntity;
@@ -37,6 +38,8 @@ import java.util.stream.Collectors;
  *   GET  /activity-marketing/{id}              活动详情（基础/规则/条件/绑定/买赠/池引用）
  *   POST /activity-marketing/spu-discount      商品红包优惠查询（资格→阶梯→折扣合并 + 回退 trace）
  *   POST /activity-marketing/gifts             商品买赠查询
+ *   POST /activity-marketing/addon/options     加价购第一阶段（列出可换购选项）
+ *   POST /activity-marketing/addon/quote       加价购第二阶段（按活动+换购品重新报价）
  *   POST /activity-marketing/preview           资格条件树预览（翻译+试编译，不落库）
  *   GET  /activity-marketing/field-dict        字段/运算符/枚举字典（前端报表下拉用）
  *
@@ -48,12 +51,14 @@ public class ActivityMarketingController {
 
     private final ActivityMarketingService marketing;
     private final ActivityQueryService query;
+    private final AddOnPurchaseService addOn;
     private final RuleSchemaRegistry schemaRegistry;
 
     public ActivityMarketingController(ActivityMarketingService marketing, ActivityQueryService query,
-                                       RuleSchemaRegistry schemaRegistry) {
+                                       AddOnPurchaseService addOn, RuleSchemaRegistry schemaRegistry) {
         this.marketing = marketing;
         this.query = query;
+        this.addOn = addOn;
         this.schemaRegistry = schemaRegistry;
     }
 
@@ -134,6 +139,27 @@ public class ActivityMarketingController {
     @PostMapping("/gifts")
     public ResponseEntity<?> gifts(@RequestBody SpuDiscountRequest req) {
         return ResponseEntity.ok(query.buyAndGetGifts(req, true));
+    }
+
+    /**
+     * 加价购第一阶段：只列出当前订单可选的换购品，不替用户选择，也不扣减库存。
+     * 与 {@code /decision/v1/addon/options} 共用同一服务与响应契约。
+     */
+    @PostMapping("/addon/options")
+    public ResponseEntity<?> addOnOptions(@RequestBody SpuDiscountRequest req) {
+        return ResponseEntity.ok(addOn.options(req));
+    }
+
+    /**
+     * 加价购第二阶段：只接受活动与换购品标识，价格由服务端重新查询。
+     * 报价有效返回 200；活动/选项已失效或参数伪造返回 409。报价不是库存提交，绝不调用 claim。
+     */
+    @PostMapping("/addon/quote")
+    public ResponseEntity<?> addOnQuote(@RequestBody SpuDiscountRequest req,
+                                        @RequestParam("activityId") String activityId,
+                                        @RequestParam("item") String item) {
+        var quote = addOn.quote(req, activityId, item);
+        return quote.ok() ? ResponseEntity.ok(quote) : ResponseEntity.status(409).body(quote);
     }
 
     @PostMapping("/preview")

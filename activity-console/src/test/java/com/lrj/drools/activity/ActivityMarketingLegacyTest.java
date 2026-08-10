@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 灰度开关关闭（rule-engine.enabled=false）时走旧 Java 逻辑：取最大红包、忽略资格条件树。
+ * 灰度开关关闭（rule-engine.enabled=false）时走安全 Java 回退：先判资格，再按当前业务合并策略结算。
  * 单独一个 context（属性作用于整个 SpringBootTest）。
  */
 @SpringBootTest
@@ -40,9 +40,9 @@ class ActivityMarketingLegacyTest {
     private long hAgo() { return System.currentTimeMillis() - 3_600_000L; }
     private long hLater() { return System.currentTimeMillis() + 3_600_000L; }
 
-    /** 关闭规则引擎：即便有"永不满足"的资格条件，旧逻辑也忽略条件，直接取最大红包。 */
+    /** 关闭规则引擎只切换执行器，不能把资格条件一起关掉。 */
     @Test
-    void legacyFallbackIgnoresEligibilityAndTakesMax() {
+    void legacyFallbackRespectsEligibilityAndTakesEligibleMax() {
         // A: 金额 70，带一个正常人满足不了的资格条件（orderAmount >= 100000）
         ConditionNode strict = leaf("orderAmount", "ge", 100000);
         CreateResult a = marketing.create(red("大额红包", new BigDecimal("70"), strict, 8001L));
@@ -50,13 +50,14 @@ class ActivityMarketingLegacyTest {
         CreateResult b = marketing.create(red("普通红包", new BigDecimal("30"), null, 8001L));
         online(a); online(b);
 
-        // 订单只有 200：规则引擎模式下 A 会被资格淘汰；但引擎关闭 → 旧逻辑忽略条件 → 取 max=70
+        // 订单只有 200：A 必须被资格淘汰；安全回退在剩余候选里取 max=30。
         DiscountView view = query.spuDiscount(new SpuDiscountRequest(
                 List.of(8001L), 1L, null, List.of(), new BigDecimal("200"), 1));
 
         assertTrue(view.hit());
         assertEquals("legacy", view.mode(), "开关关闭应走 legacy");
-        assertEquals(0, view.hitAmount().compareTo(new BigDecimal("70")), "legacy 忽略资格条件，取最大 70");
+        assertEquals(0, view.hitAmount().compareTo(new BigDecimal("30")),
+                "安全回退必须先淘汰不满足资格的 70 元活动，再取通过候选中的最大值");
     }
 
     private ConditionNode leaf(String field, String op, Object value) {

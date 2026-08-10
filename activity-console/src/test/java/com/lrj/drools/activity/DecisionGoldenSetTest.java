@@ -343,12 +343,12 @@ class DecisionGoldenSetTest {
     // ================================================================ 6. 引擎模式（2 例）
 
     @Test
-    @DisplayName("引擎开启时 mode=rule-engine（回退率指标据此归因）")
+    @DisplayName("总开关开启时保留兼容 mode=rule-engine（不表示 discount 算额由 Drools 执行）")
     void modeIsRuleEngineWhenHit() {
         long spu = nextSpu();
         online(marketing.create(red("模式", "gold-mode", new BigDecimal("11"), null, null, 1, spu, "MAX")));
         DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")));
-        assertEquals("rule-engine", v.mode(), "命中时应由规则引擎给出，而非回退");
+        assertEquals("rule-engine", v.mode(), "mode 是总开关兼容档位，不是 discount 算额执行器声明");
     }
 
     @Test
