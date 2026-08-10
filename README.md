@@ -117,6 +117,8 @@ cd frontend && npm install && npm run dev
 
 Docker Compose 默认启用 Casdoor auth：console 的 `/activity-marketing/**` 与 decision 的 `/decision/v1/**` 都要求有效 Bearer；`/ui/**`、`/actuator/health` 和公开的 `auth-config` 保持匿名。浏览器使用 `http://localhost:8000`，容器拉 JWKS 使用 `host.docker.internal:8000`。本地测试账号为 `acme/act-alice`（`act-alice-dev-pass-01`）与 `beta/act-bob`（`act-bob-dev-pass-02`）。
 
+`POST /activity-marketing/{activityId}/claim` 与 create/status 同属写操作。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置默认为空仅是为了保留 demo 兼容，不应当作生产权限策略。
+
 如需回滚到原 header-only 开发档：
 
 ```bash
@@ -130,17 +132,18 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 - **失败也看得见**：编译错误 400（含行号）、未知会话 404、活动已结束 409 都会原样展示状态码与错误体。
 - **dark-first 主题**：没显式选过就跟随系统（默认深色），右上角可切浅色，选择存 `localStorage`；另有**表格密度两档**（舒适 / 紧凑，写 `<html data-density>`）+ 平板侧栏抽屉。持久化类 demo（Step 10 会话、Step 18 活动）需要数据库，用上面的 H2 profile 最省事。
 
-### 活动控制台：工作台 · 玩法模板（2026-08 换代）
+### 活动控制台：工作台 · 玩法模板 · 优惠验证（2026-08 换代）
 
 演示台里"活动引擎控制台"那一半（`/ui/console`）换了一代，后端也跟着开了几个新口子（Step 1–18 的端点一个没动）：
 
 - **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
 - **玩法模板屏**（`/ui/console/playbooks`）：12 张玩法卡（满减 / 阶梯 / 折扣券 / 人群·门店·地域定向 / 满额赠品 / 第二件半价 / 秒杀一口价 / 加价购），点"用它新建"跳编辑器并预填。
+- **优惠验证屏**（`/ui/console/validate`）：从上述 12 张卡直接派生场景，再额外补 1 个 random 形态场景；按 **discount / gifts / addon** 三通道调真实决策、分别展示命中金额、赠品明细或「选项 → 权威报价」，不再只打印原始 JSON。场景只准备输入与通道，不指定活动、不强制命中。第 N 件折切到订单行编辑，`spuIdList / orderAmount / quantity / lines` 只从行项唯一汇总，避免两份金额互相打架。
 - **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。
-- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；秒杀库存扣减在写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409），决策侧只做建议性闸门——decision 连的是只读账号，物理上写不了库。
+- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409），在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
 - **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动命中量，标签数有上限，超出并进 `__over_cap__`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。
 
-前端回归（Vitest + 9 套 e2e）：
+前端回归（Vitest + 浏览器 E2E）：
 
 ```bash
 cd frontend && npm test && npm run typecheck && npm run build
@@ -149,12 +152,15 @@ cd frontend && npm test && npm run typecheck && npm run build
 npm run e2e:visual      # 视觉 / 移动端红线守卫（触控 ≥44px、零横向溢出…）
 npm run e2e:bench       # 工作台：行归并 / 批量四段流程 / 版本正确性 / 密度持久化 / 侧板 Esc
 npm run e2e:playbooks   # 玩法模板 + 跨屏预填
+npm run e2e:validate    # 优惠验证：13 场景 / 三通道 / 第 N 件行项 / 加价购两阶段
 npm run e2e:ruler       # 阶梯刻度尺
 
 # 早期四套的默认 BASE 还停在 :8097，打网关要显式给
 BASE=http://localhost:8095 npm run e2e:dev        # 同理 e2e:catalog / e2e:tablet / e2e:phone
 npm run e2e:oidc        # 默认 :8095，但需本机 Casdoor :8000（唯一走 auth 档的一套）
 ```
+
+> `e2e:validate` 的 13 场景、四眼发布、秒杀/加价购库存前后不变、无 `claim` 请求与 390/768/1440 结果态响应式检查已写入脚本和 CI。2026-08-10 在 header-only + four-eyes Docker 栈实跑一次通过 **pass=472 / fail=0**，Chrome 人工验收也已通过；完整证据见 `docs/delivery/promotion-validation-all-playbooks/QA_REPORT.md`。
 
 > 除 `e2e:oidc` 外都走 `tenant-chip`（header 档），而编排**默认是 auth 档**，跑之前要切：
 > `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`

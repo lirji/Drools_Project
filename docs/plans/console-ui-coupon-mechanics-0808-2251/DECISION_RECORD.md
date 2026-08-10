@@ -362,6 +362,9 @@ BulkStatusTest.bulkOfflineHitsTheServingVersionNotTheDraft
 
 ### PR-6 屏 2 玩法模板 — 完成
 
+> **历史快照（已过期）**：本节记录 PR-6 初次落地时的能力边界，不代表当前实现。
+> 当前能力与最终结构以紧随其后的「PR-6 后续 · Fable 5 权益形态收敛」为准。
+
 **起因是一句话反馈：「活动类型还是太少了」。** 查证后发现这句话对，但原因跟直觉不一样——
 
 后端 `ActivityType` 有 5 个枚举位，`field-dict` 也把 5 个全返回了，可**实际能用的只有 2 个**：
@@ -424,5 +427,75 @@ BulkStatusTest.bulkOfflineHitsTheServingVersionNotTheDraft
 > （比如给 `userTags` 配 `eq`），表现是运营点「用它新建」后条件树是坏的、预览报错，
 > 而目录常量本身看着毫无问题。
 
+### PR-6 后续 · Fable 5 权益形态收敛 — 完成（2026-08-10）
+
+上面的 PR-6 记录保留的是当时能力边界，现已被玩法扩容与本批次实现**明确取代**：写平面放行
+红包(1) / 买赠(5) / 加价购(6)，红包编辑器支持固定、随机、阶梯、折扣、一口价、第 N 件折六种形态。
+
+本批次维持共用编辑页，不按形态拆路由。形态只从详情 rule 数据导出，URL 不保存可能过期的形态断言。
+同时完成以下结构性收敛：
+
+- `logic.ts` 的 `benefitFormOf` 是编辑器与复核屏唯一判别函数，返回 `{form, parsed}`；脏随机/阶梯数据保留形态归属，但显式要求重填，不能回落 fixed 后静默抹掉 range。
+- `benefitDraftFromRule` / `benefitRequestFields` 构成唯一正逆映射，并以六形态往返金标测试守住 `takeType / amount / unit / maxDiscount / range` 契约。
+- random 提升为一等 `redMode`；撤掉「发放方式」下拉，`redPackageTakeType` 由 fixed/random 形态推导，消除第二权威。
+- 页面内字段块拆为 `benefit/forms/{Fixed,Random,Ladder,Ratio,Price,Nth}Form.vue` 六个纯表单组件；活动级校验、条件树、提交与回读仍只在共用页/纯函数各保留一份。
+- 玩法模板名只作活动名称 placeholder，不再冒充真实名称；模板 banner 表达为起点，普通编辑标记「已改动」，切活动类型或权益形态后失效。
+- 工作台侧板与详情页显示从 rule 导出的权益形态；票据支持显式 unit，第二件半价显示「5 折」而非「¥5.00」。
+
+后端同步修正 `BenefitEvaluator` 的判别顺序：先定 `BenefitForm`，仅 AMOUNT 形态再看 RANDOM，
+因此 API 手造的「折 + takeType=2」仍按折扣计算，不会被随机分支抢走。
+
 ### 未开始
 PR-7~9（沙盘 / 看板 / 发布实验）。屏 5 / 屏 6 仍整屏无接口，按 D6 必须先做「未接入」态。
+
+### PR-7 第一阶段 · 优惠验证全玩法覆盖 — 完成（2026-08-10）
+
+> 这是晚于上方「未开始」快照的新记录：PR-7 的优惠验证阶段已经落地；深度沙盘、完整监控看板与发布实验仍未完成。
+
+验证页继续使用一张共用页，场景由 `PLAYBOOKS` 的 12 份配置直接派生，再补一份 random 场景；场景只负责准备输入和选择通道，不携带活动断言，也不通过指定活动强制命中。页面按真实响应分成三条通道：
+
+- discount 展示命中、活动、减免额与 trace；秒杀只试算并明确“不占库存”。
+- gifts 展示结构化赠品行与空结果，不再只输出原始 JSON。
+- addon 执行「列 options → 用户选品 → 权威 quote」两阶段；失效或伪造选项按 409 展示，报价明确“不下单、不占库存”。
+
+第 N 件折只保留订单行编辑器，`spuIdList / orderAmount / quantity / lines` 从行项一次性导出，移除可与行项打架的手填汇总。其它场景继续使用有类型的订单上下文；切换场景只更新 preset，不承诺一定命中活动。
+
+后端同时收敛了验证语义：
+
+- `DecisionEligibilityService` 成为请求属性映射、上下文构造与 Java 资格淘汰的唯一实现，discount / gifts / addon 先走同一套条件树与 fail-closed 规则。
+- 买赠的 DRL 路径只接收合格候选；引擎关闭、编译失败或执行失败时，安全回退也只聚合合格候选，不会把资格失败的赠品重新放回结果。
+- 折扣空决策与引擎异常回退复用 `BenefitEvaluator`，固定、随机、阶梯、折扣、一口价、第 N 件折不再退回只认固定金额的旧算法。
+- console 新增 `/activity-marketing/addon/options` 与 `/activity-marketing/addon/quote` 验证别名，复用 decision 同一份 `AddOnPurchaseService`、租户/JWT 边界和状态语义：options 恒 200，quote 有效 200、失效/伪造 409；两者都不调用 `claim`。
+
+本阶段刻意没有把报价伪装成履约：秒杀与加价购验证均不占库存，秒杀仍须显式调用写平面 `/{activityId}/claim` 才权威扣减，且该 claim 当前不幂等。`java-benefit-eval=false` 的 DRL 对拍路径仍不支持一口价、第 N 件折与随机红包。按阶段聚合的淘汰原因/耗时、真实订单载入、窗口化监控与发布实验继续作为后续缺口。
+
+### PR-7 Repair Gate · 固定生产语义，运行验收待完成（2026-08-10）
+
+> 本条是对上一条实施记录的后续校正，不改写历史。其中“`java-benefit-eval=false` 会进入 DRL 对拍路径”已被最新实现取代；请以本条为当前裁决。
+
+修复门确立了四条不可再分叉的生产语义：
+
+- `activity.marketing.rule-engine.java-benefit-eval` 与 `java-eligibility-eval` 只保留为旧环境配置兼容。两者即使明确为 false，也不改变生产求值路径；旧红包 DRL 仅作隔离参考，不能再被当作回滚开关。
+- discount / gifts / addon 的请求属性映射和 fail-closed 资格淘汰固定共用 `DecisionEligibilityService`；红包固定/随机/阶梯/折扣/一口价/第 N 件折六形态固定走 `BenefitEvaluator`。
+- `rule-engine.enabled=false` 或空决策触发的安全回退先保留资格淘汰，再重算六形态，并保留 `DecisionDataLoader.resolveStrategy()` 已解析的 `STACK / PRIORITY / MAX`（MUTEX 与 PRIORITY 同类单选语义），不得一律降级为 MAX。
+- `POST /activity-marketing/{activityId}/claim` 与 create/status 同属写权限面；当 `activity.tenant.auth.console-write-authority` 非空时，token 必须有该 authority，否则 403。默认空值仅用于 demo 向后兼容，不是生产策略；claim 仍不幂等。
+
+repair-gate 同时修补了先前会造成假绿或真实 CI 失败的观测面：
+
+- add-on 200/409 都保留本次 quote `traces`，不再用旧 options trace 覆盖拒绝原因。
+- 768px 常驻侧栏下的场景面板改为 840px 断点单列；聚焦 E2E 在 390/768/1440 为第 N 件行项态和 add-on 报价结果态检查页面及关键容器溢出。
+- 阶梯补齐 300→50、600→120、1000→220，折扣补齐 200→40 与 400→封顶50；加价购配置正库存，比较 options/quote/409 前后库存并观测无 `*/claim` 请求。
+- CI 显式设 `DROOLS_FOUR_EYES_ENABLED=true`；E2E 先断言 AUTHOR 自审被 409 拒绝，再由 APPROVER 发布，失败时上传截图、输出 Compose 日志并 always 清理独立 stack/volumes。
+
+证据边界必须如实保留：上述修复已通过代码/脚本静态审查，相关单测、typecheck 与 build 有观察记录；**修复后 Docker 完整 `e2e:validate` 尚未实跑落档**。因此 PR-7 可说“实现已落地”，不可说“端到端已验收通过”。
+
+### PR-7 Runtime Gate · Docker 与浏览器验收完成（2026-08-10）
+
+> 本条覆盖上一条末尾的“运行证据待补”状态；上一条保留为 repair-gate 当时的历史快照。
+
+- `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true DROOLS_FOUR_EYES_ENABLED=true ./deploy.sh --full` 成功；Maven 全反应堆 common 143（3 skip）+ console 197 + decision 17 = 357 tests / 3 skip，BUILD SUCCESS。
+- 新镜像 ID：console `3f1a40f4bc06`，decision `e766b7c89af1`，frontend/gateway `2e3052880f27`。
+- `BASE=http://localhost:8095 npm --prefix frontend run e2e:validate` 一次通过，**pass=472 / fail=0**；四眼、13 场景边界、库存/no-claim、quote 409 traces 和 390/768/1440 结果态均获得运行证据。
+- Chrome 人工可视验收通过，console warning/error=[]。随后以 `./deploy.sh --skip-build --core-only` 恢复默认 auth 档，六服务就绪。
+
+因此 PR-7 第一阶段现在可记为**实现与 localhost/Docker 端到端验收均完成**。claim 幂等、加价购真实下单/占库/履约、窗口化监控与专用审批屏仍属后续能力，不在本阶段完成定义内。

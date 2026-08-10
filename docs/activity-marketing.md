@@ -8,18 +8,19 @@
 
 ## 能力范围
 
-覆盖来源的**红包(RED_PACKAGE)** 与 **买赠(BUY_AND_GET)** 两类活动 + 新增的**加价购(ADD_ON_PURCHASE=6)**，四个规则场景。2026-08 分层引擎改造后，前三个场景的**默认求值路径已移出 Drools**，Drools 路径原样保留作对照，翻开关即回退：
+覆盖来源的**红包(RED_PACKAGE)**、**买赠(BUY_AND_GET)** 与新增的**加价购(ADD_ON_PURCHASE=6)** 三类活动。2026-08 收敛后，三条通道的请求上下文与资格淘汰固定共用 `DecisionEligibilityService`；红包的固定、随机、阶梯、折扣、一口价、第 N 件折六种形态固定由 `BenefitEvaluator` 算额并合并。旧红包 DRL 仅作隔离参考，不再是可由配置切换的生产路径：
 
-| 场景 | 说明 | 默认实现 | 翻回 Drools |
+| 场景 | 说明 | 生产实现 | 兼容边界 |
 | ---- | ---- | ---- | ---- |
-| eligibility | 资格淘汰（可视化条件树 → 受控约束，fail-closed） | `ConditionTreeEvaluator` 直接解释条件树 | `java-eligibility-eval=false` |
-| discount | 多活动折扣合并（MAX / MUTEX / STACK / PRIORITY，照抄来源 `DiscountDbRuleSource` 模板） | `BenefitEvaluator.merge()`，一次 O(N) reduce | `java-benefit-eval=false` |
-| ladder | 阶梯满减（`redPackageRangeAmount` JSON 分档） | `BenefitEvaluator.applyLadder()`，线性查表 | `java-benefit-eval=false` |
-| gift | 买赠奖品保留/汇总 | 运行时编译 DRL（未改） | — |
+| eligibility | 资格淘汰（可视化条件树 → 受控约束，fail-closed） | `DecisionEligibilityService` 统一上下文，`ConditionTreeEvaluator` 解释条件树 | `java-eligibility-eval` 仅配置兼容，false 不切换求值器 |
+| discount | 多活动折扣合并（MAX / MUTEX / STACK / PRIORITY） | `BenefitEvaluator.merge()`，一次 O(N) reduce | `java-benefit-eval` 仅配置兼容，false 不切换求值器 |
+| ladder | 阶梯满减（`redPackageRangeAmount` JSON 分档） | `BenefitEvaluator.applyLadder()`，线性查表 | 与其余五形态一样固定走 Java |
+| gift | 共享资格淘汰后保留/汇总买赠奖品 | 合格候选送入运行时 DRL；引擎关闭/失败时只聚合合格候选 | — |
+| addon | 共享资格淘汰后列选项、按当前配置重新报价 | `AddOnPurchaseService` 两阶段查询（报价不占库存） | — |
 
 **为什么把这三件事移出 Drools**：判据是「这条规则需不需要*其它规则的结论*」。阶梯是标量分段函数（原实现**每档生成一条 DRL 规则**，档位多时 KieBase 随运营配置线性膨胀）、折扣合并是一次 reduce（原实现用 `$c : ActivityCandidate() and not ActivityCandidate(computedAmount > $c.computedAmount)` 做 argmax，是 O(N²) beta 评估）、资格是单事实布尔谓词（活动之间零交互）——三者都不需要。规则引擎的价值在规则**之间**的关系，留给 Drools 的是互斥矩阵、级联改写、CEP 频控这类场景。
 
-等价性不靠"看起来更合理"，靠**两条路跑同一组金标断言**：`DecisionGoldenSetTest` 跑默认 Java 路径，`DroolsBenefitGoldenSetTest` 继承它、把两个开关都翻 false 再跑一遍，两边同绿才算钱没变。
+生产语义不靠配置默认值偶然对齐：`DecisionGoldenSetTest` 守金额/边界，`DroolsBenefitGoldenSetTest` 继承同一组金标并把两个旧 `java-*` 属性都设为 false，验证旧环境配置**不得**把生产切回第二份 DRL 资格/算额语义。
 
 外加**商品池自动圈选**：规则驱动圈选 `demo_product` 并物化进绑定表（`bind_source=AUTO`，按目标态 diff 幂等刷新）。
 
@@ -38,14 +39,14 @@
 | `元` + `redPackageTakeType=2` | 随机红包 | 不读该字段 | `redPackageRangeAmount` = `{"min":5,"max":20}` |
 
 - **未知单位一律回落金额型**（`BenefitForm.of`）：历史数据全是 `元`/null，行为一个字节不变；写错的单位表现为「按金额发」（旧行为）而不是「按猜出来的比例发」。写平面另有白名单 `BenefitForm.isSupportedUnit`，非受控单位直接 400。
-- **`redPackageRangeAmount` 是双用途列，靠 JSON 顶层类型分工**：数组 → 阶梯（`LadderRangeParser`），对象 → 随机区间 / 第 N 件（`RandomRangeParser`）。两者互斥由类型保证，不靠调用方自觉。
-- **算钱只有一份实现**：`BenefitMath`（静态纯函数）。生成的 DRL 在 RHS 里 `import com.lrj.drools.activity.engine.BenefitMath;` 调同一个函数，Java 路径也调它——取整与封顶不可能在两条路上漂移。钱一律 2 位小数、`RoundingMode.DOWN`（向下取整是系统性偏向"不多发"，与 fail-closed 一致）。
+- **`redPackageRangeAmount` 是多用途列**：数组 → 阶梯（`LadderRangeParser`）；对象里的 `min/max` → 随机区间、`nth` → 第 N 件（`RandomRangeParser`）。对象结构再由 `BenefitForm` / takeType 与写平面校验约束，不能只看“是对象”就猜形态。
+- **底层算术只有一份实现**：`BenefitMath`（静态纯函数）。历史 DRL 和当前 `BenefitEvaluator` 都调这些函数，可避免取整/封顶公式各写一份；但分支判别、适用性与合并策略仍要靠金标和 fallback 测试守，不能宣称“不可能漂移”。钱一律 2 位小数、`RoundingMode.DOWN`（向下取整是系统性偏向"不多发"，与 fail-closed 一致）。
 - **算不出来返回 null = 本活动不适用，不是"减 0 元"**：0 元会以 0 参与 MAX 竞争并挤掉别的真能减钱的活动。缺订单金额、折数越界 [不在 (0,10)]、折扣型无封顶、缺逐行单价、订单比一口价还便宜——全部按"不适用"处理。
 - **随机红包是确定性随机**：金额 = `SHA-256(活动id|版本|userId|购物车指纹)` 落进 [min,max] 区间，同一上下文永远抽到同一个数（刷新不变价、可重放、可对账）。购物车指纹目前是 `orderAmount|quantity|spuId`，因为决策入口没有订单号。真抽奖需要发放流水表，当前没有。
-  - **判别顺序**：`redPackageTakeType=2`（随机）在算额时**先于**单位判别——随机活动的金额来自区间，压根不读 `redPackageAmount`，所以它必须排在 `redPackageAmount == null` 那道 guard 之前，否则「只配了区间」的活动会被静默跳过。未知 takeType 回落固定金额（不抛异常，一条脏数据不该打断整批候选的算额）。
+  - **判别顺序**：先由 `BenefitForm` 判单位；只有 `AMOUNT` 才继续看 `redPackageTakeType=2`。因此 API 手造的「折 + takeType=2」仍按折扣算，不会被随机分支抢走。进入 `AMOUNT` 后，随机分支仍必须排在 `redPackageAmount == null` guard 前，否则「只配区间」的随机活动会被静默跳过。未知 takeType 回落固定金额（不抛异常，一条脏数据不该打断整批候选的算额）。
 - **写平面校验（`validateBenefitForm`）**：折扣型必须有折数 + 封顶（`>0`）且**不允许同时配阶梯**（阶梯 reward 是「元」，两种形态打架）；非折扣型不允许填封顶。
 
-**只有默认的纯 Java 路径实现全部五种形态**。Drools 路径（`java-benefit-eval=false`）只生成 `discount-compute-ratio`（折扣型）+ `discount-compute-amount`（其余按金额型）两条算额规则——**一口价 / 第 N 件折 / 随机红包在 Drools 路径下不成立**：前两者会被当成金额型；随机红包（只配区间、`redPackageAmount` 为 null）连 `discount-compute-amount` 的 LHS 都不满足，一条算额规则都不 fire，`computedAmount` 保持 null（在 MAX 竞争里按 0 计）。该开关只用于折扣/阶梯/合并的对拍。
+**生产红包固定由 `BenefitEvaluator` 实现六种形态**（固定、随机、阶梯、折扣、一口价、第 N 件折）。仓库里保留的旧红包 DRL 确实不认一口价、第 N 件折和随机红包，这正是它不能再做生产回退的原因。`java-benefit-eval=false` 现在只被绑定为未使用的兼容属性，不会真正进入该 DRL；不要再用它当回滚手段。
 
 ## 跑起来
 
@@ -62,13 +63,13 @@
 
 浏览器打开 `http://localhost:8081/ui/`（根 `/` 是构建无关落地页，跳 `/ui/`；旧原生演示台已于 F3 退役）→ 活动配置台 `/ui/console/activities`，即可用报表式表单创建活动、拖出资格条件树、上线，在「优惠验证」页 `/ui/console/validate` 查命中。
 
-浏览器里还有 `/ui/console/playbooks`「玩法模板目录」：给已有能力起名字并预填编辑器（满 X 减 Y / 第二件半价 / 限时秒杀 / 加价购…）。页面备有「标灰 + 写明缺什么」的渲染机制（`blocked` 组 + `blockedReason`），但**当前 12 张卡没有一条标灰**，机制是空转的；唯一实际建不出来的「加价购」（预填 `activityType=6`，写平面 400）反而没标灰，见下「已知落差」。
+浏览器里还有 `/ui/console/playbooks`「玩法模板目录」：12 张玩法卡给已有能力起名字并预填编辑器（满 X 减 Y / 第二件半价 / 限时秒杀 / 加价购…），当前均可创建。`/ui/console/validate` 从这 12 份 playbook 直接派生验证场景，并额外提供 random 场景；页面按 discount / gifts / addon 三通道调用真实接口，展示结构化结果与 trace，而不是只打印原始 JSON。场景不指定活动、不强制命中；第 N 件折只编辑订单行，`spuIdList / orderAmount / quantity / lines` 从行项唯一导出。
 
 开关：
-- `activity.marketing.rule-engine.enabled`（默认 true）：false 时优惠查询走旧 Java 逻辑（取最大红包），用于灰度对照/回滚。**旧逻辑也认折扣型**（走 `BenefitMath.ratioDiscount`），否则「打 8 折」在回退路径上会被当成「减 8 元」发出去——而回退不是罕见分支（开关关闭 / 规则空决策 / 规则执行异常都会走到这里）。
-- `activity.marketing.rule-engine.java-benefit-eval`（默认 **true**）：阶梯落档 + 折扣合并走纯 Java；false 退回原 DRL 实现（对拍用，见上节）。
-- `activity.marketing.rule-engine.java-eligibility-eval`（默认 **true**）：资格判定直接解释条件树；false 退回编译 DRL。
-  > 两个开关都只有 `@Value` 默认值，各 `application.yml` 里没写；要翻请用 `-D` 或环境变量覆盖。
+- `activity.marketing.rule-engine.enabled`（默认 true）：false 时仍先跑共享资格，再用 `BenefitEvaluator` 安全重算六种形态。它保留 `DecisionDataLoader.resolveStrategy()` 从快照/当前 bizLine 解析的 `STACK / PRIORITY / MAX`（以及同类的 MUTEX），不会统一退化成 MAX。开关关闭或空决策都不能退回只认固定金额的算法。
+- `activity.marketing.rule-engine.java-benefit-eval`（默认 **true**）：旧配置兼容属性；代码只绑定但不读取，false 不改变生产红包六形态求值器。
+- `activity.marketing.rule-engine.java-eligibility-eval`（默认 **true**）：旧配置兼容属性；代码只绑定但不读取，false 不改变 discount/gifts/addon 共用 `DecisionEligibilityService` 的主路径。
+  > 两个旧属性的目的是让已部署的环境不必立即删配置，不是新的灰度/回滚机制。
 - `activity.marketing.seed-demo-data`（默认 true）：启动时种入 4 个 demo 商品 + 商品池（poolId=1，圈电子类 100~200 元），让商品池自动圈选在浏览器可演示；测试中不开，不污染断言。
 - `activity.tenant.dev-default-enabled`（默认 **false**，`application.yml` dev-run 显式开为 true）：多租户开关，见下节「多租户隔离」。本地开着时不带 `X-Tenant-Id` 也能跑（回落单租户 `__dev__`），下面的 curl 示例照常工作。
 
@@ -79,11 +80,13 @@
 | POST | `/create` | 创建/编辑（带 `activityId` 即编辑，version+1；`requestId` 幂等）。返回体新增 `warnings[]` |
 | POST | `/{id}/status` | 上下线 `{version,targetStatus}`（0 待上线/1 上线/2 下线） |
 | POST | `/bulk-status` | **批量**上下线 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}` |
-| POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=`）：抢到 200，没抢到 **409** |
+| POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=`）：抢到 200，没抢到 **409**；auth 档受已配置的 `console-write-authority` 保护 |
 | GET | `/list` | 活动列表（当前版本） |
 | GET | `/{id}` | 详情（manage/rules/conditions/bindings/gifts/poolRefs） |
 | POST | `/spu-discount` | 红包优惠查询（资格→阶梯→折扣合并 + 回退 + trace）。控制台是运营的调试入口，**显式 `explain=true`** |
 | POST | `/gifts` | 买赠查询（同样 `explain=true`） |
+| POST | `/addon/options` | 加价购第一阶段：列出当前请求上下文可选的换购品（空列表是正常结果） |
+| POST | `/addon/quote?activityId=&item=` | 加价购第二阶段：按当前配置权威重报价；失效/伪造选项返回 **409** |
 | POST | `/preview` | 资格条件树预览（翻译+试编译，不落库；恒 200 读 `ok`） |
 | GET | `/field-dict` | 字段白名单 + 运算符 + 枚举（前端下拉的唯一来源，防漂移） |
 
@@ -92,7 +95,7 @@
 - **批量接口的 `version` 必须显式传**。P0-4 之后线上版与草稿**并存**（见下），只给 id 就会落到「最高未删除版本」= 那个还没发布的草稿，于是「批量下线 23 个」把 23 个草稿置成下线、**正在发钱的线上版一个都没停**，回执还报全部成功。工作台按它在列表里看到的那一行传版本。逐条捕获异常、互不影响，部分失败是正常结果（恒 200）；但**单条并不原子**——`bulkChangeStatus` 自身无 `@Transactional`，循环里是同类自调用 `changeStatus(...)`，代理式 AOP 下 `changeStatus` 上的事务注解不生效，「退役其它 ONLINE 版本 → 保存本行 → 推代际」中途失败会留下半成品状态。
 - **编辑不再下线正在服务的版本**（P0-4）：当前版本已上线时保留它继续服务、另建 v+1 草稿；当前版本还是草稿时直接顶掉。发布草稿时在同一事务里把该活动其它仍 ONLINE 的版本退役 = **原子指针切换**。
 - **`inventory` 是声明式的**：字段存得下，**决策链路不读取、不扣减**。create 返回的 `warnings[]` 会把这一点明说（沉默最危险：运营以为配了就生效）。真要限量走 `/{id}/claim`。
-- **`claim` 才是权威扣减**：`decrementInventory` 把「判余量」和「减一」压进同一条 `UPDATE ... WHERE inventory >= :n`，靠数据库对同一行的串行化防超发；**不能改成先查后减**（check-then-act 竞态，低并发测不出、大促必现）。`claim` **不幂等**——同一用户连点两次会扣两次，幂等需要「用户 × 活动」的领取流水表，当前没有。决策接口只报价，**不能拿决策成功当作抢到了**。
+- **`claim` 才是权威扣减**：`decrementInventory` 把「判余量」和「减一」压进同一条 `UPDATE ... WHERE inventory >= :n`，靠数据库对同一行的串行化防超发；**不能改成先查后减**（check-then-act 竞态，低并发测不出、大促必现）。`claim` **不幂等**——同一用户连点两次会扣两次，幂等需要「用户 × 活动」的领取流水表，当前没有。它与 create/status 同属写端点：当 `activity.tenant.auth.console-write-authority` 非空时，token 必须具备该 authority，否则 403；默认空值仅为 demo 兼容。决策接口只报价，**不能拿决策成功当作抢到了**。
 
 创建红包活动示例（资格 orderAmount≥100 + 手动绑定 spu 1001）：
 
@@ -141,17 +144,17 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 | ---- | ---- |
 | POST `/decision/v1/spu-discount` | POST `/activity-marketing/spu-discount`（控制台版 `explain=true`） |
 | POST `/decision/v1/gifts` | POST `/activity-marketing/gifts`（同上） |
+| POST `/decision/v1/addon/options` | POST `/activity-marketing/addon/options` |
+| POST `/decision/v1/addon/quote?activityId=&item=` | POST `/activity-marketing/addon/quote?activityId=&item=` |
 
-决策平面**独有**的端点（控制台没有等价物）：
+决策平面**独有**的观测端点（控制台没有等价物）：
 
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| POST | `/decision/v1/addon/options` | 加价购**第一阶段**：这一单能换购什么、各加多少钱（空列表是正常结果） |
-| POST | `/decision/v1/addon/quote` | 加价购**第二阶段**：`?activityId=&item=`，权威报价；选项失效 → **409** |
 | GET | `/decision/v1/metrics` | 决策耗时 / 回退计数聚合（**单实例视角**，跨实例汇总仍看 Prometheus） |
 | GET | `/decision/v1/by-activity` | 按活动的命中量（带基数上限，见「决策指标」） |
 
-**加价购为什么必须两阶段**：卡点不在算钱而在交互形状——既有链路是「一次调用返回最终优惠」，加价购必须先列清单、等用户挑一个、再二次定价。第二阶段**不发 quoteToken、不读客户端传来的价格**，只接受「哪个活动的哪个换购品」，价格一律重新查：既没有密钥要管，也从根上杜绝改价。数据上复用 `activity_gift` 承载换购品，`giftName` 是品名、`absoluteAmount` 是**加价金额**（不是赠品价值）；加价金额 ≤0 的选项直接排除（那不是加价购）。报价不等于抢到，库存仍走写平面 `claim`。
+**加价购为什么必须两阶段**：卡点不在算钱而在交互形状——既有链路是「一次调用返回最终优惠」，加价购必须先列清单、等用户挑一个、再二次定价。第一阶段与红包、买赠复用 `DecisionEligibilityService` 的请求上下文与 fail-closed 资格判断；第二阶段**不发 quoteToken、不读客户端传来的价格**，只接受「哪个活动的哪个换购品」，并重新跑资格、重新读取当前选项与价格，失效或伪造返回 409。数据上复用 `activity_gift` 承载换购品，`giftName` 是品名、`absoluteAmount` 是**加价金额**（不是赠品价值）；加价金额 ≤0 的选项直接排除（那不是加价购）。console 别名沿用同一服务与既有租户/JWT 边界。两阶段都只查询/报价、不会调用 `claim` 或占库存；秒杀验证也只是试算，只有显式调用写平面的 `/{id}/claim` 才会扣库存。
 
 - **角色门控**（`RoleGateFilter`，靠 `activity.role`，仅显式设置该属性时才装配）：`decision` 只放行 `/decision/v1/**` + `/actuator/**`；`console` 屏蔽 `/decision/v1/**`、放行写面 + Step1–18 + SPA；`all`（默认，本地/测试）全开。这是**部署角色边界**而非安全边界（同一份代码），真隔离仍靠 Casdoor 验签 + `@TenantId`。
 - **发布代际轮询预热（M1.4）+ 代际快照包（P1-1）**：console 上线活动时 bump `(tenant,bizLine)` 代际；decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即①**构建并发布决策快照**、②预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact。顺序不能反：先建好快照再切指针，请求线程永远读到自洽物料。
@@ -248,20 +251,18 @@ facts（`ActivityCandidate/ActivityRuleContext/ActivityRuleResult/GiftResult`）
 - `storeId`——条件白名单里一直有「店铺」，但决策入参没有这个键，于是**配了 `storeId` 条件的活动永远不命中**，且因为 fail-closed 是「静默不发」而不是报错。写侧其实完整建模了店铺（`DemoProductEntity` / `ActivitySpuBindingEntity` / 编辑器的「店铺ID」列），只有入参漏了，故补入参而不是删白名单。语义是「这一单来自哪个门店」，不是「活动绑在哪个店」。
 - `lines: [{spuId, unitPrice, quantity}]`——「第 N 件折」必需的逐行单价。整单金额 ÷ 件数是均价，拿均价当第二件的价去打折，在混着贵重与便宜商品的车里会**静默算错钱**。不传 `lines` 时该形态返回 null（不适用），而不是拿均价瞎算。按行不按件：算「第 N 件」只需 (单价, 件数)。
 
-请求维度 → 属性袋的映射收敛成**一张表** `ActivityQueryService.requestAttributes()`，并由 `DecisionContextFieldsTest` 钉死不变量「白名单里的每个 key 都必须在这里有来源」——此前是手写 `putAttr` 与 `RuleSchemaRegistry` 白名单两处独立维护，两个方向都漏过。当前白名单 6 个字段：`orderAmount` / `quantity` / `userDistrictId` / `userTags` / `spuId` / `storeId`；`userId` 与 `orderLines` 入袋但**不进白名单**（运营写不出、也不该能写「第 3 行单价 > 100」这种条件）。
+请求维度 → 属性袋的映射收敛成**一张表** `DecisionEligibilityService.requestAttributes()`；`ActivityQueryService` 的兼容入口只委托给它。红包、买赠、加价购都复用这份上下文与候选淘汰，并由 `DecisionContextFieldsTest` 钉死不变量「白名单里的每个 key 都必须在这里有来源」——此前是手写 `putAttr` 与 `RuleSchemaRegistry` 白名单两处独立维护，两个方向都漏过。当前白名单 6 个字段：`orderAmount` / `quantity` / `userDistrictId` / `userTags` / `spuId` / `storeId`；`userId` 与 `orderLines` 入袋但**不进白名单**（运营写不出、也不该能写「第 3 行单价 > 100」这种条件）。
 
 ## 本次未迁移（来源存在）
 
-砍价/拼团/门店拼团/抽奖等其它玩法、CPS 订单分润、红包合伙人签名校验、真实商品/权益/钉钉集成、活动版本历史浏览/回滚、鉴权。`COUPONS/CPS/RIGHT_COUPON` 三类活动类型保留枚举位但未实现（后端 400、前端禁用）。
+砍价/拼团/门店拼团/抽奖等其它玩法、CPS 订单分润、红包合伙人签名校验、真实商品/权益/钉钉集成、活动版本历史浏览/回滚。`COUPONS/CPS/RIGHT_COUPON` 三类活动类型保留枚举位但未实现（后端 400、前端禁用）。
 
 ## 已知落差（配置得下 ≠ 会执行）
 
 这些不是"待办清单"，是**当前代码的真实边界**，写在这里是因为沉默最危险——运营以为配了就生效：
 
-- **加价购只有决策侧、没有写侧**：`/decision/v1/addon/*` 已可用，但写平面 `create` 的 `validateCommon` 仍只放行红包(1)/买赠(5)，收到 `activityType=6` 直接 400；编辑器的类型下拉也只 filter 出 1 和 5。前端玩法目录里的「加价购」卡片预填的正是 `activityType: 6`。
-  `TODO(待澄清)`：加价购活动预期怎么建——是放开 `create` 的类型白名单，还是只作决策侧读已有数据的能力演示？当前仓库里没有任何种子/迁移会写出 `activity_type=6` 的行，`AddOnPurchaseTest` 用桩 loader 绕开取数。
-- **库存是声明式的**：`inventory` / `userInventory` 虽然进了 `ActivityCandidate`，**决策链路一个都不读**——不判余量、不扣减，不构成超发防护。写平面的 `/{id}/claim` 是 `inventory` 唯一会被真正扣减的地方（且**不幂等**）；`userInventory`（每人限领）**至今没有任何执行路径**。create 的 `warnings[]` 会把 `inventory` 这条明说。
-- **一口价 / 第 N 件折 / 随机红包只在默认的纯 Java 求值路径成立**；翻 `java-benefit-eval=false` 回 Drools 时，一口价 / 第 N 件折会被当成金额型算，随机红包则不参与算额（算额规则要求 `redPackageAmount != null`，只配区间的候选一条都不 fire）。该开关只用于折扣/阶梯/合并对拍。
+- **验证/决策报价不占库存**：`inventory` / `userInventory` 虽然进了 `ActivityCandidate`，discount、gifts、加价购 options/quote 与秒杀试算都不扣减，不构成超发防护。写平面的 `/{id}/claim` 是 `inventory` 唯一会被真正扣减的地方（且**不幂等**）；`userInventory`（每人限领）**至今没有任何执行路径**。create 的 `warnings[]` 会把 `inventory` 这条明说。
+- **旧红包 DRL 不是生产回退**：它自身不支持一口价 / 第 N 件折 / 随机红包，所以六形态已固定由 `BenefitEvaluator` 求值。两个 `java-*` 旧属性即使配为 false 也不会把生产切回 DRL；灰度时只能使用明确支持当前六形态与合并策略的路径。
 - **`STACK` 下多张折扣券会累加，可能超过订单金额**——金标集里有用例记录这条既有语义，本轮不改钱。
 - **同时配了阶梯与折扣的历史脏数据**：`computeAmounts` 的覆盖语义（阶梯只设 `computedAmount` 不设 `amountComputed`，随后被固定金额覆盖）原样保留，两条路给出同一个数。看着像 bug，但它是当前线上语义，改它要单独立项、单独对拍。
 - **决策快照的回滚只有原语、没有入口**：`DecisionSnapshotStore.rollback()` 能把 `(tenant,bizLine)` 的指针切回上一代（只留一代），但没有 REST 端点触发；活动本身的版本历史浏览/回滚仍未迁移（见上节）。

@@ -12,7 +12,7 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 | 模块 | 类型 | 职责 |
 | ---- | ---- | ---- |
-| `activity-common` | 库 | 活动引擎共享内核：`activity/{domain,engine,persistence,tenant,metrics,snapshot}` + 读路径服务（`ActivityQueryService` 编排 / `DecisionDataLoader` 取数 / `AddOnPurchaseService`）。用到 Drools 的地方走 `KieHelper` 运行时编译，**不用 kmodule / KieContainer / DMN**；2026-08 起决策主链路默认是纯 Java（见下「决策链路现状」） |
+| `activity-common` | 库 | 活动引擎共享内核：`activity/{domain,engine,persistence,tenant,metrics,snapshot}` + 读路径服务（`ActivityQueryService` 编排 / `DecisionDataLoader` 取数 / `DecisionEligibilityService` 统一上下文与资格 / `AddOnPurchaseService`）。用到 Drools 的地方走 `KieHelper` 运行时编译，**不用 kmodule / KieContainer / DMN**；2026-08 起决策主链路默认是纯 Java（见下「决策链路现状」） |
 | `drools-lab` | 库 | **下表 Step 1–18 教学代码全在这里**（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`，及 Step7 决策表 / Step16 `kie-ci` / Step17 `kie-dmn` 等重依赖） |
 | `activity-console` | 应用 · 8081 | 写平面（含批量上下线 / 秒杀库存 claim）+ 复用 drools-lab 暴露 Step 1–18 全端点 + 前端 SPA 托管（`/ui/`）+ **唯一 DDL 执行者**；依赖 common + drools-lab |
 | `activity-decision` | 应用 · 8082 | 只读决策热路径 `/decision/v1`（含加价购两阶段 + 指标聚合）+ 发布代际轮询预热**兼决策快照构建/切换**；**只依赖 common，不依赖 drools-lab**（jar 更轻，甩掉 kie-ci/DMN），M2.2 起连只读 DB 账号（仅 SELECT）、`ddl-auto: validate`，DDL 由 console 独占 |
@@ -23,13 +23,16 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 活动侧的决策**主链路默认不进 Drools**。判据是「这条规则需不需要*其它规则的结论*」——阶梯落档是标量分段函数、折扣合并是一次 reduce、资格条件树是单事实布尔谓词，三者都不需要，于是移出规则引擎：
 
-| 环节 | 默认走谁 | 开关（默认 true = 走 Java，翻 false 回 Drools） |
+| 环节 | 生产固定路径 | 兼容属性 / 边界 |
 | ---- | ---- | ---- |
-| 资格淘汰 | `ConditionTreeEvaluator` 直接解释 `condition_tree_json` | `activity.marketing.rule-engine.java-eligibility-eval` |
-| 阶梯落档 / 算额 / 合并 | `BenefitEvaluator` + `BenefitMath` 纯 Java | `activity.marketing.rule-engine.java-benefit-eval` |
-| 买赠 | **仍走 Drools**（`ruleRuntime.evalGift`） | —（`rule-engine.enabled=false` 时整条链路回退旧 Java 逻辑） |
+| 资格淘汰（红包 / 买赠 / 加价购共用） | `DecisionEligibilityService` 构造唯一上下文，再由 `ConditionTreeEvaluator` 直接解释 `condition_tree_json` | `java-eligibility-eval` 仅保留配置兼容；即使 false 也不改变主路径 |
+| 阶梯落档 / 六形态算额 / 合并 | `BenefitEvaluator` + `BenefitMath` 纯 Java | `java-benefit-eval` 仅保留配置兼容；即使 false 也不切回旧 DRL |
+| 买赠 | 共享资格淘汰后走 `ruleRuntime.evalGift`；关闭/失败时只聚合合格候选 | `rule-engine.enabled=false` 触发安全 Java 回退 |
+| 加价购 | 共享资格淘汰后由 `AddOnPurchaseService` 列选项、按当前配置重报价 | 不走 Drools；报价不调用 `claim` |
 
-- 两条 Drools 路径保留作对照与回滚，等价性由金标集 / 对拍测试守（`DecisionGoldenSetTest`、`DroolsBenefitGoldenSetTest`、`SnapshotParityTest`）。副作用：红包链路几乎不再编译 DRL，KieBase 缓存只剩买赠那一类
+- 旧红包 DRL 仅保留作隔离参考/教学资产，**不是生产回滚路径**（它不认一口价 / 第 N 件折 / 随机红包，翻回去会按错误形态发钱——这正是开关退役的原因）。“旧环境即使仍配 false，生产也必须继续走共享资格 + 六形态 Java 求值”这条由 `ActivityQuerySafetyFallbackTest#legacyFalseFlagsCannotSwitchProductionBackToDrools` 守（**不是** `DroolsBenefitGoldenSetTest`，后者自身跑 0 个用例，见坑 14）；`SnapshotParityTest` 继续守快照/走库等价性
+- **`BenefitEvaluator` 出 bug 时的回滚手段**（开关退役后）：部署级回滚上一版 jar + decision 侧快照代际 `rollback`（保留上一代指针）；金标集（`DecisionGoldenSetTest` 39 例）是发布门禁。进程内已没有「切回另一套求值语义」的开关，不要再往这个方向设计预案
+- `rule-engine.enabled=false` 或空决策的安全回退仍先跑共享资格，再用 `BenefitEvaluator` 重算六形态，并保留从当前 bizLine 解析出的 `STACK / PRIORITY / MAX`（`MUTEX` 与 PRIORITY 同类单选语义），不能统一退化成 MAX
 - **取数**：`DecisionDataLoader` 固定 5 次查询（原来 3N+2，N = 候选活动数）
 - **快照**：decision 侧代际推进时，`DecisionSnapshotBuilder` 在**后台线程**把整条业务线的物料建成不可变 `DecisionSnapshot`，就绪后由 `DecisionSnapshotStore` 原子切指针（保留上一代供 `rollback`）。命中快照的决策**零数据库查询**；没有快照自动回落走库（console 没有构建器，store 恒空，天然走库）
 - **指标**：`DecisionMetrics` 打 `activity.decision.{duration,fallback,candidates,source,hit}` + `activity.rule.{compile,fire.ceiling,cache.*}`。**回退率是头号告警项**——回退会静默改变实际发放金额
@@ -45,11 +48,11 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 | `价` | `FIXED_PRICE` | 一口价（秒杀）卖多少 | 减免 = 订单金额 − 一口价；防超发靠写平面 `claim`，决策侧只报价 |
 | `件折` | `NTH_ZHE` | 折数，第几件存在 `redPackageRangeAmount` 的 `{"nth":N}` | 需决策入参带 `lines`（订单行）；缺行项 fail-closed 不适用，**不拿均价凑** |
 
-随机红包走 `redPackageTakeType=RANDOM_AMOUNT` + 区间，金额是**确定性随机**（SHA-256 派生自「活动+版本 / 用户 / 购物车指纹」，刷新不变价、可重放对账）。加价购是活动类型 6，走 `/decision/v1/addon/{options,quote}` 两阶段（列选项 → 权威报价，**第二阶段不读客户端传来的价格**）。
+随机红包走 `redPackageTakeType=RANDOM_AMOUNT` + 区间，金额是**确定性随机**（SHA-256 派生自「活动+版本 / 用户 / 购物车指纹」，刷新不变价、可重放对账）。加价购是活动类型 6，走 `/decision/v1/addon/{options,quote}` 两阶段；console 另有 `/activity-marketing/addon/{options,quote}` 同语义验证别名。第二阶段不读客户端传来的价格，并重新跑资格与读取当前配置；秒杀试算和加价购报价都不占库存。
 
-前端把这些形态包装成有名字的玩法：控制台 `/console/playbooks`（`frontend/src/console/playbooks.ts`）给每个玩法一句人话 + 预填参数，**做不到的玩法不删卡、标灰并写明缺什么**。
+前端把这些形态包装成有名字的玩法：控制台 `/console/playbooks`（`frontend/src/console/playbooks.ts`）给每个玩法一句人话 + 预填参数，**做不到的玩法不删卡、标灰并写明缺什么**。`/console/validate` 从 12 份 playbook 派生场景并补 random，按 discount / gifts / addon 三通道展示结构化结果；第 N 件折的 `spuIdList / orderAmount / quantity / lines` 只从订单行导出。
 
-> ⚠️ 写平面 `ActivityMarketingService.validateCommon` 目前仍只放行**红包(1) / 买赠(5)**，加价购(6) 建不出来——决策侧链路已通，数据只能自己造。TODO(待澄清)：是否放开写平面的类型白名单。
+> 写平面 `ActivityMarketingService.validateCommon` 当前放行**红包(1) / 买赠(5) / 加价购(6)**，并在创建时校验加价购至少一个换购品、品名非空且唯一、加价金额大于 0。前端 `CREATABLE_ACTIVITY_TYPES` 同步为 `[1,5,6]`。
 
 ### 教学 Steps（代码在 drools-lab，端点由 console 暴露）
 
@@ -97,7 +100,7 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
 ./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
 
-./mvnw test                   # 跑全 reactor 测试（common 121（含 3 skipped）+ console 176 + decision 17 = 314，本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
+./mvnw test                   # 跑全 reactor 测试（common 143（含 3 skipped）+ console 200 + decision 17 = 360，2026-08-10 本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
 ./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
 # 单模块：./mvnw -pl activity-common test（-am 连带先构建依赖模块）
@@ -127,9 +130,10 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 8. **MySQL 中文乱码 / 时区** — `application-mysql.yml` 的 URL 必须带 `characterEncoding=UTF-8`（DRL / reason 里有中文）+ `serverTimezone`（`Instant` 字段），否则中文乱码 / 时间偏移。`createDatabaseIfNotExist=true` 让库不存在时自动建，学习省事；生产应预建库 + 收紧账号权限
 9. **新增一个受租户约束的路径，必须同步扩 `TenantContextFilter` 的 URL 模式** — 该过滤器（header 档）原来只挂 `/activity-marketing/*`，M1.1 加决策平面时漏了 `/decision/v1/*`：`X-Tenant-Id` 被**静默忽略**，全部请求落到 dev-default / `__no_tenant__` 兜底，表现为 A 租户查到别人的活动。auth 档不受影响（`JwtTenantFilter` 挂在同时匹配两个平面的安全链上）。现已扩成两条，回归由 `DecisionTenantHeaderTest` 钉死。单元测试大多跑在 dev-default 下，**这类缺口只有端到端才照得出来**
 10. **decision 的 `ddl-auto` 必须是 `validate`** — 它连的是只读账号（`deploy/mysql-init/` 只 GRANT SELECT）。此处曾遗留 `update`，只被 compose 的环境变量盖住；按文档里那条本地命令 `./mvnw -pl activity-decision spring-boot:run` 起，只读平面就带着 DDL 权限跑了。现由 `DecisionDdlGuardTest` 钉死，别再改回 update
-11. **`redPackageAmountUnit` 现在是「这个数字是什么意思」的开关，不再是装饰字段** — 元/折/价/件折 四种受控取值（见上「权益形态」表），未知取值回落金额型而不是报错。改这块要同时看 `BenefitForm` / `BenefitEvaluator` / DRL 里的 `discount-compute-ratio`：**两条路必须调同一个 `BenefitMath` 静态方法**，各写一遍取整逻辑迟早漂移，表现是同一张券在两条路上少发/多发几分钱。减免额一律 `RoundingMode.DOWN`（四舍五入会系统性多发）
-12. **库存扣减只能是一条原子 UPDATE，且必须在写平面** — `ActivityManageRepository.decrementInventory` 把「判余量」和「减一」压进同一条 `update ... where inventory >= :n`；**绝不能先 SELECT 再 UPDATE**（check-then-act 竞态，低并发测不出、大促必现）。返回 0 = 没抢到，调用方不能忽略返回值。决策服务连只读账号写不了库，所以分工是「决策只报价、`POST /activity-marketing/{id}/claim` 才是提交」；claim **不幂等**（没有领取流水表，连点两次扣两次）
+11. **`redPackageAmountUnit` 现在是「这个数字是什么意思」的开关，不再是装饰字段** — 元/折/价/件折 四种受控取值（见上「权益形态」表），未知取值回落金额型而不是报错。改这块要同时看 `BenefitForm` / `BenefitEvaluator` / `BenefitMath`。**取整逻辑只能有一份**（`BenefitMath` 的静态方法），各写一遍迟早漂移，表现是同一张券在两条路上少发/多发几分钱。<br>（历史注记：这条原先要求「同步改 DRL 里的 `discount-compute-ratio`」——那条 DRL 算额规则已随 `buildDiscountDrl` 一起删除，**别再去找它**，也别为了让文档成立而重新造一条 DRL 算额路径，那等于复活刚被删掉的第二权威。）减免额一律 `RoundingMode.DOWN`（四舍五入会系统性多发）
+12. **库存扣减只能是一条原子 UPDATE，且必须在写平面** — `ActivityManageRepository.decrementInventory` 把「判余量」和「减一」压进同一条 `update ... where inventory >= :n`；**绝不能先 SELECT 再 UPDATE**（check-then-act 竞态，低并发测不出、大促必现）。返回 0 = 没抢到，调用方不能忽略返回值。决策服务连只读账号写不了库，所以分工是「决策只报价、`POST /activity-marketing/{id}/claim` 才是提交」；claim **不幂等**（没有领取流水表，连点两次扣两次）。它已列入 `console-write-authority` 保护的写路径；auth 生产环境必须配该 authority，不要依赖 demo 默认空值
 13. **activityId 不能无上限地当 Prometheus 标签** — 活动是运营随手能建的，序列数不受工程控制，基数爆炸的代价是大促当天整套监控一起挂。`DecisionMetrics.ACTIVITY_TAG_CAP = 200`，超出部分并入 `__over_cap__` 哨兵（总量仍准，只是分不出是哪几个），响应里原样带出不隐藏
+14. **别用「求和 surefire XML」来数用例数，会少数 50 个** — `DroolsBenefitGoldenSetTest extends DecisionGoldenSetTest`（全仓库唯一的测试类继承）。父类的用例全在 `@Nested` 内部类里，跑子类时 JUnit 会把这些嵌套类**再发现一遍**，但它们仍按**父类**的 `@TestPropertySource` 执行、并写进**同名** `TEST-…DecisionGoldenSetTest$Ladder.xml`，第二遍直接覆盖第一遍。于是文件求和得 console 150、Maven 自己报 200。**以 `./mvnw test` 输出的 `Tests run:` 汇总为准。** 历史上文档里的 307 / console 147 就是这么数出来的错数字。<br>顺带两个后果：① 那 50 个用例**白跑一遍**（约 10 秒 + 一个多余的 Spring 上下文）；② `DroolsBenefitGoldenSetTest` **自身用例数为 0**——它想验的「旧开关配 false 也不换求值器」实际由 `ActivityQuerySafetyFallbackTest#legacyFalseFlagsCannotSwitchProductionBackToDrools` 守着（反射把两个字段置 false 再断言行为），别把前者当门禁
 
 ## 代码结构（按职责，不是按目录）
 
@@ -148,9 +152,9 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 
 - `activity-common · activity/{domain,engine,persistence,tenant,metrics,snapshot} + service/` — 活动引擎共享内核：多租户事实 / 规则编译引擎（`KieHelper` 运行时编译 + 足迹加权 LRU 缓存，**非 kmodule/KieContainer**）/ 活动·规则·条件·幂等·发布代际的 JPA / 租户上下文。console 与 decision 共享；Step 10/18 那套教学 JPA 不在这里、仍在 drools-lab。读路径按职责再切三层：
   - `service/ActivityQueryService` 只做**编排**（资格 → 阶梯 → 算额 → 合并 → 回退），`service/DecisionDataLoader` 只做**取数**（快照优先，否则固定 5 次查询）
-  - `engine/{BenefitEvaluator,BenefitMath,ConditionTreeEvaluator,RandomRangeParser}` 是**纯 Java 求值层**（分层引擎，默认路径）；`engine/{ActivityDrlBuilder,ActivityRuleRuntimeService}` 是保留的 Drools 对照路径
+  - `service/DecisionEligibilityService` 是 discount / gifts / addon 唯一的请求属性映射与资格淘汰；`engine/{BenefitEvaluator,BenefitMath,ConditionTreeEvaluator,RandomRangeParser}` 是**纯 Java 求值层**，六形态固定走这里；`engine/{ActivityDrlBuilder,ActivityRuleRuntimeService}` 只保留买赠运行时与隔离对照资产，两个旧 `java-*` 属性不再把生产切回红包 DRL
   - `snapshot/{DecisionSnapshot,DecisionSnapshotBuilder,DecisionSnapshotStore}` 代际快照包；`metrics/DecisionMetrics` 决策链路指标（含 activityId 标签基数上限）
-- `activity-console · activity/{controller,service}`（应用，8081）— 写平面（`ActivityMarketingService` / `ArtifactService` / `GenerationService` + seeder）+ legacy `/activity-marketing` 读端点（试算显式 `explain=true`，决策平面走 false）；main = `ConsoleApplication`，**唯一 DDL 执行者**。写平面语义要点：编辑**不下线**正在服务的版本（线上版与草稿并存），上线时在同一事务里把该活动其它 ONLINE 版本退役（原子指针切换）；`POST /bulk-status` 批量上下线**逐条处理、失败不影响已成功项 + 部分失败回执**（一律 200；`version` 允许为 null，但调用方应按列表行传显式 version，否则会打到草稿而不是正在服务的版本）；`POST /{id}/claim` 抢占秒杀库存
+- `activity-console · activity/{controller,service}`（应用，8081）— 写平面（`ActivityMarketingService` / `ArtifactService` / `GenerationService` + seeder）+ legacy `/activity-marketing` 读端点（试算显式 `explain=true`，决策平面走 false）；main = `ConsoleApplication`，**唯一 DDL 执行者**。写平面语义要点：编辑**不下线**正在服务的版本（线上版与草稿并存），上线时在同一事务里把该活动其它 ONLINE 版本退役（原子指针切换）；`POST /bulk-status` 批量上下线**逐条处理、失败不影响已成功项 + 部分失败回执**（一律 200；`version` 允许为 null，但调用方应按列表行传显式 version，否则会打到草稿而不是正在服务的版本）；`POST /{id}/claim` 抢占秒杀库存，并与 create/status 一样受已配置的 `console-write-authority` 保护
 - `activity-decision · activity/{controller,engine}`（应用，8082）— 只读 `DecisionPlaneController`：`/decision/v1/{spu-discount,gifts}` 热路径、`/addon/{options,quote}` 加价购两阶段、`GET /metrics` + `/by-activity` 指标聚合（**本进程单实例视角**，跨实例仍看 Prometheus）；`GenerationWarmService` 轮询发布代际，见涨即**先建快照切指针、再预热 ACTIVE artifact 的 DRL**；main = `DecisionApplication`，classpath 上无写平面 bean / 无 drools-lab
 
 ## 扩展点
@@ -175,7 +179,7 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 - `examples/aviator/AviatorDemo.java` — Aviator 独立学习示例（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
 - `deploy/` — 微服务本地编排：`docker-compose.yml`（console 8081 / decision 8082 / nginx 网关 host `:8095` / MySQL 单库双账号 / Prometheus `:9090` / Grafana `:3001`）+ `nginx.conf`（API 网关原位替身，文本资源开 gzip）+ `mysql-init/`（decision 只读账号）+ `Dockerfile`
   - **前端 `/ui/` 由 gateway 镜像托管，不在 console 的 JAR 里**（`Dockerfile.frontend` → `activity-frontend:latest`）。改了前端只 `--build console` 是**没用的**，页面纹丝不动——要 `docker compose -f deploy/docker-compose.yml up -d --build gateway`。反过来改了后端才重建 console
-  - 编排**默认 auth 档**（`DROOLS_AUTH_ENABLED` 默认 true），需要本机 Casdoor `:8000`；除 `e2e:oidc` 外的脚本（`e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:ruler` / `e2e:visual`）走 `tenant-chip` header 档，要切档：`DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose ... up -d`
+  - 编排**默认 auth 档**（`DROOLS_AUTH_ENABLED` 默认 true），需要本机 Casdoor `:8000`；除 `e2e:oidc` 外的脚本（`e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual`）走 `tenant-chip` header 档，要切档：`DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose ... up -d`。`e2e:validate` 还要启用 `DROOLS_FOUR_EYES_ENABLED=true`，因为脚本会先验证提交人自审被拒、再由另一 actor 发布
 - `docs/plans/prod-arch-refactor-0719-1330/` — 「微服务化 + 前后端分离」重构的评估 / 决策 / 计划 / 评审归档（模块拆分细节）
 - `docs/plans/benefit-model-refactor-0808-2218/` — **本轮后端重构（P0/P1 分层引擎 + 快照 + 指标）的进度锚**：`FINAL_PLAN` / `DECISION_RECORD`(D1–D12) / `REVIEW-FINDINGS` / `PROGRESS.md`（含 docker 全栈 E2E 验证记录与未完成项）
 - `docs/plans/console-ui-coupon-mechanics-0808-2251/` — 控制台「票券工学」视觉与交互设计：`DESIGN_SPEC` / `DECISION_RECORD`（含 PR-0~PR-6 实施记录）/ `BACKEND-GAPS`（设计依赖但后端不存在的接口）
