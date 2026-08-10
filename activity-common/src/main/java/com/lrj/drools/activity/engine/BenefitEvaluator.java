@@ -50,6 +50,11 @@ public class BenefitEvaluator {
      *
      * <p>注意它<b>只设 computedAmount、不设 amountComputed</b>——这不是疏漏，是原 DRL 的行为，
      * 后续 {@link #computeAmounts} 依赖这个细节，见那里的说明。
+     *
+     * <p>落档时另置 {@code ladderApplied}。它<b>不参与</b>上面那套覆盖语义，只回答一个
+     * computedAmount 回答不了的问题：这个 0 元是「本档就是 0 元」还是「压根没落档」。
+     * 三条闸门不开的路径（缺字段 / 未落档 / 负奖励）都不打这个标记，
+     * 于是没有其它金额来源的候选会在 {@link #computeAmounts} 里被淘汰而不是留成 0 元幽灵。
      */
     public void applyLadder(ActivityRuleContext ctx, List<ActivityCandidate> candidates,
                             List<LadderActivityDef> defs) {
@@ -67,6 +72,8 @@ public class BenefitEvaluator {
                 if (!c.isEligible()) continue;
                 if (!def.activityId().equals(c.getActivityId())) continue;
                 c.setComputedAmount(tier.reward());
+                // 落过档要留痕：computeAmounts 靠它区分「本档就是 0 元」与「压根没落档」。
+                c.setLadderApplied(true);
             }
         }
     }
@@ -118,7 +125,20 @@ public class BenefitEvaluator {
                 continue;
             }
 
-            if (c.getRedPackageAmount() == null) continue;
+            // 走到这里说明既没有固定金额，也不是随机型（随机在上面已算完）——
+            // 这个候选唯一可能的金额来源就是阶梯。阶梯没落过档 = 算不出金额 = 本活动不适用。
+            //
+            // 早先这里是一句裸 continue，于是候选带着 eligible=true / computedAmount=0 进入合并：
+            // PRIORITY / MUTEX 下它凭 priority 就能挤掉真正能减钱的活动（用户一分钱拿不到），
+            // 单候选 MAX 下则变成「命中 X，减 0 元」的假命中。规则行缺失的候选也走这一支。
+            //
+            // 判据必须是「算不算得出来」而不是「金额是不是 0」：首档 reward=0 是运营配得出来的
+            // 合法 0 元优惠，用金额判别会误杀它（NotApplicableCandidateTest#legitimateZeroSurvives）。
+            // 所以靠 ladderApplied 这个落档留痕来区分，而不是看 computedAmount。
+            if (c.getRedPackageAmount() == null) {
+                if (!c.isLadderApplied()) { notApplicable(c, "阶梯未落档且无固定金额"); }
+                continue;
+            }
 
             // 第 N 件折（第二件半价）：折数在 redPackageAmount、第几件在 redPackageRangeAmount 的 {"nth":N}。
             // 它必须有逐行单价才算得出来——缺 lines 时返回 null（不适用），

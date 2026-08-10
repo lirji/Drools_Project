@@ -104,6 +104,33 @@ class DecisionGoldenSetTest {
             DiscountView v = query.spuDiscount(req(spu, null));
             assertAmount("7", v, "无订单金额时阶梯闸门不开，应落到 redPackageAmount");
         }
+
+        /** 首档从 300 起，300 元以下是**没有档位覆盖**的空档。上面 TIERS 覆盖 [0,∞)，照不出这个场景。 */
+        private static final String GAPPED_TIERS =
+                "[{\"min\":300,\"max\":600,\"reward\":50},{\"min\":600,\"max\":null,\"reward\":80}]";
+
+        @Test
+        @DisplayName("订单落不进任何档且无底价 → 不命中，而不是「命中且减 0 元」")
+        void ladderMissedTierDoesNotHit() {
+            long spu = nextSpu();
+            online(marketing.create(red("阶梯空档", "gold-ladder-gap", null, GAPPED_TIERS, null, 1, spu, "MAX")));
+
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")));
+            assertFalse(v.hit(), "未落档就是算不出金额，报命中会让运营以为优惠发出去了");
+            assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO));
+        }
+
+        @Test
+        @DisplayName("PRIORITY：未落档的高优先级阶梯不许挤掉能减钱的活动")
+        void ladderMissedTierCannotDisplaceRealDiscountByPriority() {
+            long spu = nextSpu();
+            // priority 越小越优先：阶梯 0 优于固定 1，但它这一单算不出金额
+            online(marketing.create(red("阶梯空档", "gold-ladder-prio", null, GAPPED_TIERS, null, 0, spu, "PRIORITY")));
+            online(marketing.create(red("固定减 10", "gold-ladder-prio", new BigDecimal("10"), null, null, 1, spu, "PRIORITY")));
+
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")));
+            assertAmount("10", v, "0 元幽灵候选凭 priority 击败真优惠，用户一分钱拿不到且无任何日志");
+        }
     }
 
     // ================================================================ 2. 四种合并策略（12 例）

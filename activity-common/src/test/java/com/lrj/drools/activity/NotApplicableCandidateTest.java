@@ -180,6 +180,131 @@ class NotApplicableCandidateTest {
                 .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
+    // ================================================================ 阶梯：未落档 ≠ 减 0 元
+    //
+    // 阶梯是「算不出金额」里最隐蔽的一支：它的 redPackageAmount 本来就是 null（金额来自档位），
+    // 所以四种形态的 fail-closed 分支一条都拦不到它，一路落到最后那句 continue。
+    // 判别不能看金额——落档发 0 元是合法的——只能看有没有落过档。
+
+    /** 纯阶梯活动：金额只来自档位，没有底价。 */
+    private static ActivityCandidate ladderOnly(String id, int priority) {
+        ActivityCandidate c = base(id, priority);
+        c.setRedPackageAmountUnit(BenefitForm.UNIT_YUAN);
+        return c;                                  // redPackageAmount 保持 null
+    }
+
+    private static ActivityDrlBuilder.LadderActivityDef tier(String id, String min, String max, String reward) {
+        return new ActivityDrlBuilder.LadderActivityDef(id,
+                List.of(new ActivityDrlBuilder.LadderTier(
+                        new BigDecimal(min), max == null ? null : new BigDecimal(max), new BigDecimal(reward))),
+                "orderAmount");
+    }
+
+    private static ActivityRuleContext orderAmount(String amount) {
+        ActivityRuleContext ctx = new ActivityRuleContext();
+        if (amount != null) ctx.putAttr("orderAmount", new BigDecimal(amount));
+        return ctx;
+    }
+
+    /** 与 {@link #run} 同语义，但先跑一遍阶梯落档（决策链路的真实顺序）。 */
+    private ActivityRuleResult runWithLadder(StackStrategy strategy, ActivityRuleContext ctx,
+                                             List<ActivityDrlBuilder.LadderActivityDef> defs,
+                                             ActivityCandidate... cs) {
+        List<ActivityCandidate> list = new ArrayList<>(List.of(cs));
+        evaluator.applyLadder(ctx, list, defs);
+        evaluator.computeAmounts(ctx, list);
+        return evaluator.merge(list, strategy);
+    }
+
+    @Test
+    @DisplayName("阶梯未落档且无底价 → 不适用，而不是「命中且减 0 元」")
+    void ladderMissedTierIsNotApplicable() {
+        ActivityCandidate c = ladderOnly("ACT-LADDER", 1);
+        // 首档从 300 起，订单 200 落不进任何档
+        ActivityRuleResult r = runWithLadder(StackStrategy.MAX, orderAmount("200"),
+                List.of(tier("ACT-LADDER", "300", "600", "50")), c);
+
+        assertThat(c.isEligible()).as("算不出金额的候选必须被淘汰，不能留在合并池里").isFalse();
+        assertThat(c.getRejectReason()).contains("阶梯未落档");
+        assertThat(r.getHitActivityId()).as("未落档还报命中，运营会以为优惠发出去了").isNull();
+    }
+
+    @Test
+    @DisplayName("PRIORITY：未落档的高优先级阶梯不许挤掉能减钱的活动（这条是真在少发钱）")
+    void ladderMissedTierCannotWinByPriority() {
+        ActivityCandidate ghost = ladderOnly("ACT-LADDER", 0);   // priority 更优
+        ActivityCandidate real = plain("ACT-FIXED", 1, "10");
+
+        ActivityRuleResult r = runWithLadder(StackStrategy.PRIORITY, orderAmount("200"),
+                List.of(tier("ACT-LADDER", "300", "600", "50")), ghost, real);
+
+        assertThat(r.getHitActivityId())
+                .as("pickByPriority 只比 priority，0 元幽灵会凭 0<1 击败真能减 10 元的活动")
+                .isEqualTo("ACT-FIXED");
+        assertThat(r.getHitAmount()).isEqualByComparingTo(new BigDecimal("10"));
+    }
+
+    @Test
+    @DisplayName("MUTEX 同为单选语义，同样不许被未落档的候选占位")
+    void ladderMissedTierCannotWinByMutex() {
+        ActivityCandidate ghost = ladderOnly("ACT-LADDER", 0);
+        ActivityCandidate real = plain("ACT-FIXED", 1, "10");
+
+        ActivityRuleResult r = runWithLadder(StackStrategy.MUTEX, orderAmount("200"),
+                List.of(tier("ACT-LADDER", "300", "600", "50")), ghost, real);
+
+        assertThat(r.getHitActivityId()).isEqualTo("ACT-FIXED");
+    }
+
+    @Test
+    @DisplayName("落档发 0 元是合法优惠，不能被当成「算不出来」误杀")
+    void ladderMatchedZeroRewardStillHits() {
+        ActivityCandidate c = ladderOnly("ACT-LADDER", 1);
+        // 订单 200 正好落进 [100,300) 这一档，档位奖励就是 0
+        ActivityRuleResult r = runWithLadder(StackStrategy.MAX, orderAmount("200"),
+                List.of(tier("ACT-LADDER", "100", "300", "0")), c);
+
+        assertThat(c.isEligible()).as("判据是「算不算得出来」，不是「金额是不是 0」").isTrue();
+        assertThat(r.getHitActivityId()).isEqualTo("ACT-LADDER");
+        assertThat(r.getHitAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    @DisplayName("阶梯带底价时未落档 → 仍发底价（固定金额覆盖阶梯的既有语义不许被改掉）")
+    void ladderWithBaseAmountFallsBackToBase() {
+        ActivityCandidate c = plain("ACT-LADDER", 1, "7");      // 有底价 7
+        ActivityRuleResult r = runWithLadder(StackStrategy.MAX, orderAmount("200"),
+                List.of(tier("ACT-LADDER", "300", "600", "50")), c);
+
+        assertThat(c.isEligible()).isTrue();
+        assertThat(r.getHitAmount())
+                .as("金标「订单金额缺失 → 阶梯不参与，退回固定金额」靠的就是这条语义")
+                .isEqualByComparingTo(new BigDecimal("7"));
+    }
+
+    @Test
+    @DisplayName("缺订单金额且无底价 → 闸门不开也算不出金额，同样淘汰")
+    void ladderWithoutDriverAndWithoutBaseIsNotApplicable() {
+        ActivityCandidate c = ladderOnly("ACT-LADDER", 1);
+        ActivityRuleResult r = runWithLadder(StackStrategy.MAX, orderAmount(null),
+                List.of(tier("ACT-LADDER", "0", null, "50")), c);
+
+        assertThat(c.isEligible()).isFalse();
+        assertThat(r.getHitActivityId()).isNull();
+    }
+
+    @Test
+    @DisplayName("规则行缺失的候选（权益字段全空）也不许留成 0 元幽灵")
+    void candidateWithoutAnyBenefitFieldIsNotApplicable() {
+        ActivityCandidate orphan = ladderOnly("ACT-ORPHAN", 0);  // 没有任何阶梯 def
+        ActivityCandidate real = plain("ACT-FIXED", 1, "10");
+
+        ActivityRuleResult r = runWithLadder(StackStrategy.PRIORITY, orderAmount("200"), List.of(), orphan, real);
+
+        assertThat(orphan.isEligible()).isFalse();
+        assertThat(r.getHitActivityId()).isEqualTo("ACT-FIXED");
+    }
+
     @Test
     @DisplayName("合法的 0 元优惠不受牵连——判据是「算不出来」，不是「金额为 0」")
     void legitimateZeroSurvives() {

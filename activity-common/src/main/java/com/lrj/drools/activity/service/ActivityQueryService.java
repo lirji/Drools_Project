@@ -188,6 +188,8 @@ public class ActivityQueryService {
             if (!c.isEligible()) continue;
             c.setComputedAmount(BigDecimal.ZERO);
             c.setAmountComputed(false);
+            // 落档留痕也是计算态，必须一起清：留着上一轮的 true，本轮没落档的候选就淘汰不掉了。
+            c.setLadderApplied(false);
         }
         benefits.applyLadder(ctx, candidates, ladderDefs(candidates));
         benefits.computeAmounts(ctx, candidates);

@@ -45,6 +45,15 @@ public class ActivityCandidate {
     private String rejectReason;
     private BigDecimal computedAmount = BigDecimal.ZERO;
     private boolean amountComputed = false;
+    /**
+     * 阶梯是否为本候选落过档。
+     *
+     * <p>存在的唯一理由：{@code computedAmount} 分辨不出「阶梯落档发 0 元」与「阶梯根本没落档」——
+     * 两者都是 0，而前者是合法优惠、后者必须淘汰。不能靠金额判别（首档 reward=0 是运营配得出来的
+     * 合法档位），也不能复用 {@code amountComputed}：阶梯故意不设它，好让固定金额/折扣覆盖阶梯的
+     * 既有语义成立（见 {@code BenefitEvaluator.computeAmounts} 的说明）。
+     */
+    private boolean ladderApplied = false;
     private List<GiftResult> gifts = new ArrayList<>();
 
     public ActivityCandidate() {}
@@ -127,6 +136,9 @@ public class ActivityCandidate {
 
     public boolean isAmountComputed() { return amountComputed; }
     public void setAmountComputed(boolean amountComputed) { this.amountComputed = amountComputed; }
+
+    public boolean isLadderApplied() { return ladderApplied; }
+    public void setLadderApplied(boolean ladderApplied) { this.ladderApplied = ladderApplied; }
 
     public List<GiftResult> getGifts() { return gifts; }
     public void setGifts(List<GiftResult> gifts) { this.gifts = gifts; }
