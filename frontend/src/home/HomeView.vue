@@ -115,7 +115,7 @@ onUnmounted(() => ctrl?.abort())
           <span class="area-ic console"><Icon name="badge-check" :size="22" /></span>
           <div>
             <h2 class="area-title">活动控制台</h2>
-            <p class="area-desc">配置、复核、上下线营销活动：红包 / 买赠规则 + 白名单条件树，保存即生成受控 Drools。</p>
+            <p class="area-desc">配置、复核、上下线营销活动：红包 / 买赠 / 加价购 + 白名单条件树，保存即生成受控 Drools。</p>
           </div>
         </div>
         <div class="entries">

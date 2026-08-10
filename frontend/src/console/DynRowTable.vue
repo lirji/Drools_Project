@@ -8,6 +8,12 @@ const props = defineProps<{
   makeRow: () => T
   label: string
   minWidth?: number
+  /**
+   * 可选的定位前缀。一屏上有多张动态行表（换购品 / 赠品 / SPU 绑定 / 商品池），
+   * 共用 `dyn-add` / `dyn-row` 会让测试只能按 DOM 顺序取第 N 个——加一行表就串位。
+   * 给了前缀就用 `<前缀>-add` / `<前缀>-row`，不给保持原样（既有用例零改动）。
+   */
+  testid?: string
 }>()
 
 // 稳定行 key —— **禁 index 作 key**：删中间行时 Vue 会把后续行的 DOM 节点原地复用，
@@ -50,14 +56,14 @@ function remove(i: number): void {
         <span class="act" />
       </div>
       <div v-if="!rows.length" class="empty">暂无，点下方添加</div>
-      <div v-for="(row, i) in rows" :key="keyOf(row, i)" class="row" data-testid="dyn-row">
+      <div v-for="(row, i) in rows" :key="keyOf(row, i)" class="row" :data-testid="testid ? testid + '-row' : 'dyn-row'">
         <span class="idx">{{ i + 1 }}</span>
         <slot :row="row" :index="i" />
         <button type="button" class="del" :aria-label="'删除第' + (i + 1) + '行'" @click="remove(i)"><Icon name="trash" :size="14" /></button>
       </div>
       </div>
     </div>
-    <button type="button" class="add" data-testid="dyn-add" @click="add"><Icon name="plus" :size="14" /> 添加{{ label }}</button>
+    <button type="button" class="add" :data-testid="testid ? testid + '-add' : 'dyn-add'" @click="add"><Icon name="plus" :size="14" /> 添加{{ label }}</button>
   </div>
 </template>
 

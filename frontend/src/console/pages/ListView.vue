@@ -22,6 +22,7 @@ import { useToast } from '@/shared/useToast'
 import { useConfirm } from '@/shared/useConfirm'
 import { useDensity, type Density } from '@/shared/useDensity'
 import { errText } from '@/shared/apiClient'
+import { benefitFormOf, type BenefitForm } from '../logic'
 import type { ActivityListRow, BulkStatusResult } from '@/shared/types'
 import Skeleton from '@/shared/ui/Skeleton.vue'
 import Banner from '@/shared/ui/Banner.vue'
@@ -300,6 +301,17 @@ const detailVersion = computed(() => {
 })
 const versionMismatch = computed(() =>
   detailVersion.value !== null && panelRow.value !== null && detailVersion.value !== panelRow.value.version)
+
+const BENEFIT_LABELS: Record<BenefitForm, string> = {
+  fixed: '固定金额', random: '随机金额', ladder: '阶梯分档', ratio: '折扣', price: '一口价', nth: '第 N 件折',
+}
+const panelBenefitLabel = computed(() => {
+  if (panelRow.value?.activityType === 6) return '加价购'
+  if (panelRow.value?.activityType === 5) return '买赠'
+  const rules = detail.value?.rules
+  const firstRule = Array.isArray(rules) ? rules[0] : null
+  return BENEFIT_LABELS[benefitFormOf(firstRule as Record<string, unknown>).form]
+})
 
 function countOf(key: string): number {
   const v = detail.value?.[key]
@@ -591,6 +603,7 @@ onUnmounted(() => {
               </dd>
               <dt>业务线</dt><dd>{{ panelRow.bizLine || '未分类' }}</dd>
               <dt>类型</dt><dd>{{ typeLabel(panelRow.activityType) }}</dd>
+              <dt>权益形态</dt><dd><Badge kind="neutral" shape="square" data-testid="panel-benefit-form">{{ panelBenefitLabel }}</Badge></dd>
               <dt>生效窗</dt><dd class="mono">{{ fmtDate(panelRow.start) }} → {{ fmtDate(panelRow.end) }}</dd>
             </dl>
             <WindowBar

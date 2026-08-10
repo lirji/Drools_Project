@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDetail } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
-import { isoToLocal } from '../logic'
+import { benefitFormOf, isoToLocal, parseLadder, parseNth, parseRandomRange, type BenefitForm } from '../logic'
 import { errText } from '@/shared/apiClient'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
@@ -15,7 +15,6 @@ import Badge from '@/shared/ui/Badge.vue'
 import WindowBar from '@/shared/viz/WindowBar.vue'
 import Receipt from '@/shared/viz/Receipt.vue'
 import Seam from '@/shared/viz/Seam.vue'
-import { parseLadder, parseNth, parseRandomRange } from '../logic'
 import Icon from '@/shared/ui/Icon.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
 
@@ -49,30 +48,25 @@ const ladderLines = computed(() => {
   }))
 })
 
-/**
- * 权益形态 —— 与后端 `BenefitForm.of()` 同一个判别位（`redPackageAmountUnit`）。
- *
- * <p>复核屏和编辑器犯过同一个错：先看 `redPackageRangeAmount` 再看 `'折'`、其余一律「固定优惠金额」。
- * 于是一口价被显示成「9.90 价」，而第 N 件折与随机红包（它们的 range 是**对象**不是数组）
- * 会渲染出一张标题写着「按订单金额分档计算」的<b>空票据</b>。
- * 复核屏显示错等于四眼形同虚设——审批人照着屏幕核对，核到的是另一个活动。
- */
-const benefitForm = computed<'ratio' | 'price' | 'nth' | 'random' | 'ladder' | 'fixed'>(() => {
-  const r = rule.value
-  if (!r) return 'fixed'
-  if (r.redPackageAmountUnit === '折') return 'ratio'
-  if (r.redPackageAmountUnit === '价') return 'price'
-  if (r.redPackageAmountUnit === '件折') return 'nth'
-  if (randomRange.value) return 'random'
-  // 阶梯以「真解析出档位」为准，不以「这一列非空」为准：脏数据不该显示成一张空的阶梯票据
-  return ladderLines.value.length ? 'ladder' : 'fixed'
-})
+/** 编辑器与复核屏共用同一判别函数；页面只负责渲染结果。 */
+const benefitShape = computed(() => benefitFormOf(rule.value))
+const benefitForm = computed(() => benefitShape.value.form)
 
+const BENEFIT_LABELS: Record<BenefitForm, string> = {
+  fixed: '固定金额', random: '随机金额', ladder: '阶梯分档', ratio: '折扣', price: '一口价', nth: '第 N 件折',
+}
+
+const isAddOn = computed(() => manage.value?.activityType === 6)
 const nthValue = computed(() => parseNth(rule.value?.redPackageRangeAmount as string | null))
 const randomRange = computed(() =>
-  rule.value?.redPackageTakeType === 2
+  benefitForm.value === 'random'
     ? parseRandomRange(rule.value?.redPackageRangeAmount as string | null)
     : null)
+const benefitLabel = computed(() => manage.value?.activityType === 6
+  ? '加价购'
+  : manage.value?.activityType === 5
+    ? '买赠'
+    : BENEFIT_LABELS[benefitForm.value])
 
 /** 生效窗是否已过——决定甘特条用「已结束」的灰斜纹还是实心。 */
 const windowEnded = computed(() => {
@@ -130,7 +124,7 @@ onUnmounted(() => {
   <section data-testid="detail-view">
     <PageHeader
       :title="manage?.activityName || '活动详情'"
-      :subtitle="manage ? `${typeLabel(manage.activityType)} · ${manage.bizLine || '未分类业务线'}` : '查看活动配置、资格条件与商品绑定'"
+      :subtitle="manage ? `${typeLabel(manage.activityType)} · ${benefitLabel} · ${manage.bizLine || '未分类业务线'}` : '查看活动配置、资格条件与商品绑定'"
       :breadcrumb="[{ label: '控制台' }, { label: '活动列表', to: { name: 'activities' } }, { label: '详情' }]"
     >
       <template #actions>
@@ -153,6 +147,7 @@ onUnmounted(() => {
             <div class="hero-status">
               <Badge :kind="manage.activityStatus === 1 ? 'ok' : (manage.activityStatus === 3 ? 'blue' : 'neutral')"
                      :shape="manage.activityStatus === 1 ? 'dot' : (manage.activityStatus === 3 ? 'triangle' : (manage.activityStatus === 2 ? 'hatch' : 'square'))">{{ statusLabel(manage.activityStatus) }}</Badge>
+              <Badge kind="neutral" shape="square" data-testid="detail-benefit-form">{{ benefitLabel }}</Badge>
               <span class="version">VERSION {{ manage.version }}</span>
             </div>
             <h2>{{ manage.activityName }}</h2>
@@ -182,14 +177,26 @@ onUnmounted(() => {
       <div class="detail-grid">
         <div class="main-column">
           <Card title="优惠配置">
-            <div v-if="rule" class="benefit-card">
+            <!-- 加价购**根本不落 rule 行**（写平面 saveRule 见 redPackageAmount/RangeAmount 全空即 return），
+                 所以它必须在 `v-if="rule"` 之外先接住：否则这一屏会显示「没有红包规则配置」，
+                 看起来像运营漏配了什么，而实际上这个玩法的优惠就长在下面的换购清单里。 -->
+            <div v-if="isAddOn" class="benefit-card" data-testid="detail-addon">
+              <span class="benefit-icon"><Icon name="inbox" :size="21" /></span>
+              <div>
+                <small>加价购</small>
+                <strong>优惠形态是换购，不是减钱</strong>
+                <span>可换购清单见下方「加价购换购品」</span>
+              </div>
+            </div>
+            <div v-else-if="rule" class="benefit-card">
               <span class="benefit-icon"><Icon :name="manage.activityType === 1 ? 'badge-check' : 'inbox'" :size="21" /></span>
               <!-- 分支顺序按**判别位**来（见 benefitForm）：先认形态，再谈怎么画。 -->
               <div v-if="benefitForm === 'ladder'" class="ladder-block">
                 <small>阶梯红包规则</small><strong>按订单金额分档计算</strong>
-                <Seam />
+                <span v-if="!benefitShape.parsed" class="warn-line">档位数据损坏，请在编辑器中重填后再上线</span>
+                <Seam v-else />
                 <!-- 票据式排版：小数点对齐后，档位之间的量级差是"看"出来的 -->
-                <Receipt :lines="ladderLines" />
+                <Receipt v-if="benefitShape.parsed" :lines="ladderLines" />
               </div>
               <!-- 折扣型：redPackageAmount 是**折数**不是钱。按金额渲染的话，
                    「打 8 折」会显示成「8 元」——运营据此复核就会以为配错了（或者更糟，以为配对了） -->
@@ -213,23 +220,33 @@ onUnmounted(() => {
               </div>
               <div v-else-if="benefitForm === 'random'" data-testid="detail-random">
                 <small>随机金额红包</small>
-                <strong class="amount">{{ money(randomRange!.min) }} ~ {{ money(randomRange!.max) }} <i>元</i></strong>
-                <span>确定性随机：同一用户同一购物车金额固定，刷新不变价</span>
+                <strong v-if="randomRange" class="amount">{{ money(randomRange.min) }} ~ {{ money(randomRange.max) }} <i>元</i></strong>
+                <strong v-else class="amount">? ~ ? <i>元</i></strong>
+                <span v-if="randomRange">确定性随机：同一用户同一购物车金额固定，刷新不变价</span>
+                <span v-else class="warn-line">随机区间数据损坏，请在编辑器中重填后再上线</span>
               </div>
               <div v-else>
                 <small>固定优惠金额</small><strong class="amount">{{ money(rule.redPackageAmount) }} <i>元</i></strong>
-                <span>领取方式 {{ rule.redPackageTakeType || '-' }}</span>
+                <span v-if="benefitShape.parsed">固定金额发放</span>
+                <span v-else class="warn-line">权益单位无法识别，请在编辑器中复核后再上线</span>
               </div>
             </div>
+            <!-- 买赠同样不落 rule 行——它的优惠长在下面的赠品清单里，这里不该说「没配红包」误导运营 -->
+            <div v-else-if="manage.activityType === 5" class="muted">买赠活动：优惠内容见下方赠品清单，不配置红包规则</div>
             <div v-else class="muted">没有红包规则配置</div>
           </Card>
 
-          <Card v-if="detail?.gifts?.length" title="买赠赠品">
+          <!-- 加价购与买赠共用这张表，但金额列含义不同：买赠是赠品价值，加价购是**加多少钱换购**。
+               复核屏上必须写清楚——「9.90」在两种活动下是完全相反的现金流向。 -->
+          <Card v-if="detail?.gifts?.length" :title="isAddOn ? '加价购换购品' : '买赠赠品'">
+            <div class="card-note" v-if="isAddOn">
+              <Icon name="info" :size="15" /> 金额是<b>加价额</b>（用户再付这些钱换购），不是赠品价值；第二阶段按品名匹配选项。
+            </div>
             <div class="gift-list">
-              <div v-for="(gift, index) in detail.gifts" :key="index" class="gift-row">
+              <div v-for="(gift, index) in detail.gifts" :key="index" class="gift-row" data-testid="detail-gift-row">
                 <span class="gift-index">{{ index + 1 }}</span>
                 <span><strong>{{ gift.giftName }}</strong><small>{{ gift.giftType || gift.rightType || '赠品' }}</small></span>
-                <b>×{{ gift.giftNum }} · {{ money(gift.absoluteAmount) }}</b>
+                <b>×{{ gift.giftNum }} · {{ isAddOn ? '加 ' : '' }}{{ money(gift.absoluteAmount) }} 元</b>
               </div>
             </div>
           </Card>

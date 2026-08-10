@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
-  pruneTree, cleanLadder, parseLadder, parseNth, validateTree, emptyValue, operandOf,
+  pruneTree, cleanLadder, parseLadder, parseNth, parseRandomRange, validateTree, emptyValue, operandOf,
   toEpoch, isoToLocal, splitNums, splitStrs, assignIds, nodeId,
-  invalidLeafReasons, leafErrorReason,
+  invalidLeafReasons, leafErrorReason, benefitFormOf,
 } from './logic'
 import type { ConditionNode, DictOperator, GroupNode, LeafNode } from '@/shared/types'
 
@@ -167,6 +167,62 @@ describe('parseNth（第 N 件折的 N）', () => {
     expect(parseNth(null)).toBeNull()
     expect(parseNth('')).toBeNull()
     expect(parseNth('不是 JSON')).toBeNull()
+  })
+})
+
+describe('parseRandomRange（随机红包区间）', () => {
+  it('读出闭区间 [min, max]', () => {
+    expect(parseRandomRange('{"min":5,"max":20}')).toEqual({ min: 5, max: 20 })
+    expect(parseRandomRange('{"min":0,"max":0}')).toEqual({ min: 0, max: 0 })
+  })
+  it('min>max / 负数 / 缺字段一律 null（与后端 RandomRangeParser 同规矩）', () => {
+    expect(parseRandomRange('{"min":20,"max":5}')).toBeNull()
+    expect(parseRandomRange('{"min":-1,"max":5}')).toBeNull()
+    expect(parseRandomRange('{"min":5}')).toBeNull()
+  })
+  it('数组归阶梯管；空 / 脏 JSON 不抛异常', () => {
+    expect(parseRandomRange('[{"min":5,"max":20}]')).toBeNull()
+    expect(parseRandomRange(null)).toBeNull()
+    expect(parseRandomRange('不是 JSON')).toBeNull()
+  })
+})
+
+describe('benefitFormOf（全前端唯一形态判别）', () => {
+  it.each([
+    ['无 rule', null, 'fixed', true],
+    ['固定金额', { redPackageAmountUnit: '元', redPackageTakeType: 1 }, 'fixed', true],
+    ['随机金额', { redPackageAmountUnit: '元', redPackageTakeType: 2, redPackageRangeAmount: '{"min":5,"max":20}' }, 'random', true],
+    ['阶梯分档', { redPackageAmountUnit: '元', redPackageRangeAmount: '[{"min":0,"max":100,"reward":5}]' }, 'ladder', true],
+    ['折扣', { redPackageAmountUnit: '折' }, 'ratio', true],
+    ['一口价', { redPackageAmountUnit: '价' }, 'price', true],
+    ['第 N 件折', { redPackageAmountUnit: '件折', redPackageRangeAmount: '{"nth":3}' }, 'nth', true],
+    ['省略元单位的历史固定金额', { redPackageAmountUnit: null, redPackageTakeType: 1 }, 'fixed', true],
+  ] as const)('%s → %s', (_name, rule, form, parsed) => {
+    expect(benefitFormOf(rule)).toEqual({ form, parsed })
+  })
+
+  it('未知 unit 回落 fixed，但标记为不可解析，不能伪装成健康数据', () => {
+    expect(benefitFormOf({ redPackageAmountUnit: '摺', redPackageTakeType: 2, redPackageRangeAmount: '{"min":1,"max":2}' }))
+      .toEqual({ form: 'fixed', parsed: false })
+    expect(benefitFormOf({ redPackageAmountUnit: '', redPackageTakeType: 2, redPackageRangeAmount: '{"min":1,"max":2}' }))
+      .toEqual({ form: 'fixed', parsed: false })
+  })
+
+  it('takeType=2 即归 random 所有；坏 JSON 与 min>max 只改变 parsed，不改变归属', () => {
+    expect(benefitFormOf({ redPackageAmountUnit: '元', redPackageTakeType: 2, redPackageRangeAmount: '坏 JSON' }))
+      .toEqual({ form: 'random', parsed: false })
+    expect(benefitFormOf({ redPackageAmountUnit: '元', redPackageTakeType: 2, redPackageRangeAmount: '{"min":5,"max":1}' }))
+      .toEqual({ form: 'random', parsed: false })
+  })
+
+  it('空数组不表达阶梯，回落 fixed', () => {
+    expect(benefitFormOf({ redPackageAmountUnit: '元', redPackageRangeAmount: '[]' }))
+      .toEqual({ form: 'fixed', parsed: true })
+  })
+
+  it('非空但损坏的阶梯仍归 ladder 所有，防止编辑保存时静默抹列', () => {
+    expect(benefitFormOf({ redPackageAmountUnit: '元', redPackageRangeAmount: '[{"min":0}]' }))
+      .toEqual({ form: 'ladder', parsed: false })
   })
 })
 

@@ -2,13 +2,13 @@
 /**
  * 玩法模板屏（PR-6 · 屏 2）。
  *
- * <p>这一屏**不新增任何后端能力**——它把「红包 + 6 个条件字段」这套已有能力，
+ * <p>这一屏**不新增任何后端能力**——它把「三种活动类型 + 六种红包形态 + 6 个条件字段」这套已有能力，
  * 按运营的说法起名字并给出起点。过去运营在编辑器里看到的是「活动类型：红包」，
- * 看不出自己能配出「满 300 减 50」还是「新客专享立减」；类型看着只有两个，
- * 能表达的玩法其实有八个。
+ * 看不出自己能配出「满 300 减 50」还是「新客专享立减」；底层类型与形态有限，
+ * 能表达的玩法目前有 12 个（随 PLAYBOOKS 与 CREATABLE_ACTIVITY_TYPES 演进，别在注释里写死）。
  *
- * <p>不可用的四个一张都不删，标灰并写明缺什么——运营看得到边界，才不会拿一个
- * 配不出来的玩法去排期。
+ * <p>做不到的玩法一张都不删，标灰并写明缺什么——运营看得到边界，才不会拿一个
+ * 配不出来的玩法去排期。当前 blocked 组恰好为空；这条规矩是给未来的卡准备的。
  */
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -25,6 +25,8 @@ const router = useRouter()
 const active = ref<PlaybookGroup | 'all'>('all')
 const shown = computed(() => filterPlaybooks(active.value))
 const readyCount = computed(() => PLAYBOOKS.filter(isReady).length)
+const blockedCount = computed(() => PLAYBOOKS.length - readyCount.value)
+const visibleGroups = computed(() => PLAYBOOK_GROUPS.filter((group) => group.key === 'all' || countByGroup(group.key) > 0))
 
 function use(id: string): void {
   router.push({ name: 'activity-new', query: { playbook: id } })
@@ -44,16 +46,16 @@ function use(id: string): void {
     <aside class="note" data-testid="playbooks-note">
       <strong>这些模板不新增后端能力</strong>
       <p>
-        写平面收的活动类型只有两个（红包 / 买赠），权益形态四种（固定 / 阶梯金额、折扣、一口价、第 N 件折）。
+        写平面收三种活动类型（红包 / 买赠 / 加价购），红包有六种权益形态（固定 / 随机 / 阶梯 / 折扣 / 一口价 / 第 N 件折）。
         它们配上 6 个可用条件字段（订单金额 / 购买数量 / 用户地域 / 用户标签 / 商品 SPU / 店铺），
         本来就能表达 <b>{{ readyCount }}</b> 种玩法——这一屏做的是给已有能力起名字并给出起点。
-        另外 {{ PLAYBOOKS.length - readyCount }} 个标灰的，每个都写明了缺什么。
+        <template v-if="blockedCount">另外 {{ blockedCount }} 个标灰的，每个都写明了缺什么。</template>
       </p>
     </aside>
 
     <div class="filters" role="group" aria-label="玩法分类">
       <button
-        v-for="g in PLAYBOOK_GROUPS"
+        v-for="g in visibleGroups"
         :key="g.key"
         type="button"
         class="chip"
@@ -82,7 +84,7 @@ function use(id: string): void {
         <Seam :inset="-16" />
 
         <div class="foot">
-          <Receipt v-if="isReady(p)" :lines="p.receipt.map((l) => ({ label: l.label, amount: l.amount, hit: true }))" />
+          <Receipt v-if="isReady(p)" :lines="p.receipt.map((l) => ({ label: l.label, amount: l.amount, unit: l.unit, hit: true }))" />
           <p v-else class="why"><strong>缺什么：</strong>{{ p.blockedReason }}</p>
 
           <button

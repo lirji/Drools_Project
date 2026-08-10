@@ -32,9 +32,10 @@ const FIELD_DICT = {
   distributionModes: [], strategies: [],
 }
 
-function stubFetch(rows: unknown[]) {
+function stubFetch(rows: unknown[], detail: unknown = null) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    const body = String(url).includes('/field-dict') ? FIELD_DICT : rows
+    const path = String(url)
+    const body = path.includes('/field-dict') ? FIELD_DICT : path.includes('/list') ? rows : detail
     return {
       ok: true,
       status: 200,
@@ -43,8 +44,8 @@ function stubFetch(rows: unknown[]) {
   }))
 }
 
-async function setup(rows: unknown[]) {
-  stubFetch(rows)
+async function setup(rows: unknown[], detail: unknown = null) {
+  stubFetch(rows, detail)
   const pinia = createPinia()
   setActivePinia(pinia)
   const router = createRouter({
@@ -62,7 +63,10 @@ async function setup(rows: unknown[]) {
   const wrapper = mount({ template: '<router-view />' }, {
     global: {
       plugins: [pinia, router],
-      stubs: { PageHeader: { template: '<header><slot name="actions" /></header>' } },
+      stubs: {
+        PageHeader: { template: '<header><slot name="actions" /></header>' },
+        SidePanel: { template: '<aside><slot /><slot name="footer" /></aside>' },
+      },
     },
   })
   await flushPromises()
@@ -133,5 +137,20 @@ describe('ListView 工作台', () => {
     const notice = wrapper.get('[data-testid="metrics-notice"]')
     expect(notice.text()).toContain('决策指标尚未接入')
     expect(notice.text()).toContain('GET /decision/v1/metrics')
+  })
+
+  it('详情侧板从 rule 导出权益形态，不只显示笼统的红包类型', async () => {
+    const wrapper = await setup(
+      [listRow({ activityId: 'ACT1', version: 1 })],
+      {
+        manage: { version: 1 },
+        rules: [{ redPackageAmountUnit: '价', redPackageAmount: 9.9, redPackageTakeType: 1 }],
+        conditions: [], bindings: [], gifts: [],
+      },
+    )
+
+    await wrapper.get('[data-testid="activity-row-ACT1"] .activity-name').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="panel-benefit-form"]').text()).toContain('一口价')
   })
 })

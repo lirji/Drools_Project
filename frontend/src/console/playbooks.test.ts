@@ -81,12 +81,11 @@ describe('玩法目录', () => {
     }
   })
 
-  it('权益形态只能是后端真正实现的五种，且各自的必填项要齐', () => {
+  it('权益形态只能是前后端共同支持的六种，且各自的必填项要齐', () => {
     for (const p of PLAYBOOKS) {
       if (!p.preset) continue
-      // 五种形态与后端 BenefitForm 一一对应：
-      // fixed/ladder→AMOUNT、ratio→RATIO_ZHE、price→FIXED_PRICE、nth→NTH_ZHE
-      expect(['fixed', 'ladder', 'ratio', 'price', 'nth'], p.id).toContain(p.preset.redMode)
+      // random 是金额型下的一等 UI 形态，提交时导出 takeType=2；其余与 BenefitForm 一一对应。
+      expect(['fixed', 'random', 'ladder', 'ratio', 'price', 'nth'], p.id).toContain(p.preset.redMode)
       // 阶梯模式必须真给档位，否则模板等于没填
       if (p.preset.redMode === 'ladder') expect(p.preset.ladder?.length, p.id).toBeGreaterThan(0)
       if (p.preset.redMode === 'ratio') {
@@ -116,7 +115,7 @@ describe('玩法目录', () => {
     expect(ladder[ladder.length - 1].max, '最后一档必须无上限，否则超过它就一分钱不减').toBe('')
   })
 
-  it('第二件半价 / 限时秒杀已解锁并落到正确形态；加价购仍卡在写入口', () => {
+  it('曾经不可用的三个玩法都已解锁，且各自落到正确的形态上', () => {
     const byId = Object.fromEntries(PLAYBOOKS.map((p) => [p.id, p]))
     // 第二件半价：靠决策入口新增的订单行（逐行单价）才算得出来
     expect(byId['second-half'].group).not.toBe('blocked')
@@ -125,10 +124,11 @@ describe('玩法目录', () => {
     // 限时秒杀：一口价形态 + 写平面的库存原子抢占
     expect(byId['flash'].group).not.toBe('blocked')
     expect(byId['flash'].preset!.redMode).toBe('price')
-    // 加价购：决策侧两阶段是通的，但写平面只放行 1/5 → 建不出来，卡片必须是灰的。
-    // 等写入口放行 type=6 且编辑器能配换购品，再把它点亮（改 CREATABLE_ACTIVITY_TYPES 一处即可）。
-    expect(isReady(byId['addon'])).toBe(false)
-    expect(byId['addon'].blockedReason).toContain('写入口')
+    // 加价购：决策侧两阶段一直是通的，卡的是写入口。三件（白名单放行 6 + 编辑器换购品配置区
+    // + validateAddOnItems）补齐后才点亮——isReady 会替我们盯着这个条件，不必再手抄一遍类型。
+    expect(isReady(byId['addon'])).toBe(true)
+    expect(byId['addon'].preset!.activityType).toBe(6)
+    expect(byId['addon'].blockedReason).toBeUndefined()
   })
 
   it('折扣类已可用（2026-08 引擎加了按比例形态），且模板自带封顶', () => {
@@ -136,6 +136,11 @@ describe('玩法目录', () => {
     expect(d.group).not.toBe('blocked')
     expect(d.preset?.redMode).toBe('ratio')
     expect(d.preset?.maxDiscount).toBeGreaterThan(0)
+  })
+
+  it('非金额票据必须显式带单位，第二件半价不再显示成 ¥5.00', () => {
+    expect(findPlaybook('second-half')!.receipt[0]).toMatchObject({ amount: 5, unit: '折' })
+    expect(findPlaybook('gift')!.receipt[0].unit).toBe('件')
   })
 
   it('分组计数与筛选自洽', () => {

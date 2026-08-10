@@ -120,7 +120,14 @@ export interface BulkStatusResult {
   failed: Array<{ activityId: string; reason: string }>
 }
 
-/** POST /activity-marketing/spu-discount | /gifts 请求 */
+/** 决策订单行：第 N 件折必须拿到逐行单价，不能用整单均价反推。 */
+export interface DecisionOrderLine {
+  spuId: number
+  unitPrice: number
+  quantity: number
+}
+
+/** POST /activity-marketing/spu-discount | /gifts | /addon/options | /addon/quote 请求 */
 export interface SpuDiscountRequest {
   spuIdList: number[]
   userId: number | null
@@ -131,6 +138,55 @@ export interface SpuDiscountRequest {
   /** 「这一单来自哪个门店」。条件白名单里的 storeId 靠它取值——此前后端入参没有该字段，
    *  导致配了 storeId 条件的活动永远不命中（静默不发）。见 DECISION_RECORD D12-4。 */
   storeId: number | null
+  /** 明细模式的唯一商品事实源；普通模式传 null。 */
+  lines: DecisionOrderLine[] | null
+}
+
+export interface DiscountDecisionResponse {
+  hit: boolean
+  hitActivityId: string | null
+  hitActivityName: string | null
+  hitAmount: number
+  strategy: string
+  traces: string[]
+  mode: string
+}
+
+export interface GiftDecisionItem {
+  batchId: string | null
+  giftName: string | null
+  giftType: string | null
+  giftNum: number | null
+  absoluteAmount: number | null
+  rightType: string | null
+}
+
+export interface GiftDecisionResponse {
+  gifts: GiftDecisionItem[]
+  traces: string[]
+  mode: string
+}
+
+export interface AddOnOption {
+  activityId: string
+  activityName: string
+  version: number
+  itemName: string
+  addOnPrice: number
+}
+
+export interface AddOnOptionsResponse {
+  options: AddOnOption[]
+  traces: string[]
+}
+
+export interface AddOnQuoteResponse {
+  ok: boolean
+  activityId: string | null
+  itemName: string | null
+  addOnPrice: number | null
+  reason: string | null
+  traces: string[]
 }
 
 export interface ApiResult<T = unknown> {

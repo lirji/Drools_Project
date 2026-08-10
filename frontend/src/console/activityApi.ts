@@ -4,6 +4,8 @@ import type {
   ActivityListRow, ActivityCreateRequest, ActivityCreateResult,
   ConditionNode, SpuDiscountRequest, ApiResult,
   BulkStatusItem, BulkStatusResult,
+  DiscountDecisionResponse, GiftDecisionResponse,
+  AddOnOptionsResponse, AddOnQuoteResponse,
 } from '@/shared/types'
 
 export function listActivities(signal?: AbortSignal): Promise<ApiResult<ActivityListRow[]>> {
@@ -34,10 +36,24 @@ export function previewTree(tree: ConditionNode, signal?: AbortSignal): Promise<
   return api('marketing', 'POST', '/preview', tree, { signal })
 }
 
-export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<Record<string, unknown>>> {
-  return api('marketing', 'POST', '/spu-discount', body, { signal })
+export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<DiscountDecisionResponse>> {
+  return api<DiscountDecisionResponse>('marketing', 'POST', '/spu-discount', body, { signal })
 }
 
-export function queryGifts(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<Record<string, unknown>>> {
-  return api('marketing', 'POST', '/gifts', body, { signal })
+export function queryGifts(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<GiftDecisionResponse>> {
+  return api<GiftDecisionResponse>('marketing', 'POST', '/gifts', body, { signal })
+}
+
+export function queryAddOnOptions(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<AddOnOptionsResponse>> {
+  return api<AddOnOptionsResponse>('marketing', 'POST', '/addon/options', body, { signal })
+}
+
+export function quoteAddOn(
+  body: SpuDiscountRequest,
+  activityId: string,
+  itemName: string,
+  signal?: AbortSignal,
+): Promise<ApiResult<AddOnQuoteResponse>> {
+  const query = '?activityId=' + encodeURIComponent(activityId) + '&item=' + encodeURIComponent(itemName)
+  return api<AddOnQuoteResponse>('marketing', 'POST', '/addon/quote' + query, body, { signal })
 }

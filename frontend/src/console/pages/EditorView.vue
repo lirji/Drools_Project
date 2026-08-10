@@ -8,14 +8,20 @@ import { useToast } from '@/shared/useToast'
 import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import {
-  uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder, parseLadder, parseNth,
-  pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons, type LadderRow,
+  uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder,
+  pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons,
+  benefitDraftFromRule, benefitRequestFields, type BenefitForm, type LadderRow,
 } from '../logic'
 import type { ActivityCreateRequest, FieldDict, GroupNode } from '@/shared/types'
 import ConditionGroup from '../condition-tree/ConditionGroup.vue'
 import DynRowTable from '../DynRowTable.vue'
-import TierRuler from '../benefit/TierRuler.vue'
 import { normalizeTiers, plainLanguage } from '../benefit/tierLogic'
+import FixedForm from '../benefit/forms/FixedForm.vue'
+import RandomForm from '../benefit/forms/RandomForm.vue'
+import LadderForm from '../benefit/forms/LadderForm.vue'
+import RatioForm from '../benefit/forms/RatioForm.vue'
+import PriceForm from '../benefit/forms/PriceForm.vue'
+import NthForm from '../benefit/forms/NthForm.vue'
 import { findPlaybook, CREATABLE_ACTIVITY_TYPES } from '../playbooks'
 import Card from '@/shared/ui/Card.vue'
 import Kv from '@/shared/ui/Kv.vue'
@@ -39,8 +45,8 @@ interface Draft {
   activityId: string | null
   requestId: string
   activityType: number
-  /** price = 一口价（amount 是卖多少）；nth = 第 N 件折（amount 是折数，nth 是第几件） */
-  redMode: 'fixed' | 'ladder' | 'ratio' | 'price' | 'nth'
+  /** random 是一等形态；takeType 仅是提交时由形态导出的存储字段，不在 Draft 里形成第二权威。 */
+  redMode: BenefitForm
   /** 第 N 件折的 N（≥2） */
   nth: number | string
   bindMode: 'manual' | 'pool'
@@ -55,11 +61,9 @@ interface Draft {
   districtIds: string
   amount: number | string
   maxDiscount: number | string
-  takeType: number
-  /** 随机金额区间（元）。仅 takeType=2 时有意义；存进 redPackageRangeAmount 的 {"min","max"} 对象 */
+  /** 随机金额区间（元）。仅 redMode=random 时有意义。 */
   rangeMin: number | string
   rangeMax: number | string
-  unit: string
   strategy: string
   ladder: LadderRow[]
   gifts: Array<Record<string, unknown>>
@@ -74,7 +78,7 @@ function newDraft(): Draft {
     activityType: 1, redMode: 'fixed', bindMode: 'manual', areaType: 1,
     name: '', bizLine: 'mall', rule: '', priority: 1, inventory: 100,
     startLocal: toLocalInput(Date.now() - 3600000), endLocal: toLocalInput(Date.now() + 7 * 86400000),
-    districtIds: '', amount: '', maxDiscount: '', takeType: 1, rangeMin: '', rangeMax: '', nth: 2, unit: '元', strategy: 'MAX',
+    districtIds: '', amount: '', maxDiscount: '', rangeMin: '', rangeMax: '', nth: 2, strategy: 'MAX',
     ladder: [], gifts: [], spu: [{ storeId: 1, spuId: '' }], pool: [{ poolId: '' }],
     tree: emptyGroup(),
   }
@@ -116,6 +120,9 @@ const previewState = ref<{ kind: 'idle' | 'pending' | 'ok' | 'err'; msg: string;
 let initialCtrl: AbortController | null = null
 let previewCtrl: AbortController | null = null
 let submitCtrl: AbortController | null = null
+let redModeUndoToastId: number | null = null
+/** 进 price 前的库存暂存：离开 price 时恢复，别把 disabled 的声明式库存清成永远填不回的空 */
+let inventoryBeforePrice: number | string | null = null
 // 条件树逐叶行内错误：预览/提交尝试后才显（避免打字中闪红），之后随修复实时收敛。
 const showTreeErrors = ref(false)
 const treeErrors = computed(() =>
@@ -129,7 +136,6 @@ const dictData = computed(() => dict.cache['__default__'] || null)
 const enabledTypes = computed(() =>
   (dictData.value?.activityTypes || []).filter((t) => CREATABLE_ACTIVITY_TYPES.includes(t.code)))
 const strategies = computed(() => dictData.value?.strategies || [])
-const distModes = computed(() => dictData.value?.distributionModes || [])
 
 // 就地校验
 const validationErrs = computed(() => {
@@ -140,9 +146,25 @@ const validationErrs = computed(() => {
   if (!dr.endLocal) errs.push('结束时间必填')
   if (dr.startLocal && dr.endLocal && toEpoch(dr.startLocal)! >= toEpoch(dr.endLocal)!) errs.push('开始时间须早于结束时间')
   if (dr.activityType === 1 && dr.redMode === 'fixed' && (dr.amount === '' || dr.amount == null)) errs.push('固定红包金额必填')
+  if (dr.activityType === 1 && dr.redMode === 'random') {
+    const minMissing = dr.rangeMin === '' || dr.rangeMin == null
+    const maxMissing = dr.rangeMax === '' || dr.rangeMax == null
+    if (minMissing) errs.push('随机金额下限必填')
+    if (maxMissing) errs.push('随机金额上限必填')
+    if (!minMissing && !maxMissing) {
+      const min = Number(dr.rangeMin), max = Number(dr.rangeMax)
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min < 0 || min > max) {
+        errs.push('随机金额区间须满足 0 ≤ 下限 ≤ 上限')
+      }
+    }
+  }
   if (dr.activityType === 1 && dr.redMode === 'ladder' && !cleanLadder(dr.ladder).length) errs.push('阶梯档至少一档有奖励')
   // 一口价是「卖多少」：0 等于白送、负数等于倒贴，两者都不是运营的本意
   if (dr.activityType === 1 && dr.redMode === 'price' && !(Number(dr.amount) > 0)) errs.push('一口价必须大于 0')
+  if (dr.activityType === 1 && dr.redMode === 'price') {
+    const inventory = Number(dr.inventory)
+    if (!Number.isInteger(inventory) || inventory < 1) errs.push('秒杀库存必须为至少 1 件的整数')
+  }
   if (dr.activityType === 1 && dr.redMode === 'nth') {
     if (!(Number(dr.amount) > 0 && Number(dr.amount) < 10)) errs.push('第 N 件折的折数必须在 (0,10)')
     if (!(Number(dr.nth) >= 2)) errs.push('第 N 件折的 N 必须 ≥ 2（1 等于全场打折）')
@@ -155,6 +177,20 @@ const validationErrs = computed(() => {
     const cap = Number(dr.maxDiscount)
     if (dr.maxDiscount === '' || dr.maxDiscount == null || Number.isNaN(cap) || cap <= 0) errs.push('折扣券必须填封顶减免额（不封顶等于无上限支出）')
   }
+  if (dr.activityType === 5 && !dr.gifts.length) errs.push('买赠活动至少需配置一个赠品')
+  // 加价购：这三条**逐条对着决策侧的一行代码**（见后端 validateAddOnItems）。
+  // 前端先拦一次是为了让运营当场看见问题，而不是填完整张表在保存时吃 400。
+  if (dr.activityType === 6) {
+    if (!dr.gifts.length) errs.push('加价购至少需配置一个换购品（一个都没有等于上线后没有可换购选项）')
+    else {
+      const names = dr.gifts.map((g) => String(g.giftName ?? '').trim())
+      if (names.some((n) => !n)) errs.push('换购品名称必填——第二阶段报价按品名匹配选项')
+      const filled = names.filter(Boolean)
+      if (new Set(filled).size !== filled.length) errs.push('换购品名称不能重复（重名的那个永远选不中）')
+      // 决策侧对 <=0 的行是静默 continue：不拦住的话，运营配的选项会一声不响地消失
+      if (dr.gifts.some((g) => !(Number(g.absoluteAmount) > 0))) errs.push('换购品的加价金额必须大于 0')
+    }
+  }
   const treeErrs = validateTree(pruneTree(dr.tree), dictData.value?.operators || [])
   if (treeErrs.length) errs.push('条件树有 ' + treeErrs.length + ' 处未填完整')
   return errs
@@ -162,18 +198,120 @@ const validationErrs = computed(() => {
 const formValid = computed(() => validationErrs.value.length === 0)
 const completionChecks = computed(() => [
   { label: '基础信息', done: !!dr.name.trim() && !!dr.startLocal && !!dr.endLocal },
-  { label: dr.activityType === 1 ? '红包规则' : '赠品明细', done: dr.activityType === 1
+  { label: dr.activityType === 1 ? '红包规则' : dr.activityType === 6 ? '换购品' : '赠品明细', done: dr.activityType === 1
       ? (dr.redMode === 'ladder' ? cleanLadder(dr.ladder).length > 0
         : dr.redMode === 'ratio' ? dr.amount !== '' && dr.maxDiscount !== ''
         : dr.redMode === 'nth' ? dr.amount !== '' && dr.nth !== ''
-        : dr.amount !== '')
+        : dr.redMode === 'price' ? dr.amount !== '' && Number.isInteger(Number(dr.inventory)) && Number(dr.inventory) >= 1
+        : dr.redMode === 'random'
+          ? dr.rangeMin !== '' && dr.rangeMax !== '' && Number.isFinite(Number(dr.rangeMin))
+            && Number.isFinite(Number(dr.rangeMax)) && Number(dr.rangeMin) >= 0 && Number(dr.rangeMin) <= Number(dr.rangeMax)
+          : dr.amount !== '')
       : dr.gifts.length > 0 },
   { label: '商品绑定', done: dr.bindMode === 'manual' ? dr.spu.some((item) => item.spuId !== '') : dr.pool.some((item) => item.poolId !== '') },
   { label: '资格条件', done: validateTree(pruneTree(dr.tree), dictData.value?.operators || []).length === 0 },
 ])
 const completionPercent = computed(() => Math.round(completionChecks.value.filter((item) => item.done).length / completionChecks.value.length * 100))
 
+/**
+ * 切活动类型。**买赠与加价购共用 gifts 这张表，但金额列的含义不同**——
+ * 买赠的 `absoluteAmount` 是赠品价值（可以是 0），加价购的是「加多少钱换购」（必须 > 0）。
+ *
+ * <p>带着已填的行切过去等于静默换语义，而且 6→5 那个方向是**无声**的：
+ * 9.9 元的加价额会变成 9.9 元的赠品价值，写平面照收不误。所以只要涉及加价购就清空并说明，
+ * 让运营重新填一遍——这比让他保存出一个语义错了的活动便宜得多。
+ */
+function changeActivityType(next: number): void {
+  const prev = dr.activityType
+  if (prev !== next && dr.gifts.length && (prev === 6 || next === 6)) {
+    dr.gifts = []
+    toast.warn('已清空明细行：买赠的「金额」是赠品价值，加价购的是加价金额，含义不同需重填')
+  }
+  dr.activityType = next
+  if (prev !== next) appliedPlaybook.value = ''
+  markDirty()
+}
+
+const redModeLabels: Record<Draft['redMode'], string> = {
+  fixed: '固定金额', random: '随机金额', ladder: '阶梯分档', ratio: '折扣', price: '一口价', nth: '第 N 件折',
+}
+
+/**
+ * 切权益形态时，不能把同一个数字原样搬到另一种单位下。
+ * amount 在六种形态里分别可能是金额、折数或卖价；inventory/nth/range 也有只属于某一形态的语义。
+ * 统一在这里清理，避免模板或上一次切换留下的隐藏值在提交时重新出现。
+ */
+function changeRedMode(next: Draft['redMode']): void {
+  const prev = dr.redMode
+  if (prev === next) return
+  const before = {
+    redMode: prev,
+    amount: dr.amount,
+    maxDiscount: dr.maxDiscount,
+    inventory: dr.inventory,
+    nth: dr.nth,
+    rangeMin: dr.rangeMin,
+    rangeMax: dr.rangeMax,
+    ladder: dr.ladder.map((tier) => ({ ...tier })),
+    appliedPlaybook: appliedPlaybook.value,
+  }
+  // 空白草稿切形态时其实什么都没清——文案不该谎称「旧值已清空」。
+  const hadValues = before.amount !== ''
+    || ((prev === 'random' || next === 'random') && (before.rangeMin !== '' || before.rangeMax !== ''))
+    || ((prev === 'ladder' || next === 'ladder') && before.ladder.length > 0)
+    || ((prev === 'ratio' || next === 'ratio') && before.maxDiscount !== '')
+
+  dr.redMode = next
+  dr.amount = ''
+  if (prev === 'random' || next === 'random') {
+    dr.rangeMin = ''
+    dr.rangeMax = ''
+  }
+  if (prev === 'ladder' || next === 'ladder') dr.ladder = []
+  if (prev === 'ratio' || next === 'ratio') dr.maxDiscount = ''
+  // inventory 是双语义字段：price 下是秒杀库存（可编辑），其它形态下是声明式展示（disabled）。
+  // 进 price 时暂存旧值并清空让运营重填；离开 price 时**恢复暂存值**——清成空会让一个
+  // 无法编辑的 disabled 框永远留空，提交时把原有库存静默抹成 null。
+  if (next === 'price') { inventoryBeforePrice = dr.inventory; dr.inventory = '' }
+  else if (prev === 'price') {
+    // 有暂存（本会话从别的形态切进来的）→ 恢复暂存；空暂存回默认 100。
+    // 没暂存（模板/回读直接落在 price）→ 保留当前值：它就是这个活动真实的库存数，别用默认值顶掉。
+    if (inventoryBeforePrice !== null) dr.inventory = inventoryBeforePrice === '' ? 100 : inventoryBeforePrice
+    else if (dr.inventory === '') dr.inventory = 100
+    inventoryBeforePrice = null
+  }
+  if (prev === 'nth' || next === 'nth') dr.nth = ''
+  appliedPlaybook.value = ''
+  markDirty()
+
+  if (redModeUndoToastId !== null) toast.dismiss(redModeUndoToastId)
+  const msg = hadValues
+    ? `已从「${redModeLabels[prev]}」切换为「${redModeLabels[next]}」，不同含义的旧值已清空`
+    : `已从「${redModeLabels[prev]}」切换为「${redModeLabels[next]}」`
+  const toastId = toast.show(msg, {
+    kind: 'warn', ttl: 8000, countdown: true,
+    actions: [{
+      label: '撤销', testid: 'undo-red-mode',
+      onClick: () => {
+        const { appliedPlaybook: previousPlaybook, ...previousDraft } = before
+        Object.assign(dr, previousDraft, { ladder: before.ladder.map((tier) => ({ ...tier })) })
+        appliedPlaybook.value = previousPlaybook
+        if (redModeUndoToastId === toastId) redModeUndoToastId = null
+        markDirty()
+      },
+    }],
+    onExpire: () => { if (redModeUndoToastId === toastId) redModeUndoToastId = null },
+  })
+  redModeUndoToastId = toastId
+}
+
 function markDirty(): void {
+  // 保存成功代表这次逻辑请求已经被幂等表消费。下一次真实编辑必须新铸 key；
+  // 失败重试时 saved 为空，因此仍沿用原 key，继续享受幂等保护。
+  if (saved.value) {
+    dr.requestId = uuid()
+    saved.value = null
+  }
   dirty.value = true
   submitAttempted.value = false
   if (previewState.value.kind !== 'idle') {
@@ -253,7 +391,7 @@ async function retryDictionary(): Promise<void> {
   }
 }
 
-watch(editId, () => { void initialize() }, { immediate: true })
+watch([editId, () => route.query.playbook], () => { void initialize() }, { immediate: true })
 
 /**
  * 应用玩法模板（PR-6）。模板只填**起点**，不锁定任何字段——填完之后每一项都还能改。
@@ -276,7 +414,6 @@ function applyPlaybook(id: string | undefined): void {
   if (ps.conditions?.length) {
     dr.tree = { logic: 'AND', children: ps.conditions.map((c) => ({ ...c })) } as GroupNode
   }
-  if (!dr.name) dr.name = pb.name
   appliedPlaybook.value = pb.name
 }
 
@@ -292,44 +429,9 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   dr.areaType = m.activityAreaType || 1; dr.districtIds = m.districtIds || ''
   dr.startLocal = isoToLocal(m.activityStartTime); dr.endLocal = isoToLocal(m.activityEndTime)
   if (rule) {
-    dr.takeType = rule.redPackageTakeType || 1; dr.unit = rule.redPackageAmountUnit || '元'
-    const range: string | null = rule.redPackageRangeAmount ?? null
-    // **先按判别位分形态**，再填表单。redPackageAmountUnit 与后端 BenefitForm.of() 一一对应，
-    // 它是「redPackageAmount 这个数字是什么意思」的唯一权威。
-    //
-    // 原来这条链先看 range、再看 '折'，其余一律当固定金额——于是 '价'（一口价）落进最后的兜底，
-    // 被读成「固定金额红包 9.9」，表单还全绿没有任何提示；再保存时 submit 又从 redMode 反推出 '元'，
-    // 一个「9.9 元卖」的秒杀就被静默改写成「减 9.9 元」的立减券。**回读丢形态 = 编辑一次就改钱**，
-    // 这是这条链路唯一一处无声的资金错误，所以形态判别必须排在最前面。
-    if (dr.unit === '价') {
-      dr.redMode = 'price'
-      dr.amount = rule.redPackageAmount ?? ''
-    }
-    else if (dr.unit === '件折') {
-      dr.redMode = 'nth'
-      dr.amount = rule.redPackageAmount ?? ''   // 折数，不是钱
-      // N 解析不出来就留空，让必填校验拦住——绝不回落成默认的 2，那等于替运营改了发放规则
-      dr.nth = parseNth(range) ?? ''
-    }
-    else if (dr.unit === '折') {
-      // 折扣型：amount 是折数，还要把封顶带回来——不带回来的话，一次「改个错别字」的编辑
-      // 就会提交一个没有封顶的折扣券，被写平面拒成 400，而运营完全不知道少了什么
-      dr.redMode = 'ratio'
-      dr.amount = rule.redPackageAmount ?? ''
-      dr.maxDiscount = rule.redPackageMaxDiscount ?? ''
-    }
-    // 以下都是「元」：随机区间是对象、阶梯是数组。无条件当阶梯会把随机活动的区间误读成分档
-    // （parseLadder 拿到对象返回空 → 编辑一次就把区间丢了，静默降级成"没配区间的阶梯"）。
-    else if (dr.takeType === 2 && range?.trim().startsWith('{')) {
-      dr.redMode = 'fixed'
-      try {
-        const r = JSON.parse(range)
-        dr.rangeMin = r?.min ?? ''
-        dr.rangeMax = r?.max ?? ''
-      } catch { /* 脏数据：留空，让必填校验拦住 */ }
-    }
-    else if (range) { dr.redMode = 'ladder'; dr.ladder = parseLadder(range) }
-    else { dr.redMode = 'fixed'; dr.amount = rule.redPackageAmount ?? '' }
+    // 判别、解析与 submit 的逆映射都只存在于 logic.ts；页面不再维护第二份分支链。
+    const { parsed: _parsed, ...benefitDraft } = benefitDraftFromRule(rule)
+    Object.assign(dr, benefitDraft)
   }
   if (cond && cond.conditionTreeJson) {
     try { dr.tree = assignIds(JSON.parse(cond.conditionTreeJson)) as GroupNode } catch { /* keep empty */ }
@@ -371,6 +473,7 @@ async function submit(): Promise<void> {
     return
   }
   submitting.value = true; submitErr.value = ''; saved.value = null
+  const benefit = benefitRequestFields(dr, dr.activityType === 1)
   const body: ActivityCreateRequest = {
     requestId: dr.requestId,
     activityId: dr.activityId,
@@ -384,35 +487,16 @@ async function submit(): Promise<void> {
     districtIds: dr.areaType === 2 ? (dr.districtIds || null) : null,
     priority: numOrNull(dr.priority),
     inventory: numOrNull(dr.inventory),
-    redPackageTakeType: dr.activityType === 1 && dr.redMode === 'fixed' ? dr.takeType : null,
-    // 折扣型把「折数」放在 redPackageAmount 里，靠 unit 判别（与后端 BenefitForm 一致）
-    redPackageAmount: dr.activityType === 1 && dr.redMode !== 'ladder' ? numOrNull(dr.amount) : null,
-    // unit 是「这个数字什么意思」的判别位，与后端 BenefitForm 一一对应。
-    // 从 redMode 反推是**可逆**的，前提是 redMode 五个取值都能被 loadForEdit 还原出来、
-    // 也都能由 chip 切到——两个前提缺一个，这里就会把一种形态写成另一种（曾经 '价' 就是这么丢的）。
-    redPackageAmountUnit: dr.activityType !== 1 ? '元'
-      : dr.redMode === 'ratio' ? '折'
-      : dr.redMode === 'price' ? '价'
-      : dr.redMode === 'nth' ? '件折'
-      : '元',
-    redPackageMaxDiscount: dr.activityType === 1 && dr.redMode === 'ratio' ? numOrNull(dr.maxDiscount) : null,
-    // redPackageRangeAmount 是双用途列：**数组 = 阶梯分档，对象 = 随机区间**。
-    // 后端 LadderRangeParser 只认数组、RandomRangeParser 只认对象，靠 JSON 顶层类型互斥，
-    // 所以这里绝不能把随机区间写成数组，否则两条解析路径会同时认领同一份数据。
-    redPackageRangeAmount:
-      dr.activityType === 1 && dr.redMode === 'ladder' ? JSON.stringify(cleanLadder(dr.ladder))
-      : dr.activityType === 1 && dr.redMode === 'fixed' && dr.takeType === 2
-        ? JSON.stringify({ min: Number(dr.rangeMin), max: Number(dr.rangeMax) })
-      : dr.activityType === 1 && dr.redMode === 'nth'
-        ? JSON.stringify({ nth: Number(dr.nth) })
-      : null,
+    ...benefit,
     discountStrategy: dr.strategy,
     eligibilityConditionTree: pruneTree(dr.tree),
     spuBindings: dr.bindMode === 'manual'
       ? dr.spu.filter((s) => s.spuId !== '' && s.spuId != null).map((s) => ({ storeId: numOrNull(s.storeId), spuId: numOrNull(s.spuId) }))
       : null,
     poolRefs: dr.bindMode === 'pool' ? dr.pool.filter((p) => p.poolId !== '' && p.poolId != null).map((p) => Number(p.poolId)) : null,
-    gifts: dr.activityType === 5 ? dr.gifts : null,
+    // 买赠与加价购共用 activity_gift 承载，但 absoluteAmount 的含义不同：
+    // 买赠 = 赠品价值，加价购 = **加多少钱换购**（决策侧 AddOnPurchaseService 读的就是它）
+    gifts: dr.activityType === 5 || dr.activityType === 6 ? dr.gifts : null,
   }
   try {
     submitCtrl?.abort()
@@ -440,6 +524,7 @@ onUnmounted(() => {
   initialCtrl?.abort()
   previewCtrl?.abort()
   submitCtrl?.abort()
+  if (redModeUndoToastId !== null) toast.dismiss(redModeUndoToastId)
 })
 
 onBeforeRouteLeave(async () => {
@@ -480,12 +565,12 @@ onBeforeRouteLeave(async () => {
       </button>
     </Banner>
     <Banner v-if="appliedPlaybook" kind="info" class="dict-warning" data-testid="playbook-applied">
-      <span>已按「<strong>{{ appliedPlaybook }}</strong>」模板预填。模板只是起点——下面每一项都可以改。</span>
+      <span>起点：「<strong>{{ appliedPlaybook }}</strong>」模板{{ dirty ? '（已改动）' : '' }}。下面每一项都可以改。</span>
     </Banner>
     <nav class="workflow-bar" aria-label="活动配置步骤">
       <a href="#activity-basic"><span>1</span><div><strong>基础信息</strong><small>名称 · 时间 · 地域</small></div></a>
       <Icon name="chevron-right" :size="15" />
-      <a href="#activity-benefit"><span>2</span><div><strong>优惠内容</strong><small>红包或赠品</small></div></a>
+      <a href="#activity-benefit"><span>2</span><div><strong>优惠内容</strong><small>红包 / 赠品 / 换购品</small></div></a>
       <Icon name="chevron-right" :size="15" />
       <a href="#activity-binding"><span>3</span><div><strong>圈选范围</strong><small>商品 · 资格条件</small></div></a>
       <Icon name="chevron-right" :size="15" />
@@ -498,13 +583,13 @@ onBeforeRouteLeave(async () => {
         <!-- ① 基础信息 -->
         <Section id="activity-basic" :num="1" title="活动基础信息" desc="决定活动何时生效、归属哪条业务线，以及在多活动冲突时的优先级。">
           <div class="fg">
-            <label>活动名称 *<input v-model="dr.name" data-testid="form-name" /></label>
+            <label>活动名称 *<input v-model="dr.name" :placeholder="appliedPlaybook || ''" data-testid="form-name" /></label>
             <label>业务线 (bizLine)<input v-model="dr.bizLine" placeholder="如 mall" /></label>
             <label class="full">活动类型
               <Segmented
                 :model-value="dr.activityType"
                 :options="enabledTypes.map((t) => ({ value: t.code, label: t.label, testid: 'type-chip-' + t.code }))"
-                @update:model-value="dr.activityType = ($event as number); markDirty()"
+                @update:model-value="changeActivityType($event as number)"
               />
             </label>
             <label>优先级 (越小越优先)<input v-model="dr.priority" type="number" /></label>
@@ -526,93 +611,49 @@ onBeforeRouteLeave(async () => {
 
         <!-- ② 红包 / ③ 买赠 -->
         <Section v-if="dr.activityType === 1" id="activity-benefit" :num="2" title="红包规则" desc="先选权益形态——它决定下面那个数字是「减多少」「几折」还是「卖多少」。">
-          <!-- 五个 chip 必须与 Draft.redMode 的五个取值一一对应。
-               原来只有前三个，而 price/nth 只能由玩法模板 preset 写入 → 单向门：
-               从模板进来的「一口价」「第二件半价」误点一次 chip 就再也切不回去，
-               dr.amount 却原样留着，同一个数字的语义被悄悄换掉（9.9 从"卖 9.9"变"减 9.9"）。 -->
+          <!-- 六个 chip 与 BenefitForm 一一对应；takeType 只由 fixed/random 推导，不再是第二权威。 -->
           <div class="seg">
-            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'fixed' }" :aria-pressed="dr.redMode === 'fixed'" @click="dr.redMode = 'fixed'; markDirty()">固定金额</button>
-            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ladder' }" :aria-pressed="dr.redMode === 'ladder'" @click="dr.redMode = 'ladder'; markDirty()">阶梯分档</button>
-            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ratio' }" :aria-pressed="dr.redMode === 'ratio'" data-testid="mode-ratio" @click="dr.redMode = 'ratio'; markDirty()">折扣</button>
-            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'price' }" :aria-pressed="dr.redMode === 'price'" data-testid="mode-price" @click="dr.redMode = 'price'; markDirty()">一口价</button>
-            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'nth' }" :aria-pressed="dr.redMode === 'nth'" data-testid="mode-nth" @click="dr.redMode = 'nth'; markDirty()">第 N 件折</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'fixed' }" :aria-pressed="dr.redMode === 'fixed'" data-testid="mode-fixed" @click="changeRedMode('fixed')">固定金额</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'random' }" :aria-pressed="dr.redMode === 'random'" data-testid="mode-random" @click="changeRedMode('random')">随机金额</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ladder' }" :aria-pressed="dr.redMode === 'ladder'" data-testid="mode-ladder" @click="changeRedMode('ladder')">阶梯分档</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'ratio' }" :aria-pressed="dr.redMode === 'ratio'" data-testid="mode-ratio" @click="changeRedMode('ratio')">折扣</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'price' }" :aria-pressed="dr.redMode === 'price'" data-testid="mode-price" @click="changeRedMode('price')">一口价</button>
+            <button type="button" class="chip" :class="{ 'chip-active': dr.redMode === 'nth' }" :aria-pressed="dr.redMode === 'nth'" data-testid="mode-nth" @click="changeRedMode('nth')">第 N 件折</button>
           </div>
-          <div v-if="dr.redMode === 'fixed'" class="fg">
-            <label v-if="dr.takeType !== 2">红包金额<input v-model="dr.amount" type="number" placeholder="0 ~ 999999" data-testid="form-amount" /></label>
-            <template v-else>
-              <label>随机下限 *<input v-model="dr.rangeMin" type="number" min="0" placeholder="如 5" data-testid="form-range-min" /></label>
-              <label>随机上限 *<input v-model="dr.rangeMax" type="number" min="0" placeholder="如 20" data-testid="form-range-max" /></label>
-            </template>
-            <label>发放方式
-              <!-- 随机金额已接入决策链路（BenefitEvaluator.drawRandom → BenefitMath.randomAmount）。
-                   它是**确定性随机**：同一活动+用户+购物车永远抽到同一个数。
-                   不是真抽奖——决策接口会被刷新/重试/重放，真随机会让同一笔单每次报价不同，
-                   且无法对账。要做真抽奖需要先有发放流水表。 -->
-              <select v-model.number="dr.takeType" data-testid="form-take-type">
-                <option v-for="m in distModes" :key="m.code" :value="m.code">{{ m.label }}</option>
-              </select>
-              <small v-if="dr.takeType === 2">确定性随机：同一用户同一购物车金额固定，刷新不变价</small>
-            </label>
-          </div>
-          <div v-else-if="dr.redMode === 'price'" class="fg">
-            <label>一口价 *
-              <input v-model="dr.amount" type="number" min="0.01" step="0.01"
-                     placeholder="如 9.9" data-testid="form-price" />
-              <small>不管原价多少就卖这个数，减免 = 订单金额 − 一口价</small>
-            </label>
-            <label>库存 *
-              <input v-model="dr.inventory" type="number" min="1" data-testid="form-seckill-inventory" />
-              <small>秒杀库存由 claim 端点原子扣减防超发；决策只报价、不扣减</small>
-            </label>
-          </div>
-          <div v-else-if="dr.redMode === 'nth'" class="fg">
-            <label>第几件 *
-              <input v-model="dr.nth" type="number" min="2" step="1" data-testid="form-nth" />
-              <small>2 = 第二件（每满 2 件享 1 件折扣）</small>
-            </label>
-            <label>折数 *
-              <input v-model="dr.amount" type="number" step="0.1" min="0.1" max="9.9"
-                     placeholder="5 = 半价" data-testid="form-nth-zhe" />
-              <small>按<b>同款</b>逐行算；调用方必须传订单行（含逐行单价），否则本活动不适用</small>
-            </label>
-          </div>
-          <div v-else-if="dr.redMode === 'ratio'" class="fg">
-            <label>折数 *
-              <input v-model="dr.amount" type="number" step="0.1" min="0.1" max="9.9"
-                     placeholder="8 = 八折" data-testid="form-zhe" />
-              <small>8 = 八折（按原价 80% 收，减免 20%）</small>
-            </label>
-            <label>封顶减免额 (元) *
-              <input v-model="dr.maxDiscount" type="number" min="0.01"
-                     placeholder="例如 50" data-testid="form-max-discount" />
-              <!-- 封顶不是可选项：不封顶的折扣券在大额订单上就是无上限支出 -->
-              <small>必填。打 8 折在一笔 10 万的订单上就是减 2 万</small>
-            </label>
-            <p class="plain-preview full" data-testid="ratio-plain">{{ ratioPlain }}</p>
-          </div>
-          <template v-else>
-            <!-- PR-4：档位改用刻度尺。顺序 / 间距 / 覆盖是否连续，在尺上一眼可见，不用在 N 行输入框里心算 -->
-            <TierRuler v-model="dr.ladder" />
-            <!-- 人话预览：本屏成败的分水岭。运营填完必须知道自己配出了什么，否则不敢按发布 -->
-            <p class="plain-preview" data-testid="tier-plain">{{ tierPlain }}</p>
-            <details class="raw-tiers">
-              <summary>精确编辑（起 / 止 / 奖励）</summary>
-          <DynRowTable :rows="dr.ladder" :headers="['起(min)', '止(max,空=无上限)', '奖励(reward)']" :make-row="() => ({ min: '', max: '', reward: '' })" label="阶梯档" v-slot="{ row }">
-            <input type="number" v-model="(row as LadderRow).min" />
-            <input type="number" v-model="(row as LadderRow).max" />
-            <input type="number" v-model="(row as LadderRow).reward" />
-          </DynRowTable>
-            </details>
-          </template>
+          <FixedForm v-if="dr.redMode === 'fixed'" v-model:amount="dr.amount" />
+          <RandomForm v-else-if="dr.redMode === 'random'" v-model:min="dr.rangeMin" v-model:max="dr.rangeMax" />
+          <PriceForm v-else-if="dr.redMode === 'price'" v-model:amount="dr.amount" v-model:inventory="dr.inventory" />
+          <NthForm v-else-if="dr.redMode === 'nth'" v-model:nth="dr.nth" v-model:amount="dr.amount" />
+          <RatioForm v-else-if="dr.redMode === 'ratio'" v-model:amount="dr.amount" v-model:max-discount="dr.maxDiscount" :plain="ratioPlain" />
+          <LadderForm v-else v-model="dr.ladder" :plain="tierPlain" />
         </Section>
         <Section v-else-if="dr.activityType === 5" id="activity-benefit" :num="2" title="买赠赠品明细" desc="配置命中活动后返回的赠品与权益。">
-          <DynRowTable :rows="dr.gifts" :headers="['批次', '赠品名', '类型', '数量', '金额', '权益类型']" :make-row="() => ({ batchId: '', giftName: '', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 0, rightType: 'GIFT' })" label="赠品" :min-width="600" v-slot="{ row }">
+          <DynRowTable :rows="dr.gifts" :headers="['批次', '赠品名', '类型', '数量', '金额', '权益类型']" :make-row="() => ({ batchId: '', giftName: '', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 0, rightType: 'GIFT' })" label="赠品" testid="gift" :min-width="600" v-slot="{ row }">
             <input v-model="(row as any).batchId" />
             <input v-model="(row as any).giftName" />
             <input v-model="(row as any).giftType" />
             <input type="number" v-model="(row as any).giftNum" />
             <input type="number" v-model="(row as any).absoluteAmount" />
             <input v-model="(row as any).rightType" />
+          </DynRowTable>
+        </Section>
+        <!-- 加价购：与买赠同一张 activity_gift 表，但这一屏刻意不长成买赠的样子——
+             那张表 6 列里有 4 列对加价购没意义，而唯一要紧的「加价金额」会混在里面。
+             这里只留决策侧真正会读的两列，并把「加多少钱换购」写进表头。 -->
+        <Section v-else-if="dr.activityType === 6" id="activity-benefit" :num="2" title="加价购换购品" desc="用户买了主商品后，可以从这份清单里挑一件，加指定金额换购。">
+          <div class="hint">
+            换购品名称是<b>第二阶段报价的匹配依据</b>，同一活动内不能重名；加价金额必须大于 0
+            （0 是白送、负数是倒贴，都不是加价购，决策侧会直接跳过这一行）。
+          </div>
+          <DynRowTable
+            :rows="dr.gifts"
+            :headers="['换购品名称 *', '加价金额(元) *', '数量']"
+            :make-row="() => ({ batchId: '', giftName: '', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: '', rightType: 'ADD_ON' })"
+            label="换购品" testid="addon-item" :min-width="420" v-slot="{ row }"
+          >
+            <input v-model="(row as any).giftName" data-testid="addon-name-input" placeholder="如 品牌保温杯" />
+            <input type="number" min="0.01" step="0.01" v-model="(row as any).absoluteAmount" data-testid="addon-price-input" placeholder="如 9.9" />
+            <input type="number" min="1" step="1" v-model="(row as any).giftNum" />
           </DynRowTable>
         </Section>
 
@@ -706,13 +747,13 @@ onBeforeRouteLeave(async () => {
 </template>
 
 <style scoped>
-.plain-preview {
+.form :deep(.plain-preview) {
   margin: var(--gap-inline) 0 0; padding: var(--sp-3) var(--sp-4);
   background: var(--bg-soft); border-left: 3px solid var(--accent-line);
   font-size: var(--fs-lg); line-height: var(--lh-relaxed); color: var(--text);
 }
-.raw-tiers { margin-top: var(--gap-group); }
-.raw-tiers summary { font-size: var(--fs-sm); color: var(--text-faint); cursor: pointer; }
+.form :deep(.raw-tiers) { margin-top: var(--gap-group); }
+.form :deep(.raw-tiers summary) { font-size: var(--fs-sm); color: var(--text-faint); cursor: pointer; }
 
 /* 声明式字段：配置存得下但当前实现不执行。置灰 + 明示，避免运营以为配了就生效（DECISION_RECORD D12-3）。 */
 .declarative input[disabled] { background: var(--bg-soft); color: var(--text-faint); cursor: not-allowed; }
@@ -723,10 +764,10 @@ onBeforeRouteLeave(async () => {
 .workflow-bar > a { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; padding: var(--sp-2); border-radius: var(--radius-sm); color: var(--text); text-decoration: none; }.workflow-bar > a:hover { background: var(--bg-hover); }.workflow-bar > a > span { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: var(--fw-bold); font-variant-numeric: tabular-nums; }.workflow-bar strong, .workflow-bar small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.workflow-bar strong { font-size: 11px; }.workflow-bar small { color: var(--text-faint); font-size: var(--fs-2xs); }.workflow-bar > :deep(svg) { color: var(--text-faint); }
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-5); align-items: start; }
 .form :deep(.section) { scroll-margin-top: var(--sp-4); }
-.fg { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
-.fg label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--text-soft); font-weight: var(--fw-medium); }
-.fg .full { grid-column: 1 / -1; }
-.fg input, .fg select, .fg textarea { min-height: 38px; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font-family: inherit; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }.fg textarea { min-height: 68px; resize: vertical; }.fg input:hover, .fg select:hover, .fg textarea:hover { border-color: var(--border-strong); }.fg input:focus, .fg select:focus, .fg textarea:focus { outline: 0; border-color: var(--accent); background: var(--bg-elev); box-shadow: var(--focus-ring); }
+.form :deep(.fg) { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
+.form :deep(.fg label) { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--text-soft); font-weight: var(--fw-medium); }
+.form :deep(.fg .full) { grid-column: 1 / -1; }
+.form :deep(.fg input), .form :deep(.fg select), .form :deep(.fg textarea) { min-height: 38px; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font-family: inherit; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }.form :deep(.fg textarea) { min-height: 68px; resize: vertical; }.form :deep(.fg input:hover), .form :deep(.fg select:hover), .form :deep(.fg textarea:hover) { border-color: var(--border-strong); }.form :deep(.fg input:focus), .form :deep(.fg select:focus), .form :deep(.fg textarea:focus) { outline: 0; border-color: var(--accent); background: var(--bg-elev); box-shadow: var(--focus-ring); }
 .seg { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: 0 0 var(--sp-2); }
 .chip { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg-elev); color: var(--text); font-size: 12.5px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
 .chip:hover { background: var(--bg-hover); }
@@ -753,6 +794,6 @@ onBeforeRouteLeave(async () => {
 .spinning { animation: spin .9s linear infinite; }.save-note { display: flex; align-items: center; justify-content: center; gap: var(--sp-1); margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: var(--fs-2xs); }
 .tag-gold { background: var(--gold-soft); color: var(--gold); font-size: 12px; padding: var(--sp-1) var(--sp-2); border-radius: var(--radius-sm); margin-top: var(--sp-2); }
 .back { margin-top: var(--sp-3); width: 100%; }
-@media (max-width: 1023px) { .workflow-bar { grid-template-columns: 1fr 1fr; }.workflow-bar > :deep(svg) { display: none; }.layout { grid-template-columns: 1fr; } .rail { position: static; } .fg { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) { .workflow-bar { grid-template-columns: 1fr 1fr; }.workflow-bar > :deep(svg) { display: none; }.layout { grid-template-columns: 1fr; } .rail { position: static; } .form :deep(.fg) { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .dict-warning { align-items: flex-start; flex-direction: column; }.workflow-bar { grid-template-columns: 1fr 1fr; padding: var(--sp-2); }.workflow-bar small { display: none; }.workflow-bar > a > span { width: 24px; height: 24px; }.checklist { grid-template-columns: 1fr; } }
 </style>

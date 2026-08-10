@@ -1,8 +1,8 @@
 /**
  * 玩法模板目录（PR-6）。
  *
- * <p><b>大多数模板不新增后端能力</b>——后端只有两个活动类型（红包 1 / 买赠 5），
- * 权益形态三种（固定金额 / 阶梯金额 / 折扣，后者是 2026-08 新增）。这些类型配上 6 个可用条件字段
+ * <p><b>大多数模板不新增后端能力</b>——写平面支持三种活动类型（红包 1 / 买赠 5 / 加价购 6），
+ * 红包有六种权益形态（固定 / 随机 / 阶梯 / 折扣 / 一口价 / 第 N 件折）。这些类型配上 6 个可用条件字段
  * （订单金额 / 购买数量 / 用户地域 / 用户标签 / 商品 SPU / 店铺），本来就能表达好几种玩法，
  * 只是过去没有名字——运营在编辑器里看到的是「活动类型：红包」，看不出自己能配出「满 300 减 50」
  * 还是「新客专享立减」。这一屏做的就是**给已有能力起名字并给出起点**。
@@ -14,14 +14,14 @@
 /**
  * **写平面当前放行的活动类型**——与后端 `ActivityMarketingService.validateCommon` 的白名单同源。
  *
- * <p>它是这一屏与后端之间唯一的能力契约。加价购(6) 的决策链路早就通了，但写入口至今只放行 1/5，
+ * <p>它是这一屏与后端之间唯一的能力契约。加价购(6) 一度只有决策链路通、写入口不收，
  * 于是「用它新建」会在保存时吃一个 400；目录层却因为只判「有没有 preset」而照样把卡片标成可用。
  * 把类型白名单提出来、让 {@link isReady} 从它推导，是为了让这种「目录跑到能力前面」在结构上不可能发生——
- * 将来后端放行 6，改这一行就够了，不必再去逐张卡片回忆哪些该点亮。
+ * 后端放行 6 的那次，这里就只改了一个数字。
  *
  * <p>编辑器的活动类型下拉（`EditorView.enabledTypes`）也读这里，两处不会再各写一份。
  */
-export const CREATABLE_ACTIVITY_TYPES: number[] = [1, 5]
+export const CREATABLE_ACTIVITY_TYPES: number[] = [1, 5, 6]
 
 /** 分组。blocked = 后端确实做不到，卡上必须写明缺什么 */
 export type PlaybookGroup = 'reduce' | 'targeted' | 'gift' | 'blocked'
@@ -39,12 +39,12 @@ export interface PlaybookPreset {
   activityType: 1 | 5 | 6
   /**
    * 与后端 BenefitForm 对齐：
-   * - fixed/ladder = 金额型（amount 是要减的钱）
+   * - fixed/random/ladder = 金额型（amount 或区间是要减的钱）
    * - ratio        = 折扣型（amount 是折数，作用于整单）
    * - price        = 一口价（amount 是"卖多少"，unit='价'）
    * - nth          = 第 N 件折（amount 是折数，nth 是第几件，unit='件折'）
    */
-  redMode: 'fixed' | 'ladder' | 'ratio' | 'price' | 'nth'
+  redMode: 'fixed' | 'random' | 'ladder' | 'ratio' | 'price' | 'nth'
   amount?: number
   /** 第 N 件折的 N（≥2）。仅 redMode='nth' 有意义 */
   nth?: number
@@ -62,7 +62,7 @@ export interface Playbook {
   plain: string
   group: PlaybookGroup
   /** 迷你票据预览：让「满 300 减 50」长成一张券的样子，而不是一行参数 */
-  receipt: Array<{ label: string; amount: number }>
+  receipt: Array<{ label: string; amount: number; unit?: string }>
   /** 可用时给预填；不可用时为 undefined */
   preset?: PlaybookPreset
   /** 不可用时必须写明**缺什么**，不许写「敬请期待」 */
@@ -175,7 +175,7 @@ export const PLAYBOOKS: Playbook[] = [
     name: '满额赠品',
     plain: '订单金额达标就送赠品，不减钱。赠品清单在编辑器第 2 步配。',
     group: 'gift',
-    receipt: [{ label: '满 500 元送赠品', amount: 0 }],
+    receipt: [{ label: '满 500 元送赠品', amount: 1, unit: '件' }],
     preset: {
       activityType: 5, redMode: 'fixed', strategy: MAX,
       conditions: [{ field: 'orderAmount', op: 'ge', value: '500' }],
@@ -188,7 +188,7 @@ export const PLAYBOOKS: Playbook[] = [
     name: '第二件半价',
     plain: '同款买两件，第二件半价。',
     group: 'targeted',
-    receipt: [{ label: '第 2 件', amount: 5 }],
+    receipt: [{ label: '第 2 件', amount: 5, unit: '折' }],
     preset: {
       activityType: 1, redMode: 'nth', amount: 5, nth: 2, strategy: MAX,
       conditions: [],
@@ -205,20 +205,18 @@ export const PLAYBOOKS: Playbook[] = [
       conditions: [],
     },
   },
-  // 加价购的**决策侧**已经通了（两阶段 /decision/v1/addon/{options,quote}），但写平面建不出来：
-  // ActivityMarketingService.validateCommon 只放行红包(1)/买赠(5)，type=6 直接 400。
-  // 它一度带着 preset 挂在「赠品类」里给「用它新建」——运营填完整张表才在保存时撞墙。
-  // 按 D6 的规矩退回 blocked 并写明缺什么，比留一张点得动的死卡诚实。
+  // 加价购：决策侧的两阶段（列选项 → 权威报价）早就通了，卡了很久的是写入口——
+  // 写平面白名单不收 type=6、编辑器也没有配换购品的地方。三件补齐后这张卡才点亮。
   {
     id: 'addon',
     name: '加价购',
-    plain: '买主商品后，可以加少量钱换购指定商品。',
-    group: 'blocked',
-    receipt: [{ label: '加 9.9 元换购', amount: 9.9 }],
-    blockedReason:
-      '决策侧的两阶段换购（列选项 → 权威报价）已经能跑，缺的是写入口：'
-      + '写平面的活动类型白名单只放行红包与买赠，加价购（类型 6）保存时会被拒；'
-      + '编辑器也还没有配换购品清单的地方。这两件事补齐后这张卡才会点亮。',
+    plain: '买主商品后，可以加少量钱换购指定商品。换购品清单在编辑器第 2 步配。',
+    group: 'gift',
+    receipt: [{ label: '换购价', amount: 9.9, unit: '元' }],
+    preset: {
+      activityType: 6, redMode: 'fixed', strategy: MAX,
+      conditions: [],
+    },
   },
 ]
 

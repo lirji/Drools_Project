@@ -8,12 +8,14 @@
  * ② 小数点垂直对齐后，量级差是「看」出来的不是「读」出来的；
  * ③ 会计双线是财务人员的既有约定，零学习成本地讲清「这是结果不是参数」。
  */
-export interface ReceiptLine { label: string; amount: number | string; hit?: boolean; muted?: boolean }
-defineProps<{ lines: ReceiptLine[]; total?: { label: string; amount: number | string } }>()
+export interface ReceiptLine { label: string; amount: number | string; unit?: string; hit?: boolean; muted?: boolean }
+defineProps<{ lines: ReceiptLine[]; total?: { label: string; amount: number | string; unit?: string } }>()
 
-function money(v: number | string): string {
+function formatted(v: number | string, unit = '元'): string {
   const n = Number(v)
-  return Number.isNaN(n) ? String(v) : n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  if (Number.isNaN(n)) return String(v)
+  if (unit === '元') return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return n.toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 </script>
 
@@ -22,13 +24,13 @@ function money(v: number | string): string {
     <div v-for="(l, i) in lines" :key="i" class="row" :class="{ hit: l.hit, muted: l.muted }">
       <span class="k">{{ l.label }}</span>
       <span class="lead" />
-      <span class="amt"><s>¥</s>{{ money(l.amount) }}</span>
+      <span class="amt"><s v-if="(l.unit || '元') === '元'">¥</s>{{ formatted(l.amount, l.unit) }}<s v-if="l.unit && l.unit !== '元'" class="suffix"> {{ l.unit }}</s></span>
     </div>
     <div v-if="total" class="total">
       <div class="row">
         <span class="k">{{ total.label }}</span>
         <span class="lead" />
-        <span class="amt big"><s>¥</s>{{ money(total.amount) }}</span>
+        <span class="amt big"><s v-if="(total.unit || '元') === '元'">¥</s>{{ formatted(total.amount, total.unit) }}<s v-if="total.unit && total.unit !== '元'" class="suffix"> {{ total.unit }}</s></span>
       </div>
     </div>
   </div>

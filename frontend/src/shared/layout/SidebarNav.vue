@@ -80,7 +80,7 @@ const inHome = computed(() => route.name === 'home')
           @click="emit('navigate')"
         >
           <span class="ic"><Icon name="plus" :size="18" /></span>
-          <span class="txt"><span class="label">新建活动</span><span class="desc">配置红包 / 买赠规则</span></span>
+          <span class="txt"><span class="label">新建活动</span><span class="desc">配置红包 / 买赠 / 加价购</span></span>
         </router-link>
         <router-link
           class="nav-item item"

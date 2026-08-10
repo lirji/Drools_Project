@@ -45,7 +45,18 @@ describe('玩法模板屏', () => {
 
   it('说明卡讲清「不新增后端能力」，避免被当成新玩法上线', async () => {
     const { wrapper } = await setup()
-    expect(wrapper.get('[data-testid="playbooks-note"]').text()).toContain('不新增后端能力')
+    const note = wrapper.get('[data-testid="playbooks-note"]').text()
+    expect(note).toContain('不新增后端能力')
+    expect(note).toContain('三种活动类型')
+    expect(note).not.toContain('另外 0 个')
+    expect(wrapper.find('[data-testid="playbook-filter-blocked"]').exists()).toBe(false)
+  })
+
+  it('第二件半价票据按折数渲染，不冒充人民币金额', async () => {
+    const { wrapper } = await setup()
+    const card = wrapper.get('[data-testid="playbook-card-second-half"]')
+    expect(card.text()).toMatch(/5\s*折/)
+    expect(card.text()).not.toContain('¥5.00')
   })
 
   it('筛选 chips 只留本组的卡', async () => {
