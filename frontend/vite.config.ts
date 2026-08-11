@@ -15,8 +15,21 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = env.VITE_PROXY_TARGET || 'http://localhost:8081'
   const proxyEntry = { target, changeOrigin: true }
-  const proxy: Record<string, typeof proxyEntry> = {}
+  const proxy: Record<string, typeof proxyEntry | (typeof proxyEntry & { rewrite: (p: string) => string })> = {}
   for (const p of API_PREFIXES) proxy['^/' + p + '(/|$)'] = proxyEntry
+
+  // 决策平面（只读服务，另一个进程）。**必须是独立条目，不能并进 API_PREFIXES**：
+  //   · 上面那条 'decision' 前缀是 Step 7 教学端点 `POST /decision/calculate`，指向 console；
+  //     两者路径前缀相同而后端不同，混在一起会让 /decision/v1/* 被静默转给 console 拿 404。
+  //   · 浏览器侧统一走网关前缀 `/api/decision/*`（生产由 nginx rewrite），dev 这里做同样的 rewrite，
+  //     于是前端代码在两种形态下一字不差。
+  //   · 不加这条的失败形态极具迷惑性：dev server 会把 /api/decision/* 当成 SPA 路由返回 index.html，
+  //     于是 `ok:true` 但 `json=null`，页面报「决策响应为空」而不是 404 —— 看起来像后端 bug。
+  proxy['^/api/decision(/|$)'] = {
+    target: env.VITE_DECISION_TARGET || 'http://localhost:8082',
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/api\/decision/, '/decision/v1'),
+  }
 
   return {
     // 与旧 index.html 同源并存：SPA 挂 /ui/，避免占用根路径欢迎页（决策 D3）

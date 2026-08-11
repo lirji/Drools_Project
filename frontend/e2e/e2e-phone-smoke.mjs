@@ -35,6 +35,11 @@ try {
   await page.goto(`${BASE}/ui/console/validate`)
   await page.waitForSelector('[data-testid="validate-view"]', { timeout: 10000 })
   await page.fill('[data-testid="v-spu"]', '990011')
+  // 这条 smoke 测的是**布局**（视口/抽屉/无横向溢出），不是决策平面。
+  // 验证页默认打 decision 服务，而本脚本默认 BASE 是裸 console（:8097，没有 decision 进程），
+  // 那样会停在「决策服务不可达」而拿不到结果卡。所以显式切到走库平面——
+  // 这是测试**声明自己在测什么**，不是给页面加静默降级（后者会让人拿走库结论当线上结论）。
+  await page.locator('[data-testid="v-plane-console"]').click()
   await page.locator('[data-testid="v-discount"]').click()
   await page.waitForSelector('[data-testid="validate-result"]', { timeout: 15000 })
   const validateOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)

@@ -27,6 +27,8 @@ public class ActivityRuleResult {
     private List<GiftResult> gifts = new ArrayList<>();
     private List<BenefitOutcome> benefits = new ArrayList<>();
     private List<String> traces = new ArrayList<>();
+    /** 减免额是否被订单金额截断过（见 {@code BenefitEvaluator.capToOrderAmount}）。 */
+    private boolean clamped;
 
     public ActivityRuleResult() {}
 
@@ -74,4 +76,7 @@ public class ActivityRuleResult {
 
     public List<String> getTraces() { return traces; }
     public void setTraces(List<String> traces) { this.traces = traces == null ? new ArrayList<>() : traces; }
+
+    public boolean isClamped() { return clamped; }
+    public void setClamped(boolean clamped) { this.clamped = clamped; }
 }

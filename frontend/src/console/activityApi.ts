@@ -1,12 +1,27 @@
 // 活动营销 API —— 收敛所有 /activity-marketing 调用（走 apiClient 的 marketing service）。
 import { api } from '@/shared/apiClient'
+import type { ServiceKey } from '@/shared/apiClient'
 import type {
   ActivityListRow, ActivityCreateRequest, ActivityCreateResult,
   ConditionNode, SpuDiscountRequest, ApiResult,
   BulkStatusItem, BulkStatusResult,
   DiscountDecisionResponse, GiftDecisionResponse,
   AddOnOptionsResponse, AddOnQuoteResponse,
+  SnapshotDiagnostics, GenerationRef,
 } from '@/shared/types'
+
+/**
+ * 决策请求打哪条平面。
+ *
+ * - `decision` —— 只读决策服务 `/api/decision/*`（**线上真正跑的那条**：优先读代际快照）
+ * - `console`  —— 写平面的 legacy 读端点 `/activity-marketing/*`（进程内无快照构建器，天然走库）
+ *
+ * 两者<b>不是别名关系</b>：它们的差别正是「快照 vs 库」，也正是验证页存在的意义。
+ * 参数放在**尾部且可选**，既有调用点与它们的位置参数断言一律不受影响。
+ */
+export type DecisionPlane = 'decision' | 'console'
+
+const SERVICE: Record<DecisionPlane, ServiceKey> = { decision: 'decision', console: 'marketing' }
 
 export function listActivities(signal?: AbortSignal): Promise<ApiResult<ActivityListRow[]>> {
   return api<ActivityListRow[]>('marketing', 'GET', '/list', undefined, { signal })
@@ -36,16 +51,19 @@ export function previewTree(tree: ConditionNode, signal?: AbortSignal): Promise<
   return api('marketing', 'POST', '/preview', tree, { signal })
 }
 
-export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<DiscountDecisionResponse>> {
-  return api<DiscountDecisionResponse>('marketing', 'POST', '/spu-discount', body, { signal })
+export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal,
+                            plane: DecisionPlane = 'decision'): Promise<ApiResult<DiscountDecisionResponse>> {
+  return api<DiscountDecisionResponse>(SERVICE[plane], 'POST', '/spu-discount', body, { signal })
 }
 
-export function queryGifts(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<GiftDecisionResponse>> {
-  return api<GiftDecisionResponse>('marketing', 'POST', '/gifts', body, { signal })
+export function queryGifts(body: SpuDiscountRequest, signal?: AbortSignal,
+                           plane: DecisionPlane = 'decision'): Promise<ApiResult<GiftDecisionResponse>> {
+  return api<GiftDecisionResponse>(SERVICE[plane], 'POST', '/gifts', body, { signal })
 }
 
-export function queryAddOnOptions(body: SpuDiscountRequest, signal?: AbortSignal): Promise<ApiResult<AddOnOptionsResponse>> {
-  return api<AddOnOptionsResponse>('marketing', 'POST', '/addon/options', body, { signal })
+export function queryAddOnOptions(body: SpuDiscountRequest, signal?: AbortSignal,
+                                  plane: DecisionPlane = 'decision'): Promise<ApiResult<AddOnOptionsResponse>> {
+  return api<AddOnOptionsResponse>(SERVICE[plane], 'POST', '/addon/options', body, { signal })
 }
 
 export function quoteAddOn(
@@ -53,7 +71,24 @@ export function quoteAddOn(
   activityId: string,
   itemName: string,
   signal?: AbortSignal,
+  plane: DecisionPlane = 'decision',
 ): Promise<ApiResult<AddOnQuoteResponse>> {
   const query = '?activityId=' + encodeURIComponent(activityId) + '&item=' + encodeURIComponent(itemName)
-  return api<AddOnQuoteResponse>('marketing', 'POST', '/addon/quote' + query, body, { signal })
+  return api<AddOnQuoteResponse>(SERVICE[plane], 'POST', '/addon/quote' + query, body, { signal })
+}
+
+/**
+ * 快照诊断：这个活动在不在决策服务当前的快照里。
+ *
+ * 只打 decision 平面——console 上没有这个端点，也不该有：它问的就是「**决策服务**眼里是什么样」。
+ */
+export function snapshotDiagnostics(activityId?: string, signal?: AbortSignal): Promise<ApiResult<SnapshotDiagnostics>> {
+  const query = activityId ? '?activityId=' + encodeURIComponent(activityId) : ''
+  return api<SnapshotDiagnostics>('decision', 'GET', '/snapshot' + query, undefined, { signal })
+}
+
+/** 库里当前的发布代际——决策侧回显的 generation 的参照物。 */
+export function currentGeneration(bizLine?: string, signal?: AbortSignal): Promise<ApiResult<GenerationRef>> {
+  const query = bizLine ? '?bizLine=' + encodeURIComponent(bizLine) : ''
+  return api<GenerationRef>('marketing', 'GET', '/generation' + query, undefined, { signal })
 }

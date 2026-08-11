@@ -127,13 +127,26 @@ class SnapshotParityTest {
         marketing.create(red("草稿", "par-life", new BigDecimal("50"), null, null, 1, draft, "MAX"));
         scenarios.add(new Scenario("草稿不参与", req(draft, "500", null)));
 
+        // ⑦ **权益作用域是真子集**——两条路径各自独立地从绑定信息推导作用域，
+        // 只填一边的表现是「同一张券在走库与走快照上发不同的钱」，而两条路单独测都是绿的。
+        // 这是本次新增的分歧面，对拍必须覆盖它。
+        long scopedIn = nextSpu();     // 活动绑这个
+        long scopedOut = nextSpu();    // 车里还有这个，但活动不绑
+        online(ratio("作用域8折", "par-scope", new BigDecimal("8"), scopedIn));
+        scenarios.add(new Scenario("作用域·真子集（带订单行）",
+                reqWithLines(List.of(scopedOut, scopedIn), "1020",
+                        line(scopedOut, "1000", 1), line(scopedIn, "10", 2))));
+        scenarios.add(new Scenario("作用域·真子集但无订单行 → 两条路都不适用",
+                reqWithLines(List.of(scopedOut, scopedIn), "1020")));
+
         // ---- 第一遍：走库（store 为空）----
         store.clear();
         List<DiscountView> viaDb = new ArrayList<>();
         for (Scenario sc : scenarios) viaDb.add(query.spuDiscount(sc.request()));
 
         // ---- 发布快照 ----
-        for (String biz : List.of("par-ladder", "par-max", "par-prio", "par-elig", "par-store", "par-life")) {
+        for (String biz : List.of("par-ladder", "par-max", "par-prio", "par-elig", "par-store", "par-life",
+                "par-scope")) {
             store.publish(builder.build(tenant(), biz, 1L));
         }
 
@@ -159,6 +172,57 @@ class SnapshotParityTest {
                     name + "：**金额不一致**，库=" + db.hitAmount() + " 快照=" + sn.hitAmount());
             assertEquals(db.strategy(), sn.strategy(), name + "：合并策略不一致");
         }
+
+        // ---- provenance 是**唯一一个两条路必须不同**的字段 ----
+        // 它存在的意义就是把「这次是照着谁算的」说出来，所以绝不能并进上面那轮逐字段 sweep。
+        // 反过来它也是上面那个「0 条 SQL」断言的第二道保险：真退化成「库 vs 库」时这里也会红。
+        for (int i = 0; i < scenarios.size(); i++) {
+            String name = scenarios.get(i).name();
+            assertEquals("db", viaDb.get(i).provenance().source(), name + "：第一遍应自证走库");
+            assertEquals("snapshot", viaSnapshot.get(i).provenance().source(), name + "：第二遍应自证走快照");
+            assertEquals(1L, viaSnapshot.get(i).provenance().generation(), name + "：快照代际应为发布时那一代");
+        }
+    }
+
+    /**
+     * <b>编辑收窄圈选范围后，被撤掉的 SPU 不得再发钱——两条路都不得。</b>
+     *
+     * <p>这是 P1-9 剩下的那一半。绑定查询<b>不带 version</b>，且旧版本的绑定行不会被软删，
+     * 所以「v1 绑 A/B → 编辑成 v2 只绑 A」之后单查 B 时，走库路径仍然把这个活动<b>当成候选</b>，
+     * 只是它的作用域是空集。而 {@code BenefitEvaluator} 的 <b>AMOUNT（直减/满减）形态压根不调 baseAmount</b>，
+     * 直接把 {@code redPackageAmount} 发出去——于是走库照发、走快照根本不是候选。
+     *
+     * <p><b>为什么现有用例照不出</b>：场景 ⑦ 用的是「折」（走 baseAmount，空作用域会被算成 0/不适用），
+     * 且请求里仍留着被保留的 SPU。两个条件各自都足以绕开这条。这里刻意用最常见的 AMOUNT 形态，
+     * 且请求里<b>只有</b>被撤掉的那个 SPU。
+     */
+    @Test
+    @DisplayName("编辑收窄绑定：被撤掉的 SPU 在走库与走快照两条路上都不得再命中（AMOUNT 形态）")
+    void narrowedBindingStopsPayingOnBothPaths() {
+        long keep = nextSpu();
+        long dropped = nextSpu();
+
+        CreateResult v1 = marketing.create(
+                redBound("收窄前·绑两个", "par-narrow", new BigDecimal("50"), List.of(keep, dropped)));
+        online(v1);
+        CreateResult v2 = marketing.updateByVersion(
+                editBound(v1.activityId(), "收窄后·只绑一个", "par-narrow", new BigDecimal("50"), List.of(keep)));
+        online(v2);
+
+        // ---- 走库 ----
+        store.clear();
+        DiscountView viaDb = query.spuDiscount(req(dropped, "500", null));
+
+        // ---- 走快照 ----
+        store.publish(builder.build(tenant(), "par-narrow", 1L));
+        DiscountView viaSnapshot = query.spuDiscount(req(dropped, "500", null));
+
+        assertFalse(viaSnapshot.hit(),
+                "快照路径不该命中：v2 已经不绑这个 SPU（这一侧本来就是对的，红了说明快照侧也退化了）");
+        assertFalse(viaDb.hit(),
+                "走库路径仍在给『当前线上版本已经不绑的 SPU』发钱，金额 " + viaDb.hitAmount()
+                        + "——绑定查询不带 version，而 AMOUNT 形态不看作用域");
+        assertEquals(viaDb.hit(), viaSnapshot.hit(), "两条路对同一次请求给出了相反的结论");
     }
 
     @Test
@@ -225,6 +289,28 @@ class SnapshotParityTest {
                 new BigDecimal(amount), 1, storeId);
     }
 
+    private static SpuDiscountRequest reqWithLines(List<Long> spus, String amount,
+                                                   SpuDiscountRequest.OrderLine... lines) {
+        return new SpuDiscountRequest(spus, 1001L, "110000", List.of("vip"),
+                new BigDecimal(amount), spus.size(), null,
+                lines.length == 0 ? null : List.of(lines));
+    }
+
+    private static SpuDiscountRequest.OrderLine line(long spu, String unitPrice, int qty) {
+        return new SpuDiscountRequest.OrderLine(spu, new BigDecimal(unitPrice), qty);
+    }
+
+    /** 折扣型（单位=折）活动，写平面强制要求封顶。 */
+    private ActivityCreateRequest ratio(String name, String bizLine, BigDecimal zhe, long spu) {
+        long now = System.currentTimeMillis();
+        return new ActivityCreateRequest(
+                null, null, name, bizLine, 1, name,
+                now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
+                1, zhe, "折", null, "MAX",
+                null, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null,
+                new BigDecimal("99999"));
+    }
+
     private static ConditionNode leaf(String field, String op, Object value) {
         ConditionNode n = new ConditionNode();
         n.setField(field); n.setOp(op); n.setValue(value);
@@ -239,6 +325,27 @@ class SnapshotParityTest {
                 now - 3_600_000L, now + 3_600_000L, 1, null, priority, 100,
                 1, amount, "元", ladderJson, strategy,
                 cond, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null);
+    }
+
+    /** 金额型活动，绑定**多个** SPU（用于「编辑收窄圈选范围」这类场景）。 */
+    private ActivityCreateRequest redBound(String name, String bizLine, BigDecimal amount, List<Long> spus) {
+        long now = System.currentTimeMillis();
+        return new ActivityCreateRequest(
+                null, null, name, bizLine, 1, name,
+                now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
+                1, amount, "元", null, "MAX",
+                null, spus.stream().map(s -> new ActivityCreateRequest.SpuBinding(1, s)).toList(), null, null);
+    }
+
+    /** 同上，但走编辑（带 activityId → 产生新版本）。 */
+    private ActivityCreateRequest editBound(String activityId, String name, String bizLine,
+                                            BigDecimal amount, List<Long> spus) {
+        long now = System.currentTimeMillis();
+        return new ActivityCreateRequest(
+                null, activityId, name, bizLine, 1, name,
+                now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
+                1, amount, "元", null, "MAX",
+                null, spus.stream().map(s -> new ActivityCreateRequest.SpuBinding(1, s)).toList(), null, null);
     }
 
     private ActivityCreateRequest edit(String activityId, String name, String bizLine, BigDecimal amount, long spu) {

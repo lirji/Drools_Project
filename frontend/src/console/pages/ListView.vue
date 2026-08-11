@@ -198,7 +198,7 @@ async function toggleStatus(row: BenchRow): Promise<void> {
   const accepted = await confirm({
     title: goOffline ? `下线「${row.activityName}」v${version}？` : `上线「${row.activityName}」v${version}？`,
     body: goOffline
-      ? '下线后该活动立即停止参与决策命中，可再次上线恢复。'
+      ? '下线会推进发布代际，决策服务在下一轮轮询（数秒内）停止命中；可再次上线恢复。'
       : '上线是一次真实发布：会推进发布代际，并退役该活动其它仍在线的版本。',
     confirmText: goOffline ? '下线' : '上线',
     danger: goOffline,
@@ -357,14 +357,18 @@ onUnmounted(() => {
         </span>
       </article>
 
-      <!-- D6 诚实性：决策侧指标没有聚合接口，也没有按 activityId 打标。不画假图，改成记账。 -->
+      <!-- D6 诚实性：端点已经有了，缺的是这块面板自己。不画假图，如实记账。 -->
       <aside class="notyet" data-testid="metrics-notice">
-        <strong>决策指标尚未接入</strong>
+        <strong>决策指标尚未接入本页</strong>
         <p>
-          决策量、优惠命中率、规则回退率与 P99 目前只在 Prometheus（<code>:9090</code>）与 Grafana（<code>:3001</code>）可见：
-          指标未按 activityId 打标，控制台也没有对应的聚合接口，因此这里不显示按活动的命中量与回退率。
+          聚合端点已经存在（<code>GET /decision/v1/metrics</code> · <code>GET /decision/v1/by-activity</code>，
+          指标也已按 activityId 打标），缺的是这块面板本身。在接上之前，决策量、命中率、回退率与 P99
+          仍以 Prometheus（<code>:9090</code>）与 Grafana（<code>:3001</code>）为准。
         </p>
-        <p class="todo">待建：<code>GET /decision/v1/metrics</code> · <code>GET /decision/v1/by-activity</code></p>
+        <p class="todo">
+          接入前要先想清楚一件事：优惠验证页的流量也会打进这两个端点，
+          直接渲染成「这个活动花了多少预算」等于拿自己造的验证流量记账。
+        </p>
       </aside>
     </div>
 

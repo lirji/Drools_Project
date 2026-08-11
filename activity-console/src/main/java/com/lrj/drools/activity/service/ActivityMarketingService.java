@@ -57,6 +57,7 @@ public class ActivityMarketingService {
     private final PoolRefRepository poolRefRepo;
     private final ActivityStrategyRepository strategyRepo;
     private final ActivityIdempotencyRepository idempotencyRepo;
+    private final ActivityGrantRepository grantRepo;
 
     private final RuleConditionTranslator translator;
     private final RuleSchemaRegistry schemaRegistry;
@@ -80,6 +81,7 @@ public class ActivityMarketingService {
                                     PoolRefRepository poolRefRepo,
                                     ActivityStrategyRepository strategyRepo,
                                     ActivityIdempotencyRepository idempotencyRepo,
+                                    ActivityGrantRepository grantRepo,
                                     RuleConditionTranslator translator,
                                     RuleSchemaRegistry schemaRegistry,
                                     ActivityDrlBuilder drlBuilder,
@@ -94,6 +96,7 @@ public class ActivityMarketingService {
         this.poolRefRepo = poolRefRepo;
         this.strategyRepo = strategyRepo;
         this.idempotencyRepo = idempotencyRepo;
+        this.grantRepo = grantRepo;
         this.translator = translator;
         this.schemaRegistry = schemaRegistry;
         this.drlBuilder = drlBuilder;
@@ -244,10 +247,11 @@ public class ActivityMarketingService {
         row.setActivityStatus(target.code());
         row.setModifiedStime(Instant.now());
         manageRepo.save(row);
-        // M1.4/M2.2：发布(上线)bump 发布代际，供 decision 侧轮询预热（进程内直调已于 M2.2 移除，见 ArtifactService.onPublish）。
-        if (target == ActivityStatus.ONLINE) {
-            artifactService.onPublish(row.getActivityId(), row.getVersion());
-        }
+        // 发布代际是 decision 侧唯一的「配置变了」信号，**任何状态变化都要发**——只在上线时发的后果是
+        // 下线传播不出去，decision 的快照继续按原配置发钱（见 ArtifactService.onStatusChanged 的说明）。
+        // 同事务提交：状态与代际要么一起生效、要么一起回滚，不会出现「状态变了但没人知道」。
+        artifactService.onStatusChanged(row.getActivityId(), row.getVersion(),
+                row.getBizLine(), row.getTenantId());
         return new CreateResult(row.getActivityId(), row.getVersion(), row.getActivityStatus(), false, 0, List.of());
     }
 
@@ -584,7 +588,10 @@ public class ActivityMarketingService {
         m.setDistrictIds(req.districtIds());
         m.setPriority(req.priority() == null ? 0 : req.priority());
         m.setInventory(req.inventory());
-        m.setUserInventory(0);
+        // 每人限领：null / ≤0 归一成 0 = 不限。
+        // 此前这里是无条件 `setUserInventory(0)`——运营填什么都没用，因为提交体里压根没有这个字段。
+        // 现在它由 activity_grant 流水按 (活动, 用户) 计数执行（见 claimInventory）。
+        m.setUserInventory(req.userInventory() == null || req.userInventory() <= 0 ? 0 : req.userInventory());
         m.setVersion(version);
         // 只在新建(v1)落 requestId：版本化编辑的新行不带，避免撞 (tenant_id,request_id) 唯一约束。
         // 空白 requestId 归一成 null（ISSUE-05）：表示"不启用幂等"，多次普通创建不因空白键互撞。
@@ -792,11 +799,20 @@ public class ActivityMarketingService {
                                  List<PoolRefEntity> poolRefs) {}
     // ================================================================ 秒杀库存扣减（一口价配套）
 
-    /** claim 结果。{@code ok=false} 时 {@code reason} 说明为什么没抢到。 */
-    public record ClaimResult(boolean ok, String activityId, Integer version, int claimed, String reason) {}
+    /**
+     * claim 结果。{@code ok=false} 时 {@code reason} 说明为什么没抢到；
+     * {@code replay=true} 表示这一单本来就领过了（幂等命中，没有产生新的扣减）。
+     */
+    public record ClaimResult(boolean ok, String activityId, Integer version, int claimed,
+                              String reason, boolean replay, Long grantId) {
+
+        public ClaimResult(boolean ok, String activityId, Integer version, int claimed, String reason) {
+            this(ok, activityId, version, claimed, reason, false, null);
+        }
+    }
 
     /**
-     * 抢占库存——**秒杀防超发的权威动作**。
+     * 抢占库存并落发放流水——**秒杀防超发与发放对账的权威动作**。
      *
      * <p><b>为什么必须在写平面、不能在决策链路里做</b>：决策服务连的是只读账号
      * （{@code deploy/mysql-init/01-decision-readonly-user.sql} 只 GRANT SELECT，
@@ -808,30 +824,154 @@ public class ActivityMarketingService {
      * 真正的裁决只发生在这里的原子 UPDATE 上。调用方拿到决策报价后必须再 claim 一次，
      * claim 失败就是没抢到——<b>不能拿决策成功当作抢到了</b>。
      *
-     * <p>幂等性：**本方法不幂等**。同一个用户连点两次会扣两次库存。
-     * 要幂等需要「用户 × 活动」的领取流水表来去重，当前没有那张表——
-     * 这一点必须让调用方知道，而不是假装它幂等。
+     * <p><b>本轮修掉的三件事</b>：
+     * <ol>
+     *   <li><b>版本打错行</b>：不传 version 时原来取「最高未删除版本」＝<em>草稿</em>，
+     *       而决策发的是「最高 ONLINE 版本」——防超发的闸门装在了另一行数据上，
+     *       线上版本的库存一件没少、草稿的库存被扣干净。现在缺省解析成<b>当前线上版本</b>。</li>
+     *   <li><b>扣减谓词太松</b>：原来只判 {@code isDel + inventory >= n}，
+     *       已下线、未开始、已结束、草稿版本的库存<b>都能被扣干净</b>。现在补上状态与时间窗。</li>
+     *   <li><b>不幂等</b>：原来同一个用户连点两次就扣两次，因为没有任何东西记得「这一单领过了」。
+     *       现在先插 {@link ActivityGrantEntity}（唯一约束 {@code tenant+order+activity}）再扣减，
+     *       重复提交在数据库层被挡住并返回首次结果。</li>
+     * </ol>
+     *
+     * <p><b>顺序不能反</b>：先插流水后扣库存。反过来（先扣后插）时，插入撞唯一约束会回滚整个事务，
+     * 库存看似安全；但如果扣减成功而插入因为别的原因失败，就会出现「扣了库存却没有账」的黑洞。
+     * 先插流水则让唯一约束在<b>任何扣减发生之前</b>就拦住重复请求。
+     *
+     * @param orderId 订单号。<b>幂等键的一半</b>；为空时退化成不幂等（并在结果里说明），
+     *                因为没有订单号就无从判断「是不是同一单」
+     * @param userId  领取人。每人限领按它计数；为空时该活动若配了 {@code userInventory} 一律拒绝——
+     *                无从判断是不是同一个人时放行，等于限领形同虚设
      */
     @Transactional
-    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
+    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity,
+                                      String userId, String orderId) {
         int n = quantity == null ? 1 : quantity;
-        if (activityId == null || activityId.isBlank()) return new ClaimResult(false, activityId, version, 0, "缺 activityId");
+        if (activityId == null || activityId.isBlank()) {
+            return new ClaimResult(false, activityId, version, 0, "缺 activityId");
+        }
         if (n <= 0) return new ClaimResult(false, activityId, version, 0, "扣减数量必须为正");
 
+        // 版本缺省 → 当前**线上**版本（不是最高版本，见方法注释第 1 条）
         Integer v = version;
         if (v == null) {
-            // 没给版本就打到当前最高版——与「上线打到最新草稿」的既有语义一致
-            v = manageRepo.findFirstByActivityIdAndIsDelOrderByVersionDesc(activityId, 0)
-                    .map(ActivityManageEntity::getVersion).orElse(null);
-            if (v == null) return new ClaimResult(false, activityId, null, 0, "活动不存在");
+            v = currentOnlineVersion(activityId);
+            if (v == null) {
+                return new ClaimResult(false, activityId, null, 0, "活动不存在或当前没有上线版本");
+            }
         }
 
-        // 判断余量与减一压在同一条 UPDATE 里，靠数据库对同一行的串行化防超发。
+        ActivityManageEntity row = manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL)
+                .orElse(null);
+        if (row == null) return new ClaimResult(false, activityId, v, 0, "活动版本不存在");
+
+        // ① 幂等：这一单的这个活动领过没有
+        String order = blankToNull(orderId);
+        if (order != null) {
+            var dup = grantRepo.findFirstByOrderIdAndActivityId(order, activityId);
+            if (dup.isPresent()) {
+                ActivityGrantEntity g = dup.get();
+                return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(),
+                        null, true, g.getId());
+            }
+        }
+
+        // ② 每人限领：userInventory > 0 时按流水计数。**拿不到 userId 就拒绝**——
+        // 无从判断是不是同一个人时放行，等于这条限制不存在。
+        Integer perUser = row.getUserInventory();
+        String user = blankToNull(userId);
+        if (perUser != null && perUser > 0) {
+            if (user == null) {
+                return new ClaimResult(false, activityId, v, 0, "该活动限每人 " + perUser + " 份，claim 必须带 userId");
+            }
+            int already = grantRepo.claimedQuantityByUser(activityId, user);
+            if (already + n > perUser) {
+                return new ClaimResult(false, activityId, v, 0,
+                        "超出每人限领（已领 " + already + "，本次 " + n + "，上限 " + perUser + "）");
+            }
+        }
+
+        // ③ 先落流水，再扣库存。**顺序不能反**：
+        // 唯一约束要在任何扣减发生之前就拦住「并发的同一单重复提交」，
+        // 反过来（先扣后插）时两个并发请求会各自扣成功，再由其中一个撞约束回滚——
+        // 回滚能救回库存，但那要靠事务边界一路不出错，而不是靠一条约束。
+        Instant now = Instant.now();
+        ActivityGrantEntity grant = null;
+        if (order != null) {
+            grant = new ActivityGrantEntity(activityId, v, user, order, n,
+                    null, ActivityGrantEntity.HELD, null, now);
+            grantRepo.saveAndFlush(grant);
+        }
+
+        // ④ 判断余量与减一压在同一条 UPDATE 里，靠数据库对同一行的串行化防超发。
         // **绝不能改成先查后减**——那是 check-then-act 竞态，低并发测不出来、大促必现。
-        int affected = manageRepo.decrementInventory(activityId, v, n, Instant.now());
-        return affected > 0
-                ? new ClaimResult(true, activityId, v, n, null)
-                : new ClaimResult(false, activityId, v, 0, "库存不足或活动不可用");
+        int affected = manageRepo.decrementInventory(activityId, v, n, now);
+        if (affected <= 0) {
+            // 没抢到（余量不足 / 活动已下线 / 不在活动期）→ 把刚插的流水撤掉。
+            // 不能留着：一条 HELD 却没有对应扣减的记录，在对账上就是「有账无货」，
+            // 而且会永久占掉这个用户的限领额度、并让这一单再也 claim 不了（幂等分支会命中它）。
+            // 用显式删除而不是抛异常回滚整个事务，是为了保住既有契约——
+            // 调用方一直按「返回 ok=false」处理没抢到，抛异常会让所有调用点的降级逻辑失效。
+            if (grant != null) {
+                grantRepo.delete(grant);
+                grantRepo.flush();
+            }
+            return new ClaimResult(false, activityId, v, 0, "库存不足或活动不可用");
+        }
+        return new ClaimResult(true, activityId, v, n, null, false, grant == null ? null : grant.getId());
     }
+
+    /** 兼容旧签名（无 userId/orderId）：退化成不幂等、不执行每人限领。新调用方一律用五参版本。 */
+    @Transactional
+    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
+        return claimInventory(activityId, version, quantity, null, null);
+    }
+
+    /**
+     * 释放已发放的份额并归还库存——退款 / 取消 / 超时的冲正入口。
+     *
+     * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，且用户的「每人限领」额度也一并作废。
+     * 幂等：已经 RELEASED 的记录直接返回成功，不会重复加库存。
+     */
+    @Transactional
+    public ClaimResult releaseGrant(String orderId, String activityId) {
+        String order = blankToNull(orderId);
+        if (order == null || activityId == null || activityId.isBlank()) {
+            return new ClaimResult(false, activityId, null, 0, "缺 orderId 或 activityId");
+        }
+        ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElse(null);
+        if (g == null) return new ClaimResult(false, activityId, null, 0, "没有对应的发放记录");
+        if (ActivityGrantEntity.RELEASED.equals(g.getState())) {
+            // 幂等：重复释放不重复加库存
+            return new ClaimResult(true, activityId, g.getVersion(), 0, "已释放", true, g.getId());
+        }
+
+        Instant now = Instant.now();
+        g.setState(ActivityGrantEntity.RELEASED);
+        g.setModifiedStime(now);
+        grantRepo.save(g);
+        // 归还不判活动状态与时间窗：活动结束之后仍可能有退款进来（见 incrementInventory 的说明）
+        manageRepo.incrementInventory(activityId, g.getVersion(), g.getQuantity(), now);
+        return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(), null, false, g.getId());
+    }
+
+    /** 某订单上的全部发放记录。客服「这一单用了哪些优惠」的数据源。 */
+    public List<ActivityGrantEntity> grantsOfOrder(String orderId) {
+        String order = blankToNull(orderId);
+        return order == null ? List.of() : grantRepo.findByOrderId(order);
+    }
+
+    /** 当前线上版本号；没有上线版本时返回 null。 */
+    private Integer currentOnlineVersion(String activityId) {
+        return manageRepo.findByActivityIdAndActivityStatusAndIsDel(
+                        activityId, ActivityStatus.ONLINE.code(), NOT_DEL).stream()
+                .map(ActivityManageEntity::getVersion)
+                .filter(java.util.Objects::nonNull)
+                .max(Integer::compareTo)
+                .orElse(null);
+    }
+
 
 }

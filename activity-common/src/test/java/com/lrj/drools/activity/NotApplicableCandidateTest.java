@@ -1,5 +1,6 @@
 package com.lrj.drools.activity;
 
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
@@ -36,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("算不出金额的候选 = 不适用，不参与竞争")
 class NotApplicableCandidateTest {
 
-    private final BenefitEvaluator evaluator = new BenefitEvaluator();
+    private final BenefitEvaluator evaluator = new BenefitEvaluator(DecisionMetrics.noop());
 
     /** 第 N 件折，但上下文里没有订单行 → 算不出来。 */
     private static ActivityCandidate nthWithoutLines(String id, int priority) {
@@ -93,7 +94,7 @@ class NotApplicableCandidateTest {
     private ActivityRuleResult run(StackStrategy strategy, ActivityRuleContext ctx, ActivityCandidate... cs) {
         List<ActivityCandidate> list = new ArrayList<>(List.of(cs));
         evaluator.computeAmounts(ctx, list);
-        return evaluator.merge(list, strategy);
+        return evaluator.merge(ctx, list, strategy);
     }
 
     @Test
@@ -213,7 +214,7 @@ class NotApplicableCandidateTest {
         List<ActivityCandidate> list = new ArrayList<>(List.of(cs));
         evaluator.applyLadder(ctx, list, defs);
         evaluator.computeAmounts(ctx, list);
-        return evaluator.merge(list, strategy);
+        return evaluator.merge(ctx, list, strategy);
     }
 
     @Test

@@ -1,7 +1,11 @@
 # drools-demo
 
-Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
+**多租户活动引擎平台 + Drools 教学脚手架**。Maven 四模块、两个独立 Spring Boot 应用（`activity-console` 写平面 8081 / `activity-decision` 只读决策 8082）+ Vue3 SPA 控制台；
+教学侧是 18 个渐进式 Drools Step（Hello World → 引擎安全护栏 / DMN / 真实业务场景），每步一个 REST 入口。
 
+> 想先看**整个项目怎么搭的**（模块拓扑 / 读写平面 / 决策链路 / 发布模型 / 关键不变量）？看 **[docs/architecture.md](docs/architecture.md)**（架构总览）。
+> 想看**这个项目里有哪些技术点**（面试 / 答辩 / onboarding 向，每条带代码位置与追问点）？看 **[docs/tech-highlights.md](docs/tech-highlights.md)**。
+> 纠结**规则引擎选哪个、能扛多少活动**？看 **[docs/capacity-model.md](docs/capacity-model.md)**（Drools / QLExpress / 纯 Java 三引擎同负载实测 + 容量公式），基准可复跑：`./examples/capacity/run.sh`。
 > 想先看 Drools 到底能干什么、各能力在哪一步演示？看 **[docs/drools-capabilities.md](docs/drools-capabilities.md)**（能力地图 + 选型决策树）。
 > 想理解引擎底层匹配原理？看 **[docs/rete-intuition.md](docs/rete-intuition.md)**。
 > 纠结用 Drools 还是轻量表达式引擎（Aviator）？看 **[docs/drools-vs-aviator.md](docs/drools-vs-aviator.md)**（选型对照）+ 可运行的 **[examples/aviator/AviatorDemo.java](examples/aviator/AviatorDemo.java)**（Aviator 独立示例，含跟 Step 2 折扣同题对照）。
@@ -10,8 +14,15 @@ Drools 学习脚手架 — Hello World + Spring Boot 订单折扣示例。
 ## 技术栈
 
 - Java 21 / Spring Boot 3.3.5
-- Drools 8.44.2.Final (kie-api, drools-core/compiler/mvel/decisiontables)
+- Drools 8.44.2.Final —— 版本锁在根 pom 的 `org.drools:drools-bom`（`org.kie:kie-bom` 在 8.44.2 没发布）。
+  `activity-common` 只用 `kie-api` + `drools-core/compiler/mvel`（走 `KieHelper` 运行时编译）；
+  **重依赖全隔离在 `drools-lab`**：`drools-decisiontables`（Step 7）/ `drools-xml-support`（kmodule 解析必需，少了启动即报错）/ `kie-ci`（Step 16，会拉进 maven-core、aether）/ `kie-dmn-core`（Step 17）。
+  `activity-decision` 不依赖 drools-lab，因此这些一个都不背，jar 更轻
 - **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–18；`activity-decision`(8082) 只读决策热路径。Docker 部署另有独立 `activity-frontend` nginx 镜像，可单独发布 Vue 并统一代理 API。
+
+> ⚠️ **活动引擎的决策主链路默认*不*走 Drools**——阶梯落档、六形态算额、折扣合并、资格条件树全部是纯 Java（`BenefitEvaluator` / `BenefitMath` / `ConditionTreeEvaluator`）。
+> 判据是「这条规则需不需要*其它规则的结论*」，四者都不需要。生产上真正执行 DRL 的只剩**买赠**一条通道，外加写平面的编译校验与 decision 侧的发布预热。
+> Step 1–18 是**教学层**，跟活动引擎没有代码耦合。这个决策的量化依据（实测差 ~100× 内存、~67× 决策 CPU）见 [docs/capacity-model.md](docs/capacity-model.md)，链路分层见 [docs/architecture.md](docs/architecture.md)。
 
 ## 项目结构
 
@@ -33,7 +44,7 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 │   └── src/main/                依赖 activity-common + drools-lab
 │       ├── java/com/lrj/drools/ConsoleApplication.java   启动类
 │       └── resources/
-│           ├── application.yml / -mysql.yml / -h2.yml    端口 8081；H2 落 ./data/drools-demo.mv.db
+│           ├── application.yml / -mysql.yml / -h2.yml    端口 8081；H2 落 activity-console/data/drools-demo.mv.db
 │           └── static/index.html                         落地页（指向 /ui/）+ 构建期注入的 SPA 产物
 └── activity-decision/  【可执行 app · 8082】只读决策热路径 /decision/v1/*（spu-discount / gifts /
     └── src/main/                addon/options + addon/quote 两阶段加价购 / metrics / by-activity）+
@@ -60,7 +71,7 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo \
 DB_USERNAME=root DB_PASSWORD=yourpass \
   ./mvnw -pl activity-console spring-boot:run
 
-# 没装 MySQL? 切 H2 file 跑 (状态落 ./data/drools-demo.mv.db, 不依赖外部库):
+# 没装 MySQL? 切 H2 file 跑 (不依赖外部库；URL 是模块相对路径, `-pl` 起时落在 activity-console/data/drools-demo.mv.db):
 ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
 
 # 起 decision (只读决策热路径 /decision/v1/*, 8082)。可单独跑, 也可与 console 并行:
@@ -77,10 +88,11 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 > ① 走默认 mysql profile, 先起一次 console 把表建好 (两个服务同一个库);
 > ② 只是想本机单跑 decision, 临时覆盖 `SPRING_JPA_HIBERNATE_DDL_AUTO=update ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2`
 > —— h2 档 decision 用的是**独立文件** (`-pl` 起时落在 `activity-decision/data/decision.mv.db`),
-> console 建的 `./data/drools-demo.mv.db` 它看不到。docker-compose 里 decision 一直是 validate + 只读账号, 不受影响。
+> console 建的库它看不到（console 的 h2 档也是模块相对路径，`-pl activity-console` 起时实际落在 `activity-console/data/drools-demo.mv.db`）。
+> docker-compose 里 decision 一直是 validate + 只读账号, 不受影响。
 
-> **数据库**: Step 10 (会话持久化) 和 Step 18 (活动规则) 都用 JPA 落库。默认 profile 是 **MySQL**;
-> URL 带 `createDatabaseIfNotExist=true`, 库不存在会自动建。连接细节见 `application-mysql.yml`,
+> **数据库**: Step 10 (会话持久化) 和 Step 18 (活动规则) 都用 JPA 落库, 活动引擎平台全程读写库。默认 profile 是 **MySQL**;
+> **console** 的 URL 带 `createDatabaseIfNotExist=true`, 库不存在会自动建（decision 的刻意不带——只读账号无建库权限）。连接细节见 `application-mysql.yml`,
 > 全部支持环境变量覆盖 (`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`)。
 > 不想装 MySQL 就加 `-Dspring-boot.run.profiles=h2` 退回 H2 file 模式。
 
@@ -117,7 +129,7 @@ cd frontend && npm install && npm run dev
 
 Docker Compose 默认启用 Casdoor auth：console 的 `/activity-marketing/**` 与 decision 的 `/decision/v1/**` 都要求有效 Bearer；`/ui/**`、`/actuator/health` 和公开的 `auth-config` 保持匿名。浏览器使用 `http://localhost:8000`，容器拉 JWKS 使用 `host.docker.internal:8000`。本地测试账号为 `acme/act-alice`（`act-alice-dev-pass-01`）与 `beta/act-bob`（`act-bob-dev-pass-02`）。
 
-`POST /activity-marketing/{activityId}/claim` 与 create/status 同属写操作。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置默认为空仅是为了保留 demo 兼容，不应当作生产权限策略。
+受 `console-write-authority` 保护的写端点共 **5 个**：`POST /create`、`POST /{id}/status`、`POST /bulk-status`、`POST /{id}/claim`、`POST /{id}/release`（`release` 会把库存加回去并解除限领占用，不设防就能把限量活动的库存刷到任意大，所以它必须在名单里）。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置默认为空仅是为了保留 demo 兼容，不应当作生产权限策略。
 
 如需回滚到原 header-only 开发档：
 
@@ -139,16 +151,16 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 - **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
 - **玩法模板屏**（`/ui/console/playbooks`）：12 张玩法卡（满减 / 阶梯 / 折扣券 / 人群·门店·地域定向 / 满额赠品 / 第二件半价 / 秒杀一口价 / 加价购），点"用它新建"跳编辑器并预填。
 - **优惠验证屏**（`/ui/console/validate`）：从上述 12 张卡直接派生场景，再额外补 1 个 random 形态场景；按 **discount / gifts / addon** 三通道调真实决策、分别展示命中金额、赠品明细或「选项 → 权威报价」，不再只打印原始 JSON。场景只准备输入与通道，不指定活动、不强制命中。第 N 件折切到订单行编辑，`spuIdList / orderAmount / quantity / lines` 只从行项唯一汇总，避免两份金额互相打架。
-- **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。
-- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409），在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
-- **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动命中量，标签数有上限，超出并进 `__over_cap__`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。
+- **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。<br>**减免基数是「本活动圈到的商品」而不是整单**：绑定关系从候选筛选器升级成**权益作用域**——作用域覆盖本次请求全部 SPU 时按订单金额算（今天绝大多数流量在这一档），是真子集时按订单行小计算，拿不到订单行就判本活动不适用。否则一张只绑了 B 的「9.9 一口价」会把「A 5000 元 + B」的整车按 9.9 成交。注意直减/满减（`元`）形态**不走这个基数**，它发的是固定金额，靠候选筛选把不该发的挡在门外。
+- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409）。它**已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。同一张流水表还顺带解决另外三件事——每人限领（`userInventory` 按流水计数，配了限领却不传 `userId` 直接拒绝）、退款冲正 `POST /{id}/release`（幂等）、客服查单 `GET /activity-marketing/grants?orderId=`，在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
+- **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动的命中量 `hits` **与发出的减免金额 `amounts`**——命中次数回答不了「这个活动花了多少预算」；标签数有上限，超出并进 `__over_cap__`，响应自带 `scope: single-instance`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。
 
 前端回归（Vitest + 浏览器 E2E）：
 
 ```bash
 cd frontend && npm test && npm run typecheck && npm run build
 
-# 这四套默认就打编排的网关 BASE=http://localhost:8095
+# 下面五套默认就打编排的网关 BASE=http://localhost:8095
 npm run e2e:visual      # 视觉 / 移动端红线守卫（触控 ≥44px、零横向溢出…）
 npm run e2e:bench       # 工作台：行归并 / 批量四段流程 / 版本正确性 / 密度持久化 / 侧板 Esc
 npm run e2e:playbooks   # 玩法模板 + 跨屏预填
@@ -161,9 +173,14 @@ npm run e2e:oidc        # 默认 :8095，但需本机 Casdoor :8000（唯一走 
 ```
 
 > `e2e:validate` 的 13 场景、四眼发布、秒杀/加价购库存前后不变、无 `claim` 请求与 390/768/1440 结果态响应式检查已写入脚本和 CI。2026-08-10 在 header-only + four-eyes Docker 栈实跑一次通过 **pass=472 / fail=0**，Chrome 人工验收也已通过；完整证据见 `docs/delivery/promotion-validation-all-playbooks/QA_REPORT.md`。
+>
+> ⚠️ **那套「全玩法已验证」的证据链验的是走库路径**：当时脚本三通道打的都是 console 的 `/activity-marketing/*`，而 console 进程里快照 store 恒空、必然走库。所以陈旧快照、绑定按版本收窄、代际轮询延迟这些**只在快照路径出现**的问题，472 条断言一条都照不到。脚本现已改打决策平面（`/api/decision/*`）并显式等快照就绪，**改后尚未复跑**——引用 472/0 时请连同这句一起引。
 
 > 除 `e2e:oidc` 外都走 `tenant-chip`（header 档），而编排**默认是 auth 档**，跑之前要切：
 > `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
+>
+> ⚠️ **`e2e:validate` 还要额外加 `DROOLS_FOUR_EYES_ENABLED=true`**：脚本第一个场景就硬断言「提交人自审发布必须被拒 409」，
+> 而 compose 的四眼开关默认 false，不打开的话自审发布返回 200，脚本当场 fail。CI 的 `validation-e2e` job 就是这么配的。
 
 > 前端产物在 **gateway 镜像**里，不在 console 的 jar 里：只 `--build console` 页面纹丝不动，要
 > `docker compose -f deploy/docker-compose.yml up -d --build gateway`（或 `./deploy.sh --frontend-only`）。
@@ -187,14 +204,26 @@ https://rules.example.com/ui/login?returnTo=%2Fhome
 
 ## 数据库配置 (MySQL / H2)
 
-只有 **Step 10**（会话持久化）和 **Step 18**（活动规则）需要数据库；其余 Step 纯内存，不连库也能跑。
+**console 应用本身没有可用数据源就起不来**（`ddl-auto: update` 启动即建表，且默认开启的 demo 种子 `CommandLineRunner` 开机就读写 `demo_product`）。
+单条规则的**求值**确实大多在内存里跑（只有 Step 10 会话持久化、Step 18 活动规则、以及整个活动引擎平台真正读写库），
+但「不连库也能跑 Step 1–9」在当前形态下**不成立**——最省事的免装 MySQL 方式是切 `h2` profile。
 
 ### 两个 profile
+
+> **console 与 decision 各带一套配置**，且刻意不同。下表除注明外都是 **console** 的；decision 的差异见下面那张表。
 
 | profile | 用途 | 数据落哪 | 配置文件 |
 | --- | --- | --- | --- |
 | `mysql` (默认) | 正式用法 | 外部 MySQL 的 `drools_demo` 库 | `application-mysql.yml` |
-| `h2` | 无 MySQL 时备用 | `./data/drools-demo.mv.db` (file, 重启不丢) | `application-h2.yml` |
+| `h2` | 无 MySQL 时备用 | `activity-console/data/drools-demo.mv.db` (file, 重启不丢；URL 写的是相对路径 `./data/drools-demo`, 落点随工作目录) | `application-h2.yml` |
+
+**console vs decision 的三处关键差异**（不是配置漂移，是读写平面分工）：
+
+| | console (8081) | decision (8082) |
+| --- | --- | --- |
+| `ddl-auto` | `update`（建表，**唯一 DDL 执行者**） | **`validate`**（只读平面不碰 DDL，`DecisionDdlGuardTest` 读源文件钉死） |
+| mysql URL | 带 `createDatabaseIfNotExist=true`，库不存在自动建 | **刻意不带**——它连只读账号（compose 里是 `decision_ro`，只 `GRANT SELECT`），本来就没有建库权限；对着不存在的库起会直接连接失败 |
+| h2 file | `activity-console/data/drools-demo.mv.db` | **独立文件** `activity-decision/data/decision.mv.db`（两边看不到彼此的表，所以 h2 档单跑 decision 要先临时覆盖 `SPRING_JPA_HIBERNATE_DDL_AUTO=update`） |
 
 `application.yml` 是公共配置 + `spring.profiles.active: ${SPRING_PROFILES_ACTIVE:mysql}`，所以默认走 MySQL，`SPRING_PROFILES_ACTIVE=h2` 或 `-Dspring-boot.run.profiles=h2` 切回 H2。
 
@@ -204,7 +233,7 @@ https://rules.example.com/ui/login?returnTo=%2Fhome
 | --- | --- | --- |
 | `DB_HOST` | `localhost` | |
 | `DB_PORT` | `3306` | |
-| `DB_NAME` | `drools_demo` | URL 带 `createDatabaseIfNotExist=true`, 库不存在自动建 |
+| `DB_NAME` | `drools_demo` | **仅 console** 的 URL 带 `createDatabaseIfNotExist=true`（库不存在自动建）。decision 的 URL **刻意不带**——它连只读账号，本来也没有建库权限，对着不存在的库起 decision 会直接连接失败 |
 | `DB_USERNAME` | `root` | |
 | `DB_PASSWORD` | `root` | |
 
@@ -286,6 +315,63 @@ curl -X POST 'http://localhost:8081/discount/calculate' \
 2. **试着加 `update($o)` 看死循环** — 在任意一条折扣规则 `then` 块里加一行 `update($o);`，重启请求一次 VIP 用户，会发现请求挂住 (server 进入无限循环)。这是 Drools 新手最常踩的坑：`update()` 会重新评估所有依赖该 fact 的规则，而本例规则的 LHS 条件 (vipLevel/totalAmount) 不会因为修改 finalAmount 而失配，所以一直重复触发。DRL 注释里详细解释了 `no-loop` / `lock-on-active` 两种正确防护方式
 3. **新增规则不用动 Java** — 在 `rules/discount/` 下加新 `.drl` 文件，重启即生效
 4. **KieSession 不是线程安全** — 看 `DiscountService` 为什么每次请求都 `newKieSession` + `dispose`
+
+## Step 3: 购物车 (accumulate 聚合 + modify 级联)
+
+`POST /cart/checkout` 插一个 Cart（内含 customer + items），跑 `cartKBase`。
+跟 Step 2 的区别：`OrderItem` 多了 `category` 字段，规则用 **`accumulate` 按品类聚合**；
+Cart 多了可变的 `goldStatus`，用 **`modify`** 演示"改一个字段触发另一条规则"的级联。
+
+```bash
+# 案例 A: 图书满 5 本减 20 (accumulate 用 sum 聚合 quantity)
+curl -X POST 'http://localhost:8081/cart/checkout' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"Alice","age":30,"vipLevel":1,"yearsSinceRegistration":2},
+    "items": [
+      {"name":"Clean Code","quantity":3,"unitPrice":50,"category":"BOOK"},
+      {"name":"DDD","quantity":2,"unitPrice":60,"category":"BOOK"}
+    ]
+  }'
+# → discountReasons 含 "图书满 5 本减 20" (3+2=5 本命中)
+
+# 案例 B: 电子类总额满 1000 减 100 (同一个 accumulate 换成 sum(subtotal))
+curl -X POST 'http://localhost:8081/cart/checkout' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"Bob","age":35,"vipLevel":1,"yearsSinceRegistration":1},
+    "items": [
+      {"name":"Laptop","quantity":1,"unitPrice":900,"category":"ELECTRONICS"},
+      {"name":"Mouse","quantity":2,"unitPrice":80,"category":"ELECTRONICS"}
+    ]
+  }'
+# → "电子类满 1000 减 100"。注意本例**不会**打印那条 count() 聚合的问候：
+#   规则数的是 `count($item)` = 匹配到的**订单行条数**（电子类 SKU 种类），不是 quantity 之和。
+#   这里只有 Laptop / Mouse 两行（虽然共 3 件），要凑够 3 行才会触发。
+
+# 案例 C: modify 级联 —— 原价破 5000 自动升金卡，再吃金卡 9 折
+curl -X POST 'http://localhost:8081/cart/checkout' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"Carol","age":40,"vipLevel":1,"yearsSinceRegistration":5},
+    "items": [{"name":"Server","quantity":1,"unitPrice":6000,"category":"ELECTRONICS"}]
+  }'
+# → goldStatus: true，且 discountReasons 里能看到金卡折扣
+#   顺序靠 salience 保证：Promote(90) 先于 Gold extra 执行
+```
+
+**这一步要观察的**
+
+1. **`accumulate` 的 `from` 锁的是 Java 集合**（`from $cart.getItems()`），不是整个 working memory——
+   多个 Cart 并发时不会"窜户"。代价是 list 内部增删 working memory 感知不到，
+   要么 Java 侧改完显式 `update(cart)`，要么把 `OrderItem` 也 `insert` 成独立 fact。
+2. **`accumulate` 的结果类型是 `Number`**，所以条件要写 `intValue >= 5` / `doubleValue >= 1000`，
+   不能直接写 `$result >= 5`。同一个骨架换个函数（`sum` / `count` / `max` / `collectList`）就是另一条规则。
+3. **`modify` 比 `update` 精准**——它告诉引擎"我只动了这几个属性"，Phreak 能更精确地传播、少做无用功。
+   但 **`modify` 一样不防死循环**：这里 `Promote` 规则安全，是因为它把 `goldStatus` 从 false 改成 true 后
+   自己的 LHS（`goldStatus == false`）**自然不再满足**，不是因为用了 `modify`。
+4. 这是本仓库里**唯一**该用 `modify` 的地方。Step 2 那种"改 finalAmount"的场景加 `update()` 会直接死循环
+   （LHS 看的是不可变字段，改了金额条件依然满足）——见上面「学习时的关键观察点」第 2 条。
 
 ## Step 4: 风控 + 推荐 (not / exists)
 
@@ -422,7 +508,7 @@ seq 17 GROUP_POPPED      group='notify'
 
 ## Step 7: 决策表 (Excel 维护规则)
 
-`POST /decision/calculate` 跑 `decisionKBase`，VIP 折扣档位维护在 `src/main/resources/rules/decision/vip-discount.xls`。
+`POST /decision/calculate` 跑 `decisionKBase`，VIP 折扣档位维护在 `drools-lab/src/main/resources/rules/decision/vip-discount.xls`。
 
 ```bash
 # VIP 2: 1000 × 0.9 = 900
@@ -439,13 +525,16 @@ curl -X POST 'http://localhost:8081/decision/calculate' -H 'Content-Type: applic
 **生成/重新生成 XLS**：
 
 ```bash
-./mvnw test -Dtest=VipDiscountSheetGenerator
+# 必须 -pl 指到 drools-lab：四模块 reactor 下不加 -pl 会在第一个模块 activity-common 就因
+# 「没有匹配 -Dtest 的用例」直接 BUILD FAILURE，drools-lab 根本轮不到执行。
+# 且这个类名不匹配 surefire 默认模式（*Test/Test*/*Tests/*TestCase），需显式放行。
+./mvnw -pl drools-lab test -Dtest=VipDiscountSheetGenerator -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-生成器在 `src/test/java/com/lrj/drools/tools/VipDiscountSheetGenerator.java`，用 Apache POI 写 .xls（HSSF 格式）。改档位推荐两种路径：
+生成器在 `drools-lab/src/test/java/com/lrj/drools/tools/VipDiscountSheetGenerator.java`，用 Apache POI 写 .xls（HSSF 格式）。改档位推荐两种路径：
 
 - 直接用 Excel/Numbers 打开 `vip-discount.xls` 改，业务方友好
-- 改生成器 Java 代码再 `./mvnw test -Dtest=...` 重新生成，git 友好
+- 改生成器 Java 代码再用上面那条 `-pl drools-lab` 的命令重新生成，git 友好（输出路径写死成模块相对路径，所以必须靠 `-pl` 把工作目录定在 `drools-lab/`）
 
 **学习观察点 (Step 7)**:
 
@@ -536,7 +625,7 @@ curl http://localhost:8081/hot/list
 
 ## Step 10: KieSession 持久化 (Marshaller + JPA)
 
-把 working memory + agenda state 序列化成 byte[], 经 Spring Data JPA 存 H2 file (`./data/drools-demo.mv.db`)。同一 sessionId 跨请求、跨重启接着上次的状态继续累积。
+把 working memory + agenda state 序列化成 byte[], 经 Spring Data JPA 存库 (**默认 mysql profile**; 切 `h2` 时落 `activity-console/data/drools-demo.mv.db`)。同一 sessionId 跨请求、跨重启接着上次的状态继续累积。
 
 **场景**: 用户积分会员。`PurchaseEvent` 进来攒分, 累计到阈值解锁徽章; `LoyaltyState` 一直留在 working memory, 等级从 NONE 单调推进到 BRONZE → SILVER → GOLD。
 
@@ -580,7 +669,7 @@ curl -o /dev/null -w '%{http_code}\n' -X POST 'http://localhost:8081/loyalty/gho
 2. **fact 类必须 `implements Serializable`** — record 不自动实现, `PurchaseEvent` / `LoyaltyState` 都显式声明。漏了的话 marshall 抛 `NotSerializableException`
 3. **`MarshallerFactory` 在 internal 包** — Drools 8 路径是 `org.kie.internal.marshalling.MarshallerFactory` (不是 `org.kie.api.marshalling`), 还要加 `drools-serialization-protobuf` 依赖才有实现
 4. **链式升级跨 fire 边界仍工作** — 单次购买 1000 元就同时解锁 BRONZE/SILVER/GOLD: `modify($s)` 让下一级规则的 LHS 重新评估, 整条链在一次 `fireAllRules` 内跑完。下次购买的 fire 开始时, tier 已经是 GOLD, 升级规则自然全部不再匹配
-5. **跨重启状态留存** — H2 用 `jdbc:h2:file:./data/drools-demo`, 物理文件 `./data/drools-demo.mv.db` 留着 byte[]。停 app → 重启 → `GET /loyalty/alice` 还是 GOLD, 因为 unmarshall 拿到的是关停前一次 marshall 的字节
+5. **跨重启状态留存** — H2 用 `jdbc:h2:file:./data/drools-demo`（**模块相对路径**, `-pl activity-console` 起时物理文件是 `activity-console/data/drools-demo.mv.db`）留着 byte[]。停 app → 重启 → `GET /loyalty/alice` 还是 GOLD, 因为 unmarshall 拿到的是关停前一次 marshall 的字节
 6. **跟 Drools 官方 `drools-persistence-jpa` 的差异** — 官方走 JTA + 多张表 + 自动事务边界, 复杂; 本 demo 一张 `session_snapshot` 单表 + 手动 marshall 边界 + Spring `@Transactional`。教学概念一致, 工程复杂度差一个数量级
 7. **改 DRL 后老快照可能 unmarshall 失败** — 规则签名或 fact 字段变了, 旧 byte[] 反序列化对不上号。学习场景手动 `rm -rf ./data/` 清掉; 生产要做"快照版本号 + 迁移脚本", 超出本 demo 范围
 
@@ -773,7 +862,7 @@ curl -s -X POST 'http://localhost:8081/guard/canary' -H 'Content-Type: applicati
 | Prometheus 指标名 | 类型 | 含义 |
 | --- | --- | --- |
 | `drools_rules_fired_total{rule}` | counter | 每条规则触发次数 → 看**哪条规则最热** |
-| `drools_matches_total` | counter | agenda 上产生的 activation 数 |
+| `drools_matches_created_total` | counter | agenda 上产生的 activation 数（代码里注册名是 `drools.matches.created`，Prometheus 命名规则会加 `_total`） |
 | `drools_matches_cancelled_total` | counter | 被撤销的 activation (not 反向触发 / retract / LHS 失配) |
 | `drools_facts_total{op}` | counter | working memory 增/改/删, op=inserted\|updated\|deleted |
 | `drools_session_fire_seconds` | summary | fireAllRules 整段耗时 + p50/p95/p99 分位 |
@@ -797,7 +886,7 @@ curl -s http://localhost:8081/actuator/prometheus | grep drools_
 drools_rules_fired_total{rule="VIP level 2 - 9 fold",session="discountSession"} 3.0
 drools_rules_fired_total{rule="Bulk amount discount",session="discountSession"} 3.0
 drools_rules_fired_total{rule="Loyal customer extra",session="discountSession"} 3.0
-drools_matches_total{session="discountSession"} 9.0                  # 3 activation × 3 次
+drools_matches_created_total{session="discountSession"} 9.0          # 3 activation × 3 次
 drools_facts_total{op="inserted",session="discountSession"} 6.0      # 2 insert × 3 次
 drools_session_fire_seconds{session="discountSession",quantile="0.95"} 0.019...
 drools_session_fire_seconds_count{session="discountSession"} 3

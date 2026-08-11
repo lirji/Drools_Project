@@ -47,4 +47,17 @@ public class GenerationService {
         log.info("[generation] 发布代际 +1 tenant={} bizLine={} generation={}", tenant, bizLine, g.getGeneration());
         return g.getGeneration();
     }
+
+    /**
+     * 库里当前的发布代际。<b>没有这个读口时，决策响应里回显的 generation 是个装饰数字</b>——
+     * 运营看到「generation=7」无从判断自己刚发布的那次进没进去，因为没有参照物。
+     *
+     * <p>行不存在返回 0：语义是「这条业务线还没发布过任何东西」，与「代际是 0」不冲突
+     * （{@link #bump} 首次建行给的是 1，代际永远从 1 起）。
+     */
+    public long current(String tenant, String bizLine) {
+        return genRepo.findByTenantIdAndBizLine(tenant, bizLine)
+                .map(ActivityGenerationEntity::getGeneration)
+                .orElse(0L);
+    }
 }

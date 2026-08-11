@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue'
-import { queryAddOnOptions, queryGifts, quoteAddOn, spuDiscount } from '../activityApi'
+import {
+  currentGeneration, queryAddOnOptions, queryGifts, quoteAddOn, snapshotDiagnostics, spuDiscount,
+  type DecisionPlane,
+} from '../activityApi'
 import { splitStrs } from '../logic'
 import { PLAYBOOKS, isReady, type PlaybookPreset } from '../playbooks'
 import { errText } from '@/shared/apiClient'
@@ -9,8 +12,10 @@ import type {
   AddOnOptionsResponse,
   AddOnQuoteResponse,
   DecisionOrderLine,
+  DecisionProvenance,
   DiscountDecisionResponse,
   GiftDecisionResponse,
+  SnapshotDiagnostics,
   SpuDiscountRequest,
 } from '@/shared/types'
 import Card from '@/shared/ui/Card.vue'
@@ -112,6 +117,29 @@ const lastRequest = ref<SpuDiscountRequest | null>(null)
 let ctrl: AbortController | null = null
 let requestSequence = 0
 
+/**
+ * 打哪条平面。**默认 decision**——线上真正跑的是它（优先读代际快照）。
+ *
+ * 此前这个页面固定打 console 的 legacy 读端点，而 console 进程里没有快照构建器、store 恒空、
+ * 必然走库。于是「用来自证优惠有没有生效的工具」恰好是唯一看不到快照侧问题的那条路：
+ * 陈旧快照、绑定收窄、重复候选、轮询延迟，全部落在它照不到的一侧。
+ */
+const plane = ref<DecisionPlane>('decision')
+/** 双打对拍：两条平面都打一遍并逐字段比。默认关——它有真噪声源，见 diffRows 的注释。 */
+const comparePlanes = ref(false)
+/** 对拍里 console（走库）那一侧的结果。 */
+const consoleDiscount = ref<DiscountDecisionResponse | null>(null)
+/**
+ * 决策平面不可达（404 / 5xx / 网络错误）——**必须与「决策未命中」分开**。
+ * 运营脑子里「页面报错」和「活动没生效」是同一件事，而这两者的处置完全相反。
+ * 401/403 不落这里：那是「可达但没授权」，退回走库只会掩盖权限配置问题。
+ */
+const planeUnreachable = ref('')
+const snapshotInfo = ref<SnapshotDiagnostics | null>(null)
+const snapshotProbeId = ref('')
+const snapshotProbing = ref(false)
+const dbGeneration = ref<number | null>(null)
+
 const activeScenario = computed(() => SCENARIOS.find((scenario) => scenario.id === scenarioId.value) ?? SCENARIOS[0])
 const mode = computed<ValidationMode>(() => activeScenario.value.mode)
 const detailMode = computed(() => activeScenario.value.redMode === 'nth')
@@ -133,6 +161,71 @@ const traces = computed(() => mode.value === 'discount'
     : addOnQuoteTraces.value.length
       ? addOnQuoteTraces.value
       : addOnResult.value?.traces ?? [])
+
+/** 当前结果的物料来源。三通道共用一个出口，UI 上只认这一个。 */
+const provenance = computed<DecisionProvenance | null>(() => {
+  const r = mode.value === 'discount'
+    ? discountResult.value
+    : mode.value === 'gifts'
+      ? giftResult.value
+      : (addOnQuoteResult.value ?? addOnResult.value)
+  return r?.provenance ?? null
+})
+
+/**
+ * 快照代际落后于库里的代际 = 「我刚发布的那次还没进去」。
+ * 只回显决策一侧的 generation 是个装饰数字——没有参照物就没有信息。
+ */
+const generationBehind = computed(() => {
+  const snap = provenance.value?.generation
+  const db = dbGeneration.value
+  if (snap === null || snap === undefined || db === null || db <= 0) return null
+  return db > snap ? db - snap : 0
+})
+
+/**
+ * 双打对拍的逐字段结果。
+ *
+ * **必须排除的四类「正常差异」**，否则页面天天飘红、然后被所有人忽略：
+ *  · `decisionId` —— 每次决策一个新 UUID，两条路必然不同；
+ *  · `traces` —— console 别名是试算档（explain=true），decision 是热路径（false），有无 trace 是设计；
+ *  · `mode` —— 引擎模式文案，与「发多少钱」无关；
+ *  · `items` 的**顺序** —— 比内容不比顺序（服务端已按 activityId 定序，但这里不依赖它）。
+ *
+ * `strategy` 也**不判红**：合并策略行在 create 时就 upsert 了，而代际只在状态流转时推进，
+ * 于是「新建一个带 discountStrategy 的草稿」会让走库侧立刻看到新策略、快照侧要等下一代——
+ * 这是合法瞬态，不是分歧。
+ */
+const diffRows = computed(() => {
+  const a = discountResult.value
+  const b = consoleDiscount.value
+  if (!comparePlanes.value || !a || !b) return []
+  const money = (v: unknown) => Number(v ?? 0).toFixed(2)
+  const rows = [
+    { field: '是否命中', decision: String(a.hit), console: String(b.hit) },
+    { field: '命中活动', decision: a.hitActivityId ?? '-', console: b.hitActivityId ?? '-' },
+    { field: '减免金额', decision: money(a.hitAmount), console: money(b.hitAmount) },
+    { field: '命中版本', decision: String(a.hitVersion ?? '-'), console: String(b.hitVersion ?? '-') },
+    { field: '是否封顶截断', decision: String(a.clamped), console: String(b.clamped) },
+    { field: '参与活动数', decision: String(a.items?.length ?? 0), console: String(b.items?.length ?? 0) },
+  ]
+  return rows.map((r) => ({ ...r, same: r.decision === r.console }))
+})
+
+/**
+ * 对拍**失效**了——两侧都读快照，于是这个面板在拿快照跟它自己比，永远绿。
+ *
+ * 「console 恒走库」不是不变量，只是**当前没有调用方**：`DecisionSnapshotStore` 与
+ * `DecisionSnapshotBuilder` 都是 activity-common 的 bean，在 console 进程里同样存在且可用。
+ * 一旦有人给 console 加了预热，这个面板会从「有效对拍」静默退化成「永久绿」——
+ * 而永久绿是比飘红更彻底的错误安心。所以两侧同为 snapshot 时判红，不判绿。
+ */
+const compareDegraded = computed(() =>
+  comparePlanes.value
+  && discountResult.value?.provenance?.source === 'snapshot'
+  && consoleDiscount.value?.provenance?.source === 'snapshot')
+
+const diffMismatch = computed(() => diffRows.value.some((r) => !r.same))
 
 const parsedLineSummary = computed<ParsedLines | null>(() => parseOrderLines().value)
 const priceBreakdown = computed(() => {
@@ -161,6 +254,8 @@ function clearOutcomes(abort = true): void {
   addOnQuoteTraces.value = []
   selectedOptionIndex.value = null
   lastRequest.value = null
+  consoleDiscount.value = null
+  planeUnreachable.value = ''
 }
 
 function onContextInput(): void {
@@ -325,6 +420,69 @@ function buildRequest(): { body: SpuDiscountRequest | null; error: string | null
   }
 }
 
+/**
+ * 把一次响应分成三种可分辨的结局：**成功 / 平面不可达 / 可达但被拒**。
+ *
+ * 此前三者一律写进 `err`，于是页面上「decision 服务没起」与「这一单没优惠」长得一模一样。
+ * 而验证页最常见的部署形态（本地 dev、QA 单起 console、只 `--build console` 的编排）
+ * 恰恰都没有 decision 进程——把它显示成一条红条，运营会读成「活动没生效」。
+ *
+ * 401/403 **不算不可达**：那是「可达但没授权」。此时退回走库只会把权限配置问题掩盖掉，
+ * 而运营会拿着一份走库结论以为自己验的是线上。
+ */
+function classify(response: { ok: boolean; status: number; json: unknown }, emptyMsg: string): boolean {
+  if (response.ok && response.json) return true
+  if (plane.value === 'decision' && (response.status === 404 || response.status === 0 || response.status >= 500)) {
+    planeUnreachable.value = response.status === 404
+      ? '决策服务没有响应这个路径（HTTP 404）：当前部署里可能没有起 decision 进程，'
+        + '或者网关缺少 /api/decision 前缀分流。'
+      : `决策服务不可达（HTTP ${response.status}）。`
+    return false
+  }
+  if (!response.ok && (response.status === 401 || response.status === 403)) {
+    err.value = `决策平面可达但拒绝了这次请求（HTTP ${response.status}）——这是授权问题，不是活动配置问题。`
+    return false
+  }
+  err.value = response.ok ? emptyMsg : errText(response as never)
+  return false
+}
+
+/**
+ * 拉快照诊断与库里代际。**决策之后再拉，且失败不影响决策结果的展示**——
+ * 它是解释性信息，不该让一次诊断超时把已经拿到的决策结论抹掉。
+ */
+async function refreshDiagnostics(body: SpuDiscountRequest): Promise<void> {
+  void body
+  if (plane.value !== 'decision') { snapshotInfo.value = null; return }
+  const probe = snapshotProbeId.value.trim()
+  // Promise.resolve(...) 包一层：这两个调用**在任何情况下都不许把决策结果掀掉**。
+  // 它们是解释性信息，超时、404、甚至被桩成 undefined 都只该让徽章空着。
+  const [snap, gen] = await Promise.all([
+    Promise.resolve(snapshotDiagnostics(probe || undefined)).then((r) => r?.json ?? null).catch(() => null),
+    Promise.resolve(currentGeneration(undefined)).then((r) => r?.json?.generation ?? null).catch(() => null),
+  ])
+  snapshotInfo.value = snap
+  dbGeneration.value = gen ?? null
+}
+
+/** 单独探一个活动在不在快照里——「我配了活动却什么都没返回」这个困惑的终点。 */
+async function probeSnapshot(): Promise<void> {
+  snapshotProbing.value = true
+  try {
+    const r = await Promise.resolve(snapshotDiagnostics(snapshotProbeId.value.trim() || undefined))
+    snapshotInfo.value = r?.json ?? null
+  } catch {
+    snapshotInfo.value = null
+  } finally {
+    snapshotProbing.value = false
+  }
+}
+
+function selectPlane(next: DecisionPlane): void {
+  plane.value = next
+  clearOutcomes()
+}
+
 function beginRequest(action: Exclude<BusyAction, null>): { sequence: number; controller: AbortController } {
   cancelActiveRequest()
   const controller = new AbortController()
@@ -349,34 +507,35 @@ async function runDecision(): Promise<void> {
   }
   const body = built.body
   const currentMode = mode.value
+  const currentPlane = plane.value
   const { sequence, controller } = beginRequest('decision')
   try {
     if (currentMode === 'discount') {
-      const response = await spuDiscount(body, controller.signal)
+      // 双打共用**同一个 body 对象与同一个 AbortSignal**：随机红包的金额由购物车指纹派生，
+      // 两侧入参必须逐字节相同，否则金额差异会被误读成「快照陈旧」。
+      const [response, mirror] = await Promise.all([
+        spuDiscount(body, controller.signal, currentPlane),
+        comparePlanes.value
+          ? spuDiscount(body, controller.signal, currentPlane === 'decision' ? 'console' : 'decision')
+          : Promise.resolve(null),
+      ])
       if (sequence !== requestSequence) return
-      if (!response.ok || !response.json) {
-        err.value = response.ok ? '优惠决策响应为空' : errText(response)
-        return
-      }
+      if (!classify(response, '优惠决策响应为空')) return
       discountResult.value = response.json
+      consoleDiscount.value = mirror?.json ?? null
     } else if (currentMode === 'gifts') {
-      const response = await queryGifts(body, controller.signal)
+      const response = await queryGifts(body, controller.signal, currentPlane)
       if (sequence !== requestSequence) return
-      if (!response.ok || !response.json) {
-        err.value = response.ok ? '赠品决策响应为空' : errText(response)
-        return
-      }
+      if (!classify(response, '赠品决策响应为空')) return
       giftResult.value = response.json
     } else {
-      const response = await queryAddOnOptions(body, controller.signal)
+      const response = await queryAddOnOptions(body, controller.signal, currentPlane)
       if (sequence !== requestSequence) return
-      if (!response.ok || !response.json) {
-        err.value = response.ok ? '加价购选项响应为空' : errText(response)
-        return
-      }
+      if (!classify(response, '加价购选项响应为空')) return
       addOnResult.value = response.json
     }
     lastRequest.value = body
+    void refreshDiagnostics(body)
   } catch (error) {
     if (sequence === requestSequence && (error as Error).name !== 'AbortError') {
       err.value = (error as Error).message
@@ -403,7 +562,8 @@ async function requestQuote(): Promise<void> {
   addOnQuoteTraces.value = []
   const { sequence, controller } = beginRequest('quote')
   try {
-    const response = await quoteAddOn(built.body, option.activityId, option.itemName, controller.signal)
+    const response = await quoteAddOn(built.body, option.activityId, option.itemName,
+      controller.signal, plane.value)
     if (sequence !== requestSequence) return
     addOnQuoteTraces.value = response.json?.traces ?? []
     if (response.status === 409) {
@@ -470,6 +630,34 @@ onUnmounted(cancelActiveRequest)
         <span class="choice"><Icon v-if="mode === 'addon'" name="check" :size="14" /></span>
       </button>
     </div>
+
+    <section class="plane-panel" aria-label="决策平面选择">
+      <div class="plane-picker">
+        <span class="plane-label">决策平面</span>
+        <button type="button" data-testid="v-plane-decision" :class="{ active: plane === 'decision' }"
+                :aria-pressed="plane === 'decision'" @click="selectPlane('decision')">
+          决策服务 <i>/api/decision · 线上真正跑的那条</i>
+        </button>
+        <button type="button" data-testid="v-plane-console" :class="{ active: plane === 'console' }"
+                :aria-pressed="plane === 'console'" @click="selectPlane('console')">
+          控制台走库 <i>/activity-marketing · 直接查库</i>
+        </button>
+        <label class="plane-compare">
+          <input v-model="comparePlanes" type="checkbox" data-testid="v-plane-compare" @change="clearOutcomes()" />
+          <span>两条都打并对拍</span>
+        </label>
+      </div>
+      <p class="plane-hint">
+        决策服务优先读代际快照，控制台读端点直接查库。<strong>只有前者是线上真正跑的那条</strong>——
+        快照陈旧、绑定收窄、代际未推进这类问题只在它这一侧照得出来。
+      </p>
+    </section>
+
+    <Banner v-if="planeUnreachable" kind="err" role="alert" data-testid="v-plane-unreachable">
+      <strong>决策服务不可达</strong>
+      <span>{{ planeUnreachable }}这**不是**「活动没生效」——请切到「控制台走库」先看配置，
+        但要知道那一侧看不到快照问题。</span>
+    </Banner>
 
     <Banner v-if="activeScenario.redMode === 'price'" kind="warn" data-testid="v-inventory-note">
       一口价在这里仅试算原价、减免与应付金额，不会扣减或占用秒杀库存。
@@ -570,6 +758,74 @@ onUnmounted(cancelActiveRequest)
             <article><small>决策模式</small><strong>{{ discountResult.mode || '-' }}</strong></article>
           </div>
 
+          <div v-if="provenance" class="provenance" data-testid="v-provenance"
+               :class="provenance.source === 'snapshot' ? 'snap' : 'db'">
+            <span class="prov-tag">{{ provenance.source === 'snapshot' ? '快照' : '走库' }}</span>
+            <div>
+              <strong>{{ provenance.source === 'snapshot' ? '本次结论来自代际快照' : '本次结论来自实时查库' }}</strong>
+              <small v-if="provenance.source === 'snapshot'">
+                代际 {{ provenance.generation ?? '-' }}
+                <template v-if="provenance.buckets > 1">（{{ provenance.buckets }} 个业务线桶，取最落后的一代）</template>
+                <template v-if="dbGeneration !== null"> · 库里当前 {{ dbGeneration }}</template>
+              </small>
+              <small v-else>控制台读端点进程内没有快照构建器，天然走库；线上决策不走这条路。</small>
+            </div>
+            <b v-if="generationBehind" class="behind" data-testid="v-generation-behind">
+              落后 {{ generationBehind }} 代
+            </b>
+          </div>
+          <Banner v-else-if="hasResult" kind="warn" data-testid="v-provenance-missing">
+            后端未回传 provenance——这次看到的结论无法自证是快照还是走库。
+          </Banner>
+
+          <Card v-if="comparePlanes && diffRows.length" title="两条平面对拍" data-testid="v-plane-diff">
+            <Banner v-if="compareDegraded" kind="err" role="alert" data-testid="v-diff-degraded">
+              <strong>对拍已失效</strong>
+              <span>两侧都读到了快照，这个面板正在拿快照跟它自己比，结果<strong>恒绿</strong>、没有意义。</span>
+            </Banner>
+            <Banner v-else-if="diffMismatch" kind="err" role="alert" data-testid="v-diff-mismatch">
+              <strong>两条路结论不一致</strong>
+              <span>同一份入参，快照侧与走库侧给出了不同的钱。先查代际有没有推进、绑定是不是被编辑收窄过。</span>
+            </Banner>
+            <Banner v-else kind="ok" data-testid="v-diff-match">两条路逐字段一致。</Banner>
+            <table class="diff-table">
+              <thead><tr><th>字段</th><th>决策服务</th><th>控制台走库</th></tr></thead>
+              <tbody>
+                <tr v-for="row in diffRows" :key="row.field" :class="{ bad: !row.same }">
+                  <td>{{ row.field }}</td><td class="mono">{{ row.decision }}</td><td class="mono">{{ row.console }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="diff-note">
+              对拍<strong>只能照出取数层的分歧</strong>（候选、版本、绑定、代际）。两条路共用同一份权益求值器，
+              形态判别、封顶、取整的 bug 会在两侧产出<strong>同样的错答案</strong>——绿不等于算对了。
+              已排除的正常差异：decisionId、决策轨迹（两侧 explain 档位不同）、引擎模式、合并策略（合法瞬态）。
+            </p>
+          </Card>
+
+          <Card v-if="mode === 'discount' && discountResult?.items?.length" title="逐活动明细" data-testid="v-items">
+            <table class="items-table">
+              <thead><tr><th>活动</th><th>版本</th><th>形态</th><th>金额</th><th>结果</th></tr></thead>
+              <tbody>
+                <tr v-for="item in discountResult.items" :key="`${item.activityId}-${item.version}`"
+                    :class="{ rejected: !item.applied }">
+                  <td><strong>{{ item.activityName || item.activityId }}</strong><small class="mono">{{ item.activityId }}</small></td>
+                  <td class="mono">v{{ item.version ?? '-' }}</td>
+                  <td>{{ item.benefitForm || '-' }}</td>
+                  <td class="mono">{{ item.applied ? '- ¥' + fmtMoney(item.amount) : '-' }}</td>
+                  <td>
+                    <span v-if="item.applied" class="ok-chip">已生效</span>
+                    <span v-else class="rej-chip" :title="item.rejectReason || ''">{{ item.rejectReason || '未生效' }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="diff-note">
+              被淘汰的候选**也在这张表里**，带原因。「配了却不发」的答案通常就在这一列，
+              而它此前根本没有出口——响应里只有一个命中活动和一个总额。
+            </p>
+          </Card>
+
           <Card v-if="priceBreakdown" title="一口价试算" data-testid="v-price-breakdown">
             <div class="price-breakdown">
               <span><small>原价</small><strong>¥{{ fmtMoney(priceBreakdown.original) }}</strong></span>
@@ -612,6 +868,39 @@ onUnmounted(cancelActiveRequest)
           </div>
         </template>
         <EmptyState v-else icon="scale" title="等待运行决策" hint="选择玩法场景、填写订单和用户上下文，结果会在这里显示；场景不会强制命中活动。" />
+
+          <Card v-if="plane === 'decision'" title="快照里有没有这个活动" data-testid="v-snapshot-probe">
+            <div class="probe-row">
+              <input v-model="snapshotProbeId" placeholder="粘贴活动 ID，回答它在不在当前快照里"
+                     data-testid="v-snapshot-probe-input" @keyup.enter="probeSnapshot" />
+              <button type="button" :disabled="snapshotProbing" data-testid="v-snapshot-probe-run" @click="probeSnapshot">
+                {{ snapshotProbing ? '查询中…' : '查快照' }}
+              </button>
+            </div>
+            <template v-if="snapshotInfo">
+              <Banner v-if="snapshotInfo.bucketCount === 0" kind="warn" data-testid="v-snapshot-empty">
+                本租户当前<strong>没有任何快照桶</strong>：决策全部走库。刚发布过就属正常（轮询还没跑完一轮）。
+              </Banner>
+              <Banner v-else-if="snapshotInfo.inSnapshot === false" kind="err" role="alert" data-testid="v-snapshot-absent">
+                <strong>这个活动不在任何快照桶里</strong><span>{{ snapshotInfo.hint }}</span>
+              </Banner>
+              <Banner v-else-if="snapshotInfo.inSnapshot === true" kind="ok" data-testid="v-snapshot-present">
+                <strong>活动在快照里</strong><span>{{ snapshotInfo.hint }}</span>
+              </Banner>
+              <table class="items-table">
+                <thead><tr><th>业务线</th><th>代际</th><th>建于</th><th>活动数</th></tr></thead>
+                <tbody>
+                  <tr v-for="bucket in snapshotInfo.buckets" :key="String(bucket.bizLine)">
+                    <td class="mono">{{ bucket.bizLine || '(空)' }}</td>
+                    <td class="mono">{{ bucket.generation }}</td>
+                    <td class="mono">{{ bucket.ageSeconds !== null ? bucket.ageSeconds + 's 前' : '-' }}</td>
+                    <td class="mono">{{ bucket.activityCount }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </template>
+          </Card>
+
       </section>
     </div>
   </section>
@@ -639,6 +928,36 @@ onUnmounted(cancelActiveRequest)
 .mode-picker i { overflow: hidden; margin-top: 2px; color: var(--text-faint); font-size: var(--fs-2xs); font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 .choice { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 1px solid var(--border-strong); border-radius: 50%; }
 .active .choice { border-color: var(--accent); background: var(--accent); color: var(--text-invert); }
+
+.plane-panel { margin-bottom: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }
+.plane-picker { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.plane-label { color: var(--text-soft); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+.plane-picker > button { display: inline-flex; flex-direction: column; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); cursor: pointer; font: inherit; font-size: var(--fs-sm); text-align: left; }
+.plane-picker > button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.plane-picker > button i { color: var(--text-faint); font-size: var(--fs-2xs); font-style: normal; }
+.plane-compare { display: inline-flex; align-items: center; gap: var(--sp-1); margin-left: auto; color: var(--text-soft); font-size: var(--fs-xs); }
+.plane-hint { margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: var(--fs-2xs); line-height: 1.6; }
+
+.provenance { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-3) var(--sp-4) 0; padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-soft); }
+.provenance.snap { border-color: var(--accent-line); }
+.prov-tag { padding: 2px var(--sp-2); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-2xs); font-weight: var(--fw-bold); }
+.provenance.db .prov-tag { background: var(--bg-elev); color: var(--text-soft); }
+.provenance strong { display: block; font-size: var(--fs-sm); }
+.provenance small { color: var(--text-faint); font-size: var(--fs-2xs); }
+.provenance .behind { margin-left: auto; padding: 2px var(--sp-2); border-radius: 999px; background: var(--gold-soft); color: var(--gold); font-size: var(--fs-2xs); }
+
+.diff-table, .items-table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+.diff-table th, .items-table th { padding: var(--sp-2); border-bottom: 1px solid var(--border); color: var(--text-faint); font-size: var(--fs-2xs); font-weight: var(--fw-medium); text-align: left; }
+.diff-table td, .items-table td { padding: var(--sp-2); border-bottom: 1px solid var(--border); vertical-align: top; }
+.diff-table tr.bad td { background: var(--red-soft, var(--gold-soft)); }
+.items-table tr.rejected { color: var(--text-faint); }
+.items-table small { display: block; color: var(--text-faint); font-size: var(--fs-2xs); }
+.ok-chip { padding: 1px var(--sp-2); border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: var(--fs-2xs); }
+.rej-chip { padding: 1px var(--sp-2); border-radius: 999px; background: var(--bg-soft); color: var(--text-soft); font-size: var(--fs-2xs); }
+.diff-note { margin: var(--sp-2) 0 0; color: var(--text-faint); font-size: var(--fs-2xs); line-height: 1.6; }
+.probe-row { display: flex; gap: var(--sp-2); margin-bottom: var(--sp-2); }
+.probe-row input { flex: 1; min-height: 36px; padding: 0 var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font: inherit; font-size: var(--fs-sm); }
+.probe-row button { padding: 0 var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-elev); color: var(--accent); cursor: pointer; font: inherit; font-size: var(--fs-xs); }
 
 .validate-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: var(--sp-4); align-items: stretch; }
 .context-card, .result-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elev); box-shadow: var(--shadow-sm); }

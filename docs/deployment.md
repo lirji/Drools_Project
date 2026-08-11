@@ -1,5 +1,10 @@
 # 部署与编排（微服务形态）
 
+> ⚠️ **重建前端的正确顺序**：`cd frontend && npm run build` → `docker compose -f deploy/docker-compose.yml up -d --build gateway`。
+> `deploy/Dockerfile.frontend` **不在容器里构建前端**，它只 `COPY frontend/dist/`（dist 由宿主机生成）。
+> 漏掉 `npm run build` 时 Docker 发现 dist 未变会复用镜像层——构建 exit 0、镜像时间戳不动、页面还是旧的。
+> 只重建 `console` 更是完全无效：前端不在 console 的 JAR 里。
+
 > 本仓库 M2.1 起是 Maven 四模块、两个独立 Spring Boot 应用。本文收敛「更像生产」的本地整套编排（`deploy/`）：两 app + nginx 网关 + MySQL 单库双账号 + Prometheus/Grafana。设计缘由见 `docs/plans/prod-arch-refactor-0719-1330/`。
 
 ## 模块与应用
@@ -48,11 +53,16 @@ h2 profile 用 file 库（console `./data/drools-demo`、decision `./data/decisi
 | `mysql` | mysql:8.0 | 3307→3306 | 单库 `drools_demo`；`mysql-init/` 首启建 decision 只读账号 |
 | `console` | activity-console（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；healthcheck `/actuator/health` |
 | `decision` | activity-decision（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
-| `gateway` | nginx:1.27-alpine | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095） |
+| `gateway` | **`activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095）。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
 | `prometheus` | prom/prometheus | 9090 | 抓 console + decision 的 `/actuator/prometheus` |
 | `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
 
 **镜像构建**：单个 `deploy/Dockerfile`，一个 build 阶段构建整个 reactor，运行阶段 `ARG MODULE` 选装某 app 的 jar；compose 用不同 `--build-arg MODULE` 出两镜像（build 阶段共享层缓存）。`.dockerignore` 排除 `node_modules`/`target`/`deploy`/`docs` 等，保持上下文精简、避免无谓 rebuild。
+
+> ⚠️ **改了代码要重建对的镜像，重建错的那个是彻底的无事发生**（与 `docs/qa/QA_PROFILE.md` 同源，两边要一致）：
+>
+> - 前端 `/ui/` 由 **gateway 镜像**托管、不在 console 的 JAR 里 → 改前端只 `--build console` 页面纹丝不动，要 `--build gateway`（或 `./deploy.sh --frontend-only`）。`deploy/nginx.conf` 也是 COPY 进这个镜像的，同理。
+> - **decision 是独立镜像** → 改后端要 `--build console decision`。只重建 console 时 decision 仍跑旧代码，而**控制台优惠验证页默认打的就是 decision**，于是新加的诊断端点（如 `GET /api/decision/snapshot`）会 404、页面判成「决策服务不可达」——症状看起来像网关坏了，实际是你没重建那个进程。
 
 ## Casdoor 认证档（默认）
 
@@ -93,11 +103,19 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 
 | 网关路径 | 转发到 | 备注 |
 | ---- | ---- | ---- |
-| `/api/decision/*` | `decision:8080/decision/v1/*` | 决策热路径。rewrite 是 `(.*)` 通配且保留 query string，故决策平面新增端点（`addon/options`、`addon/quote?activityId=&item=`、`GET metrics`、`GET by-activity`）**无需改网关**即可用 |
-| `/api/console/*` | `console:8080/activity-marketing/*` | 控制台写面/查询 |
+| `/api/decision/*` | `decision:8080/decision/v1/*` | 决策热路径。rewrite 是 `(.*)` 通配且保留 query string，故决策平面新增端点（`addon/options`、`addon/quote?activityId=&item=`、`GET metrics`、`GET by-activity`、`GET snapshot?activityId=`）**无需改网关**即可用。2026-08 起它从「为将来预留的路由」变成**页面硬依赖**：控制台优惠验证页默认打决策平面，前端 `apiClient` 的 `decision` service base 就写死成 `/api/decision`（`frontend/src/shared/apiClient.ts`）。**nginx 里没有 `location /decision/`**，所以谁把 base 改成后端真实路径 `/decision/v1` 都会落到兜底 `location /` 打到 console——而 console 的 classpath 上根本没有 `DecisionPlaneController`（它在 activity-decision 模块），结果是干净的 404，不是报错 |
+| `/api/console/*` | `console:8080/activity-marketing/*` | 控制台写面/查询。**至今没有调用方**——前端一直直连 `/activity-marketing/*`（`apiClient` 的 `marketing` base），走的是下面那条兜底路由。这条留着是给「console 也搬到网关前缀后面」用的，改它不会影响现有页面，也别以为改它就能改到前端实际走的那条 |
 | `/`（其余） | `console:8080` | SPA `/ui/`、Step 1–18、静态落地页 |
 
-网关透传 `Authorization`（Bearer）/ `X-Tenant-Id` / `X-Actor`，**不在网关终结鉴权**（各服务自证 JWKS）。
+网关**不在网关终结鉴权**（各服务自证 JWKS），只做 header 透传。三条路由都显式 `proxy_set_header` 了 `Authorization` 与 `X-Tenant-Id`，`/api/console/` 与兜底 `/` 另外显式带上 `X-Actor`：
+
+| 路由 | `Authorization` | `X-Tenant-Id` | `X-Actor` |
+| ---- | :--: | :--: | :--: |
+| `/api/decision/` | ✅ 显式 | ✅ 显式 | ✅ **隐式**（nginx 默认透传，未显式列出） |
+| `/api/console/` | ✅ 显式 | ✅ 显式 | ✅ 显式 |
+| `/`（其余，含原始 `/activity-marketing/**`） | ✅ 显式 | ✅ 显式 | ✅ 显式 |
+
+> **订正（2026-08）**：本文此前写「`/api/decision/` **不透传** `X-Actor`，排查 decision 拿不到操作者时这是原因不是 bug」——**那是错的，照它排查会白跑一圈**。`deploy/nginx.conf` 全文没有 `proxy_pass_request_headers off`，nginx 默认把客户端请求头**原样转发**；`proxy_set_header` 是覆盖/新增，**不是白名单**。所以 `/api/decision/`（`nginx.conf:87-93`）少写一行 `X-Actor` 并不构成阻断，decision **收得到**这个 header——只是**没人读**：`ActorContext` 由公共的 `TenantContextFilter`/`JwtTenantFilter` 落上下文（两个 app 都有），但 `ActorContext.get()` 的调用点只在 console 写平面的四眼校验里（`ActivityMarketingService.java:318,599`）。真要在网关层拦掉，得显式 `proxy_set_header X-Actor "";` 而不是「不写就等于不传」。
 
 ### 静态资源与压缩（2026-08 视觉换代随带）
 
@@ -117,6 +135,7 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 - 时序：`mysql-init` 首启建只读账号 → console 建表（healthy）→ decision 才 `validate` 通过（故 decision `depends_on: console service_healthy`，`service_started` 不够会撞 `missing table`）。
 - **应用侧 2026-08 才补齐**：decision 的 `application.yml` 此前遗留 `ddl-auto: update`（注释写着要改 validate、值没改），只靠 compose 的 `SPRING_JPA_HIBERNATE_DDL_AUTO=validate` 盖住——这条边界当时**只由部署编排保证、应用自身不保证**，按文档化的本地 `./mvnw -pl activity-decision spring-boot:run` 起就带着 DDL 权限跑。现已改 `validate`，并由 `DecisionDdlGuardTest` 钉死（直接读源文件而非 Spring 环境：环境值会被 profile / 环境变量覆盖，那测的是「本机这次怎么跑」，要钉的是「仓库里写的是什么」）。
 - **加列同样受这条启动顺序约束**：本轮新增列 `activity_rule.red_package_max_discount`（折扣型封顶减免）由 console 的 `ddl-auto=update` 建；老库升级时 decision 在该列建好前 `validate` 会失败。现有的 `depends_on: console service_healthy` 已覆盖这种「老库加新列」的冷启，无需改只读授权（`GRANT SELECT ON drools_demo.*` 是库级通配，新表新列自动可读）。
+- **加表也一样，而且更容易被漏判**：本轮新增的是**整张表** `activity_grant`（claim 幂等的发放流水，`ActivityGrantEntity`）。它虽然只被 console 的写平面用到，但 `@Entity` 定义在 `activity-common`，而 decision 的 `@EntityScan("com.lrj.drools")`（`DecisionApplication.java:21`）会把它一起扫进来 —— 于是 decision 的 `validate` **同样要求这张表已存在**。老库不经 console 直接拉起 decision 会报 `Schema-validation: missing table [activity_grant]`，这不是只读授权不够（`GRANT SELECT` 是库级通配），是建表还没发生；靠的仍是 `depends_on: console service_healthy` 这条时序。别因为「decision 又不发券」就以为它不关心这张表。
 
 ## 观测（Prometheus + Grafana）
 
@@ -131,10 +150,17 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 | `activity_decision_source_total` | `scene`,`source` | 物料来源 `snapshot`（代际快照，零查询）/ `db`（逐请求查库）；snapshot 占比掉下来即发布传播断了 |
 | `activity_decision_candidates_*` | `scene` | 候选活动数分布（折扣合并是 O(N²)，N 要盯） |
 | `activity_decision_hit_total` | `scene`,`activityId` | 按活动的命中量；**`activityId` 基数上限 200**，超出一律并进 `__over_cap__`（总量仍准确，只是分不出是哪几个活动——活动数是运营行为，不设上限会把 Prometheus 序列顶爆） |
+| `activity_decision_amount_yuan_*` | `scene`,`activityId` | **实际发出的减免金额**分布（`BenefitEvaluator` 出口，`ActivityQueryService:118`）。补它之前，把「满 300 减 50」配成「满 3 减 50」在监控上是**全盘绿灯**：不走回退、耗时正常、命中数只是稍高——因为金额从来没被记过。有了它「客单减免均值突然翻倍」才是个可查询的问题。`activityId` 复用同一套 200 上限。⚠ 代码里带 `baseUnit("yuan")`，Prometheus 命名约定会把它接进名字，**按 `activity_decision_amount` 是搜不到的** |
+| `activity_decision_clamped_total` | 无标签 | 减免额超过订单金额被截断的次数（`BenefitEvaluator:378`）。**正常业务恒 0**，能触发的配置几乎一定是错的（门槛写反 / 面额多一个零 / 叠加没上限），所以阈值可以设得极激进：`increase(activity_decision_clamped_total[1h]) > 0` 就该看一眼。刻意不打 `activityId`——是哪个活动在 WARN 日志里（含金额、订单金额、策略），指标只回答「有没有发生」 |
+| `activity_decision_reject_total` | `scene`,`reason` | 候选被淘汰的次数，**「配了但不发」的唯一信号**（此前只写在候选的 `rejectReason` 上，而热路径 `explain=false`，那个出口在生产上根本不打开）。它与回退率同级：一个回答「算错了吗」，一个回答「为什么没发」。⚠ **`scene` 这一列在本序列上混了两种语义**：资格阶段（`DecisionEligibilityService:110/125`，reason `condition-unavailable`/`ineligible`）打的是**通道** `spu-discount`/`gifts`/`addon`，算额阶段（`BenefitEvaluator:219`，reason `no-ladder-tier`/`missing-lines`/`price-above-base`/`bad-ratio`/`bad-random-range`/`out-of-scope`）打的是**阶段**常量 `benefit`，三条通道的算额淘汰全并在这一格。所以拿 `scene` 跟别的序列 join、或按 `scene="gifts"` 统计「买赠一共淘汰了多少」都是错的——那样会漏掉全部算额淘汰，而 `benefit` 那一行又分不出是哪个通道 |
+| `activity_decision_snapshot_count` | 无标签 | Gauge：本进程持有的快照桶数。**0 = 这台机器上全部决策都在走库**。只有 decision 侧非 0（console 没有快照构建的调用方，store 恒空） |
+| `activity_decision_snapshot_age_seconds` | 无标签 | Gauge：最旧快照的年龄，**`-1` = 一个快照都没有**。**下线传播断掉时唯一会动的读数**——快照陈旧是「决策照常成功、只是按旧配置发钱」，回退率/耗时/命中数三条全看不出来。告警阈值取轮询间隔（默认 3s）与兜底重建阈值（默认 60s）的数倍，比如 `> 300` |
 | `activity_rule_compile_seconds_*` / `activity_rule_fire_ceiling_total` | `outcome` / `scene` | KieBase 编译耗时与 fire 触顶（runaway 护栏被触发） |
 | `activity_rule_cache_entries` / `_hit_ratio` / `_weight_kb` | — | KieBase 缓存条目数 / 命中率 / 足迹（Caffeine stats 绑成 Gauge） |
 
-- **进程内聚合端点**（给控制台指标卡用）：`GET /api/decision/metrics`（按 `scene/mode` 的 count/mean/max + 回退计数）与 `GET /api/decision/by-activity`（命中量 + `tagCap` + `overCapTag`）。刻意不让浏览器直连 Prometheus：编排里 `:9090` 不对外、生产更不会，且把 PromQL 拼在前端等于让监控查询语言变成前端契约。**它是单实例视角**（读本进程 MeterRegistry），多实例部署下只反映被路由到的那个实例（只有 `metrics` 的响应自带 `scope: single-instance`，`by-activity` 的响应只有 `hits`/`tagCap`/`overCapTag`，识别不出单实例语义），跨实例汇总仍看 Prometheus；auth 档下同样需带 Bearer。
+- **进程内聚合端点**（给控制台指标卡用）：`GET /api/decision/metrics`（按 `scene/mode` 的 count/mean/max + 回退计数）与 `GET /api/decision/by-activity`（`hits` 命中量 + `amounts` **按活动累计发出的减免金额** + `tagCap` + `overCapTag`）。刻意不让浏览器直连 Prometheus：编排里 `:9090` 不对外、生产更不会，且把 PromQL 拼在前端等于让监控查询语言变成前端契约。**两个端点都是单实例视角**（读本进程 MeterRegistry），多实例部署下只反映被路由到的那个实例——两者的响应都自带 `scope: "single-instance"` 这句自述（`by-activity` 也补上了），因为少了它的读数最容易被当成全局真相；跨实例汇总仍看 Prometheus；auth 档下同样需带 Bearer。
+- **只读诊断端点**：`GET /api/decision/snapshot[?activityId=]` 返回**本租户**的快照桶清单（`bizLine` / `generation` / `builtAt` / `ageSeconds` / `activityCount`），带 `activityId` 时直接回答「在哪个桶 / 不在任何桶」。它存在的理由是决策响应里的 `provenance`（source/generation/buckets）在最要命的那条故障上**三个值全绿**：活动的 `bizLine` 为空时进不了任何桶（构建期按 bizLine 精确匹配），而兜底重建只遍历**已存在**的桶、永远建不出不存在的那个——此时决策照常走快照、代际是别的业务线的正常数、快照也很新，只是这个活动根本不在里面，与「活动确实不该命中」完全同形。它**不发起决策**，不会把验证流量混进 `activity_decision_{hit,amount}`，也不消耗那 200 个 `activityId` 标签位。⚠ 它的 `ageSeconds` 与 `activity_decision_snapshot_age_seconds` **不是同一个数**：前者是本租户的桶，后者是 `DecisionSnapshotStore.oldestAgeSeconds` 的跨租户统计（调度线程与指标线程没有租户上下文）。多租户下两者永远对不上，别拿来互相印证。
+- **代际参照物**：`GET /activity-marketing/generation?bizLine=`（console 侧，读 `activity_generation` 表；行不存在返回 0）。只看决策回显的 `provenance.generation=7` 是判断不了「我刚发布那次进去了没有」的，得跟库里当前代际比。放在 console 是因为那张表由写平面维护。
 
 ## 容灾行为（kill-gate，已 live 实证）
 
@@ -148,12 +174,18 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 
 ## 发布代际轮询预热（M1.4，跨进程 warm）
 
-console 上线活动时 bump `(tenant,bizLine)` 发布代际（`activity_generation` 表，**非 `@TenantId`**——跨租户信号，供无上下文的后台 poller `findAll` 扫）；decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact。物理拆分后进程内直调已移除，发布预热唯一路径即此轮询。
+console **任何活动状态变化**（上线 / 下线 / 回待上线）都在同一个事务里 bump `(tenant,bizLine)` 发布代际（`activity_generation` 表，**非 `@TenantId`**——跨租户信号，供无上下文的后台 poller `findAll` 扫）；decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact。物理拆分后进程内直调已移除，发布预热唯一路径即此轮询。
+
+> **「只在上线时 bump」是本链路唯一「错误无法被终止」的缺陷**（2026-08 已修，`ArtifactService.onStatusChanged`，原名 `onPublish`）：运营点下线 → 列表变「已下线」→ 控制台试算也说不再命中（console 侧 store 恒空、必走库，看到的是 DB 真相）→ 而 decision 的快照收不到信号，**继续按原配置发钱**，直到同 bizLine 恰好有别的活动上线、或 decision 进程重启。止损开关和用来确认止损的仪表盘会一起骗人。同理去掉了原来「artifact 处于 NEEDS_REBUILD 就跳过 bump」的早退：那道守卫拦错了东西（代际驱动的是按数据库真相重建快照，与 artifact 的 DRL 无关），而在上线路径上它有害——发布 v2 会同事务退役 v1，跳过 bump 等于让 decision 永远服务已被退役的 v1。<br>**仍有一个口子**：`activity_manage.biz_line` 可空而 `activity_generation.biz_line` 是 NOT NULL，所以 bizLine 为空时**不 bump**（只打 WARN）——照样插会在同事务抛非空约束违例、把状态变更一起回滚，那是把「下线传播不出去」升级成「下线根本做不到」。这类活动同时也进不了任何快照桶，排查手段是 `GET /api/decision/snapshot?activityId=`。
 
 2026-08（P1-1 快照包）起，代际推进后 poller 做**两件事且顺序不可反**：先在后台线程把整条 `(tenant,bizLine)` 的决策物料捞齐、构建不可变 `DecisionSnapshot` 并原子切指针（先建好再切，请求线程永远读到自洽物料），再预热 ACTIVE artifact 的资格 DRL。命中快照的决策请求零数据库查询。**快照只在进程内存里，没有新表**——decision 重启后要等下一次轮询（≤ 轮询间隔）才重建，这段时间以及从未 bump 过代际的租户走逐请求查库路径；两条路径占比由 `activity_decision_source_total{source="snapshot"|"db"}` 直接可观测。
+
+轮询每一轮在预热之后还做一件事：**陈旧快照兜底重建**（`GenerationWarmService.rebuildStaleSnapshots`）。凡是年龄超过 `activity.marketing.snapshot.max-age-ms`（默认 **60000**）的桶，哪怕代际没动也按数据库真相重建一遍。它守的不是某个已知 bug，而是「信号漏发」这一整类故障——代际 bump 因异常没提交、轮询线程被拖死后恢复、构建期抛异常导致 `lastSeen` 没更新，三种成因都表现为快照静默过期而**决策照常成功**；有了兜底，后果从**永久**降为**一轮**（本仓库已经在「记得发信号」这条纪律上失手过一次，就是上面那条下线不 bump）。走 `DecisionSnapshotStore.refresh` 而**不是** `publish`：这不是一次发布，不能占用回滚槽位，否则 `rollback` 会退到几十秒前的自己，等于没回滚；代际号也不变。重建失败保留旧快照、下轮再试，`activity_decision_snapshot_age_seconds` 会持续上涨并触发告警。
+
+> ⚠ `activity.marketing.snapshot.max-age-ms` **两份 `application.yml` 里都没有这个 key**，60000 这个值只存在于 `GenerationWarmService` 的 `@Value("${...:60000}")` 默认值里。想调它得自己往 decision 的配置里加一行（或用 `ACTIVITY_MARKETING_SNAPSHOT_MAX_AGE_MS` 环境变量覆盖）；配 0 或负数是**关闭兜底重建**，只有测试需要精确控制重建时机时才这么干。
 
 ## 生产化尾项（本 demo 未做）
 
 - decision 独立只读账号已示范；生产按最小权限收紧 + 独立 CI/独立扩缩容。
-- 网关/限流/灰度/审核队列等运营面 UI 未做（后端端点未就绪，诚实空态）。决策指标是例外：`GET /api/decision/metrics` · `/by-activity` **后端已就绪**，但前端工作台那块卡仍写着「待建」尚未接上（`frontend/src/console/pages/ListView.vue`）。
+- 网关/限流/灰度/审核队列等运营面 UI 未做（后端端点未就绪，诚实空态）。决策指标是例外：`GET /api/decision/metrics` · `/by-activity` **后端已就绪**，缺的是工作台那块面板本身——`frontend/src/console/pages/ListView.vue` 的说明卡已如实写成「端点已经存在、缺的是这块面板」，不再把它们记成「待建接口」。接之前要先想清楚：优惠验证页的流量也会打进这两个端点，直接渲染成「这个活动花了多少预算」等于拿自己造的验证流量记账。
 - 容量：`-XX:MaxMetaspaceSize` 配合 KieBase 缓存足迹预算，见 `docs/plans/activity-engine-platform-0718/50-P0-5-memory-capacity-model.md`。

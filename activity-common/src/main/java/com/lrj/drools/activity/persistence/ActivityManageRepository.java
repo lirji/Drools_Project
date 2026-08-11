@@ -61,8 +61,27 @@ public interface ActivityManageRepository extends JpaRepository<ActivityManageEn
     @Modifying
     @Query("update ActivityManageEntity e set e.inventory = e.inventory - :n, e.modifiedStime = :now "
          + "where e.activityId = :activityId and e.version = :version and e.isDel = 0 "
+         + "and e.activityStatus = 1 "
+         + "and e.activityStartTime <= :now and e.activityEndTime >= :now "
          + "and e.inventory is not null and e.inventory >= :n")
     int decrementInventory(@Param("activityId") String activityId,
+                           @Param("version") Integer version,
+                           @Param("n") int n,
+                           @Param("now") java.time.Instant now);
+
+    /**
+     * 归还库存（退款 / 取消 / 超时释放）。
+     *
+     * <p><b>刻意不带状态与时间窗谓词</b>——与扣减正好相反：还库存这件事在活动下线之后、
+     * 结束之后同样必须成立。一笔在活动期内领走的优惠，用户可能在活动结束之后才退款；
+     * 那时若因为「活动已结束」而拒绝归还，库存就永久蒸发了。
+     * 防重复归还靠的是流水的 {@code state}（只有非 RELEASED 的记录才会走到这里），不是这条 SQL。
+     */
+    @Modifying
+    @Query("update ActivityManageEntity e set e.inventory = e.inventory + :n, e.modifiedStime = :now "
+         + "where e.activityId = :activityId and e.version = :version and e.isDel = 0 "
+         + "and e.inventory is not null")
+    int incrementInventory(@Param("activityId") String activityId,
                            @Param("version") Integer version,
                            @Param("n") int n,
                            @Param("now") java.time.Instant now);

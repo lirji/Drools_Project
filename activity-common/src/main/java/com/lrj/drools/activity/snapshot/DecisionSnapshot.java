@@ -86,6 +86,22 @@ public final class DecisionSnapshot {
     public int activityCount() { return candidates.size(); }
 
     /**
+     * <b>这个活动在不在这份快照里。</b>
+     *
+     * <p>看着像个 getter，实际上它是「决策结果全绿但活动就是不命中」这类故障<b>唯一</b>能说话的出口。
+     * 三个 provenance 值（source/generation/buckets）在最要命的那条故障上是全绿的：
+     * 活动的 {@code bizLine} 为空（写平面不强制必填）→ 它进不了任何桶
+     * （构建期按 bizLine 精确匹配），而兜底重建只遍历<b>已存在的桶</b>、永远建不出不存在的那个。
+     * 此时决策照常走快照、代际是别的业务线的正常数、快照也很新——只是这个活动根本不在里面。
+     */
+    public boolean contains(String activityId) {
+        return activityId != null && candidates.containsKey(activityId);
+    }
+
+    /** 这份快照收了哪些活动。用于诊断端点列举，热路径不调。 */
+    public Set<String> activityIds() { return candidates.keySet(); }
+
+    /**
      * 按 SPU 列表 + 类型 + 当前时刻，产出候选事实与资格约束。
      *
      * <p>与 {@code DecisionDataLoader} 走库的那条路**语义逐条对齐**：已上线（构建期已过滤）、
@@ -95,11 +111,18 @@ public final class DecisionSnapshot {
         if (spuIds == null || spuIds.isEmpty()) {
             return new Materialized(List.of(), List.of());
         }
-        // 保持与绑定表查询一致的顺序语义：按 spu 顺序收集、去重
+        // 保持与绑定表查询一致的顺序语义：按 spu 顺序收集、去重。
+        // 同一趟遍历顺便把**作用域**倒排出来：activityId → 本次请求里它圈到的 SPU。
+        // 倒排索引本身就是「当前线上版本的生效绑定」，所以这里拿到的与走库路径按版本内连接的结果同源。
         Set<String> ids = new LinkedHashSet<>();
+        Map<String, Set<Long>> scope = new LinkedHashMap<>();
         for (Long spu : spuIds) {
             Set<String> bound = activityIdsBySpu.get(spu);
-            if (bound != null) ids.addAll(bound);
+            if (bound == null) continue;
+            ids.addAll(bound);
+            for (String id : bound) {
+                scope.computeIfAbsent(id, k -> new LinkedHashSet<>()).add(spu);
+            }
         }
         if (ids.isEmpty()) {
             return new Materialized(List.of(), List.of());
@@ -113,7 +136,7 @@ public final class DecisionSnapshot {
             if (type.code() != t.activityType()) continue;
             if (now.isBefore(t.startTime()) || now.isAfter(t.endTime())) continue;
 
-            out.add(t.toCandidate(withGifts));
+            out.add(t.toCandidate(withGifts, scope.getOrDefault(id, Set.of())));
             String constraint = eligibilityConstraints.get(id);
             if (constraint != null && !constraint.isBlank()) {
                 defs.add(new EligibilityRuleDef(id, constraint));
@@ -141,6 +164,16 @@ public final class DecisionSnapshot {
             java.math.BigDecimal redPackageMaxDiscount,
             Instant startTime, Instant endTime,
             List<GiftResult> gifts) {
+
+        /**
+         * @param scopedSpuIds 本次请求里该活动圈到的 SPU（见 {@code ActivityCandidate.scopedSpuIds}）。
+         *                     它是**逐请求**的交集，所以只能在 materialize 时传入，不能冻进模板。
+         */
+        public ActivityCandidate toCandidate(boolean withGifts, Set<Long> scopedSpuIds) {
+            ActivityCandidate c = toCandidate(withGifts);
+            c.setScopedSpuIds(scopedSpuIds);
+            return c;
+        }
 
         public ActivityCandidate toCandidate(boolean withGifts) {
             ActivityCandidate c = new ActivityCandidate();

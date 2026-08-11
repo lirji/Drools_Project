@@ -1,5 +1,9 @@
 # Delivery Report
 
+
+> ⚠️ **本文件是 dated 归档，正文不重写**。其中「claim 不幂等」「每人限领无执行路径」两条断言已于 2026-08-11 被推翻（`activity_grant` 流水 + 唯一约束 = 幂等；`userInventory` 已按流水计数执行；冲正走 `POST /{id}/release`）。以同目录 `DELIVERY_STATUS.md` 顶部的现状声明为准——照本文件设计「重复 claim 应扣两次」的用例会稳定误报。
+
+
 ## Delivered Outcome
 
 控制台“优惠验证”已从两通道试算扩展为一张共用页，覆盖 12 个玩法模板 + random 形态，并支持 discount / gifts / addon 三通道。第 N 件折由订单行唯一导出汇总；加价购走 options → 权威 quote 两阶段；秒杀和加价购验证都不占库存。

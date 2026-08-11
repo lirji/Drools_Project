@@ -15,6 +15,7 @@ import com.lrj.drools.activity.tenant.TenantContext;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
+import com.lrj.drools.activity.service.GenerationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -42,6 +43,7 @@ import java.util.stream.Collectors;
  *   POST /activity-marketing/addon/quote       加价购第二阶段（按活动+换购品重新报价）
  *   POST /activity-marketing/preview           资格条件树预览（翻译+试编译，不落库）
  *   GET  /activity-marketing/field-dict        字段/运算符/枚举字典（前端报表下拉用）
+ *   GET  /activity-marketing/generation        库里当前发布代际（决策侧回显的 generation 的参照物）
  *
  * 错误约定与 CampaignController 一致：参数非法 400，状态/并发冲突 409。
  */
@@ -53,9 +55,12 @@ public class ActivityMarketingController {
     private final ActivityQueryService query;
     private final AddOnPurchaseService addOn;
     private final RuleSchemaRegistry schemaRegistry;
+    private final GenerationService generations;
 
     public ActivityMarketingController(ActivityMarketingService marketing, ActivityQueryService query,
-                                       AddOnPurchaseService addOn, RuleSchemaRegistry schemaRegistry) {
+                                       AddOnPurchaseService addOn, RuleSchemaRegistry schemaRegistry,
+                                       GenerationService generations) {
+        this.generations = generations;
         this.marketing = marketing;
         this.query = query;
         this.addOn = addOn;
@@ -111,9 +116,30 @@ public class ActivityMarketingController {
     @PostMapping("/{activityId}/claim")
     public ResponseEntity<?> claim(@PathVariable("activityId") String activityId,
                                    @RequestParam(value = "version", required = false) Integer version,
-                                   @RequestParam(value = "quantity", required = false) Integer quantity) {
-        var r = marketing.claimInventory(activityId, version, quantity);
+                                   @RequestParam(value = "quantity", required = false) Integer quantity,
+                                   @RequestParam(value = "userId", required = false) String userId,
+                                   @RequestParam(value = "orderId", required = false) String orderId) {
+        var r = marketing.claimInventory(activityId, version, quantity, userId, orderId);
         return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(409).body(r);
+    }
+
+    /**
+     * 释放已发放的份额并归还库存——退款 / 取消 / 超时的冲正入口。
+     *
+     * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，用户的每人限领额度也一并作废。
+     * 幂等：重复释放返回 200 且不重复加库存。
+     */
+    @PostMapping("/{activityId}/release")
+    public ResponseEntity<?> release(@PathVariable("activityId") String activityId,
+                                     @RequestParam("orderId") String orderId) {
+        var r = marketing.releaseGrant(orderId, activityId);
+        return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(404).body(r);
+    }
+
+    /** 按订单查发放记录——客服「这一单用了哪些优惠、各发了多少」的数据源。 */
+    @GetMapping("/grants")
+    public ResponseEntity<?> grants(@RequestParam("orderId") String orderId) {
+        return ResponseEntity.ok(marketing.grantsOfOrder(orderId));
     }
 
     @GetMapping("/list")
@@ -198,6 +224,26 @@ public class ActivityMarketingController {
                 "distributionModes", Arrays.stream(DistributionMode.values())
                         .map(d -> Map.of("code", d.code(), "label", d.label())).collect(Collectors.toList()),
                 "strategies", Arrays.stream(StackStrategy.values()).map(Enum::name).collect(Collectors.toList())));
+    }
+
+    /**
+     * <b>库里当前的发布代际</b>——决策响应里那个 {@code provenance.generation} 的**参照物**。
+     *
+     * <p>只回显决策一侧的代际号，运营看到「generation=7」是判断不了「我刚发布的那次进去了没有」的：
+     * 7 可能是最新，也可能落后三代。要判断就必须有写平面这一侧的真值来对照。
+     *
+     * <p>放在 console 而不是 decision，是因为它读的是 {@code activity_generation} 表——
+     * 那是写平面的账本；decision 侧的同名数字是它<b>看到的</b>那一份，两者的差值才是信息。
+     */
+    @GetMapping("/generation")
+    public ResponseEntity<?> generation(@RequestParam(value = "bizLine", required = false) String bizLine) {
+        long gen = generations.current(TenantContext.get(), bizLine);
+        return ResponseEntity.ok(Map.of(
+                "bizLine", bizLine == null ? "" : bizLine,
+                "generation", gen,
+                "note", gen == 0
+                        ? "这条业务线还没发布过任何活动（代际从 1 起）"
+                        : "决策侧 provenance.generation 小于这个数，说明快照还没跟上"));
     }
 
     private ResponseEntity<?> bad(RuntimeException ex) {

@@ -1,5 +1,6 @@
 package com.lrj.drools.activity;
 
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.BenefitForm;
@@ -28,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class NthItemDiscountTest {
 
-    private final BenefitEvaluator evaluator = new BenefitEvaluator();
+    private final BenefitEvaluator evaluator = new BenefitEvaluator(DecisionMetrics.noop());
 
     private static BenefitMath.Line line(String price, int qty) {
         return new BenefitMath.Line(new BigDecimal(price), qty);

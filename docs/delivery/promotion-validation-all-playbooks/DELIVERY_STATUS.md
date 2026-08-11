@@ -1,5 +1,37 @@
 # Delivery Status
 
+> ## ⚠️ 补充说明（2026-08-11 追加）：这份「全玩法已验证」验的是**走库路径**，不是线上跑的那条
+>
+> 下面正文是 2026-08-10 的点时间记录，**一字未改**。但有一件当时没写清、后来被链路评审
+> （`docs/plans/activity-chain-review-0811-1730/REVIEW.md` P1-9）点破的事，必须在这里说明白：
+>
+> **这套证据链的三个通道全部打的是 console 的 `/activity-marketing/*`**
+> （见当时的 `frontend/e2e/e2e-validation.mjs` `ENDPOINTS`：`/activity-marketing/{spu-discount,gifts,addon/options}`），
+> 而 console 进程里没有任何调用方会去 `publish` 决策快照（`DecisionSnapshotBuilder` 虽是 `activity-common` 的
+> bean、在 console 上下文里存在且可用，但只有 decision 侧的 `GenerationWarmService` 会调它），
+> 所以 console 的每一次决策都**必然走库**。
+>
+> **为什么这件事要命**：线上真正服务流量的是 decision 的**快照路径**。凡是快照侧特有的故障——
+> 陈旧快照 / 绑定按版本收窄后走库仍当候选（AMOUNT 形态不调 baseAmount，走库照发、走快照根本不是候选）/
+> 跨 bizLine 重复候选 / 代际轮询延迟——**这 472 条断言一条都照不到**。
+> 换句话说：这份报告能证明「算钱的六形态是对的」，不能证明「线上那条路取到的物料是对的」。
+> 一份全绿的走库证据 + 一条走快照的生产链路，比没有证据更容易让人放心。
+>
+> **现在的状态**：2026-08-11 的改动已经把验证页与 `e2e:validate` 一起切到决策平面——
+> `e2e-validation.mjs` 的 `ENDPOINTS` 与 quote 断言改成 `/api/decision/*`（网关前缀，nginx rewrite 到
+> decision 容器 8080 的 `/decision/v1/`；编排里 decision 不对外映射端口），并新增 `waitForSnapshot`：用只读诊断端点
+> `GET /api/decision/snapshot?activityId=` 显式等本轮 bizLine 的桶建出来，超时即判红而不是笼统重试。
+> 但**脚本改了不等于证据有了**——`e2e:validate` 在新平面上尚未重跑，
+> **下一次重跑产出的报告才是覆盖真实平面的第一份证据**。在那之前，本目录里的所有 PASS 都请按
+> 「走库路径已验证、快照路径未验证」来读。
+>
+> 另有两条正文结论已被 2026-08-11 那批改动**推翻**（同样不改正文，在此声明）：
+> ① `:10` 与 `POST-REWORK-REVIEW.md` 里「剩余 L-1（SPU 作用域建模缺口）需单独立项」——**已实现**
+> （`ActivityCandidate.scopedSpuIds` + `BenefitEvaluator` 的 baseAmount 三档 + `BenefitMath.scopedSubtotal`）；
+> ② 多处「`claim` 非幂等」——**已幂等**（`activity_grant` 流水 + 唯一约束 `tenant+order_id+activity_id`，
+> 先插流水再原子扣减，扣减失败删流水）；**每人限领 `userInventory` 也已有执行路径**（按 `activity_grant` 计数，配了限领却不传 `userId` 直接拒绝），归档里「无执行路径」那句同样作废。验证页不调 claim 这条设计**仍然成立**，理由从「不幂等」
+> 变成「决策 ≠ 提交，验证入口本就不该占库存」。
+
 ## Goal
 
 把“优惠验证”扩展为覆盖当前 12 个玩法模板、随机金额权益形态和红包/买赠/加价购三条通道的无副作用验证入口，并修复会造成假命中的资格与回退语义缺口。

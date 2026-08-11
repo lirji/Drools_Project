@@ -25,11 +25,24 @@ const EXPECTED_SCENARIOS = [
   'flat', 'threshold', 'ladder', 'quantity', 'discount', 'tagged', 'store',
   'region', 'gift', 'second-half', 'flash', 'addon', 'random',
 ]
+// 验证页默认打**决策平面**（网关前缀 /api/decision → decision:8082 的 /decision/v1）。
+// 此前这里断言的是 console 的 /activity-marketing/*，于是这套「全玩法已验证」的证据链
+// 验的是走库路径，而线上跑的是快照路径——快照侧特有的问题一条都不在覆盖范围里。
 const ENDPOINTS = {
-  discount: '/activity-marketing/spu-discount',
-  gifts: '/activity-marketing/gifts',
-  addon: '/activity-marketing/addon/options',
+  discount: '/api/decision/spu-discount',
+  gifts: '/api/decision/gifts',
+  addon: '/api/decision/addon/options',
 }
+const QUOTE_ENDPOINT = '/api/decision/addon/quote'
+/**
+ * 发布 → 决策服务看见它，中间隔着一次轮询（默认 3s）。
+ *
+ * 上界必须 **> 轮询间隔** 且 **< 60s 兜底重建阈值**：短了是假红，长了会把
+ * 「代际传播彻底断掉」误吞成「慢了一点」——而那正是这套脚本最该抓的故障。
+ * 每轮 e2e 都用新的 bizLine，所以第一次决策必然遇到「该业务线的桶还没建出来」，
+ * 这不是 flake，是可预测的必然，因此必须显式等而不是笼统重试。
+ */
+const SNAPSHOT_WAIT_MS = Number(process.env.SNAPSHOT_WAIT_MS || 20_000)
 
 let passed = 0
 let failed = 0
@@ -158,6 +171,39 @@ async function createAndPublish(spec) {
   must(published.status === 1, `${spec.id} 已上线`, JSON.stringify(published))
   record.online = true
   return record
+}
+
+/**
+ * 等决策服务把本轮发布的活动收进快照。
+ *
+ * **为什么必须显式等而不是笼统重试**：每轮 e2e 用一条全新的 bizLine，而 `forTenant` 只要该租户
+ * 有任意一个桶就整体走快照分支。于是第一次决策必然落在「走了快照、但本业务线的桶还没建出来」
+ * 这个窗口里——这不是 flake，是可预测的必然。笼统重试会把它和「代际传播彻底断掉」混成一类。
+ *
+ * 探针用的是 `GET /api/decision/snapshot?activityId=`：它只读快照、不发起决策，
+ * 因此不会把 e2e 造的一次性活动写进 activity.decision.{hit,amount}（那两个指标的
+ * activityId 标签位只有 200 个且**不可回收**，反复跑 e2e 会把真实活动挤进 __over_cap__）。
+ */
+async function waitForSnapshot(recordList) {
+  const target = recordList.find((r) => r.online)
+  if (!target) return
+  const deadline = Date.now() + SNAPSHOT_WAIT_MS
+  let last = null
+  while (Date.now() < deadline) {
+    // 走 apiFetch 而不是裸 api.get：诊断端点同样受租户过滤，缺 X-Tenant-Id 会落到兜底租户，
+    // 于是永远查不到本轮建的活动——而那看起来跟「传播失败」一模一样。
+    const response = await apiFetch('GET',
+      `/api/decision/snapshot?activityId=${encodeURIComponent(target.activityId)}`, UI_ACTOR)
+    last = await response.json().catch(() => null)
+    if (last && last.inSnapshot === true) {
+      must(true, `决策服务已收进本轮快照（bizLine=${BIZ_LINE}）`)
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  // 超时**不是**「慢了一点」——上界已经取到轮询间隔的数倍，到这里说明代际根本没传播过去。
+  must(false, `决策服务在 ${SNAPSHOT_WAIT_MS}ms 内收进本轮快照`,
+    `活动 ${target.activityId} 仍不在任何快照桶里：${JSON.stringify(last)}`)
 }
 
 async function setOffline(record, label = record.id) {
@@ -440,7 +486,7 @@ async function activityDetail(record, label) {
 async function runQuote() {
   const responsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url())
-    return response.request().method() === 'POST' && url.pathname === '/activity-marketing/addon/quote'
+    return response.request().method() === 'POST' && url.pathname === QUOTE_ENDPOINT
   }, { timeout: 20_000 })
   await page.getByTestId('v-addon-quote').click()
   const response = await responsePromise
@@ -532,6 +578,8 @@ try {
   for (const spec of specs) records.set(spec.id, await createAndPublish(spec))
   must(new Set(specs.map((spec) => spec.spuId)).size === specs.length,
     '每个活动使用本次运行唯一 SPU')
+
+  await waitForSnapshot([...records.values()])
 
   await page.goto(`${BASE}/ui/console/validate`, { waitUntil: 'domcontentloaded' })
   await page.getByTestId('validate-view').waitFor({ state: 'visible', timeout: 20_000 })

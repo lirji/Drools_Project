@@ -42,6 +42,22 @@ public class DecisionSnapshotStore {
         return old;
     }
 
+    /**
+     * <b>同代刷新</b>：用重新构建的物料替换当前快照，但<b>不动上一代指针</b>。
+     *
+     * <p>与 {@link #publish} 的区别是「这不是一次发布」。兜底重建（{@code GenerationWarmService} 的
+     * 陈旧扫描）用它来自愈——若走 publish，一次兜底重建就会把 previous 槽位挤成「同一代的旧副本」，
+     * 于是 {@link #rollback} 回滚到的不再是上一个发布代际，而是几十秒前的自己，回滚等于没回滚。
+     * 代际号保持不变，因为配置代际确实没有前进。
+     */
+    public void refresh(DecisionSnapshot snapshot) {
+        String k = key(snapshot.tenant(), snapshot.bizLine());
+        DecisionSnapshot old = current.put(k, snapshot);
+        log.info("[snapshot] 兜底重建 tenant={} bizLine={} generation={} 活动数={}（上一代指针不变，builtAt={}→{}）",
+                snapshot.tenant(), snapshot.bizLine(), snapshot.generation(), snapshot.activityCount(),
+                old == null ? "-" : old.builtAt(), snapshot.builtAt());
+    }
+
     /** 回滚到上一代。没有上一代时返回 false（调用方据此提示"无可回滚的版本"）。 */
     public boolean rollback(String tenant, String bizLine) {
         String k = key(tenant, bizLine);
@@ -67,6 +83,30 @@ public class DecisionSnapshotStore {
 
     public DecisionSnapshot get(String tenant, String bizLine) {
         return current.get(key(tenant, bizLine));
+    }
+
+    /**
+     * 当前全部快照（跨租户）。供**兜底陈旧扫描**与快照可观测性指标使用——两者都要看
+     * 「所有桶里最旧的那个有多旧」，而调度线程与指标线程都没有租户上下文。
+     */
+    public List<DecisionSnapshot> all() {
+        return List.copyOf(current.values());
+    }
+
+    /**
+     * 全部快照里**最旧的那个**的年龄（秒）。没有快照时返回 -1（与「有快照但很新」区分开）。
+     *
+     * <p>这是止损可观测性的核心读数：代际信号漏发、轮询线程卡死、构建持续失败——三种故障
+     * 都表现为这个数一路涨，而它们在回退率、耗时、命中数上<b>全部看不出来</b>（快照还在，
+     * 只是内容过期，决策照常成功）。
+     */
+    public double oldestAgeSeconds(java.time.Instant now) {
+        double worst = -1;
+        for (DecisionSnapshot s : current.values()) {
+            double age = java.time.Duration.between(s.builtAt(), now).toMillis() / 1000.0;
+            if (age > worst) worst = age;
+        }
+        return worst;
     }
 
     public int size() { return current.size(); }

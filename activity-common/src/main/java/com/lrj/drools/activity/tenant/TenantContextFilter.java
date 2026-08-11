@@ -9,7 +9,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * 活动接口的租户来源过滤器（P0-4 面向用户的 fail-closed 闸）。只挂在 {@code /activity-marketing/*}。
+ * 活动接口的租户来源过滤器（P0-4 面向用户的 fail-closed 闸）。挂在 {@code /activity-marketing/*}
+ * <b>与 {@code /decision/v1/*}</b> 两条路径上（注册见 {@code MultiTenancyConfig#addUrlPatterns}）。
+ *
+ * <p><b>新增受租户约束的路径时必须同步扩这两条模式</b>：加决策平面时就漏过一次，{@code X-Tenant-Id}
+ * 被<b>静默忽略</b>、全部请求落 dev-default 兜底，表现为「A 租户查到别人的活动」。
+ * 单元测试大多跑在 dev-default 下，这类缺口只有端到端才照得出来（现由 {@code DecisionTenantHeaderTest} 钉死）。
  *
  * <p>从 {@code X-Tenant-Id} header 取租户写进 {@link TenantContext}，请求结束在 finally 清除（防线程池串租户）。
  * <ul>

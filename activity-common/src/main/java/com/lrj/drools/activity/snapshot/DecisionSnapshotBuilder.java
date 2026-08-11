@@ -92,7 +92,8 @@ public class DecisionSnapshotBuilder {
         Map<String, List<GiftResult>> giftsByKey = new LinkedHashMap<>();
         for (ActivityGiftEntity g : giftRepo.findByActivityIdInAndIsDel(ids, NOT_DEL)) {
             giftsByKey.computeIfAbsent(key(g.getActivityId(), g.getVersion()), k -> new ArrayList<>())
-                    .add(new GiftResult(g.getBatchId(), g.getGiftName(), g.getGiftType(),
+                    .add(new GiftResult(g.getActivityId(), g.getVersion(),
+                            g.getBatchId(), g.getGiftName(), g.getGiftType(),
                             g.getGiftNum(), g.getAbsoluteAmount(), g.getRightType()));
         }
         Map<String, String> constraintByKey = new LinkedHashMap<>();

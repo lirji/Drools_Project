@@ -1,5 +1,9 @@
 # QA Report
 
+
+> ⚠️ **本文件是 dated 归档，正文不重写**。其中「claim 不幂等」「每人限领无执行路径」两条断言已于 2026-08-11 被推翻（`activity_grant` 流水 + 唯一约束 = 幂等；`userInventory` 已按流水计数执行；冲正走 `POST /{id}/release`）。以同目录 `DELIVERY_STATUS.md` 顶部的现状声明为准——照本文件设计「重复 claim 应扣两次」的用例会稳定误报。
+
+
 ## Environment
 
 - Date: 2026-08-10 Asia/Taipei
@@ -10,6 +14,12 @@
 - Post-QA state: `./deploy.sh --skip-build --core-only` 已恢复默认 auth 档，六个服务就绪。
 
 ## Outcome
+
+> ⚠️ **（2026-08-11 追加）这 472 条断言验的是 console 的走库路径，不是线上跑的快照路径。**
+> 当时 `e2e-validation.mjs` 的三个通道全部打 `/activity-marketing/*`，而 console 必然走库
+> ——陈旧快照 / 绑定收窄 / 重复候选 / 轮询延迟这些**快照侧特有的问题一条都照不到**。
+> 脚本现已改打 `/api/decision/*` 并加了显式等桶（`waitForSnapshot`），但尚未在新平面上重跑：
+> **下一次重跑的报告才是覆盖真实平面的第一份证据**。完整说明见同目录 `DELIVERY_STATUS.md` 顶部。
 
 > ⚠️ 本报告记录的是 **2026-08-10 14:44 前的首轮 QA**。之后 14:58–15:10 又有一批返工，
 > 下列数字**不覆盖最终代码**。返工后的复跑证据见 `DELIVERY_REPORT.md` 的 Re-verification 段

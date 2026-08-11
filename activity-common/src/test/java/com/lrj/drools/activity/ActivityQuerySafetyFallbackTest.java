@@ -168,7 +168,7 @@ class ActivityQuerySafetyFallbackTest {
     void fallbackKeepsStackStrategy() {
         ActivityQueryService query = query(false, false,
                 materials(List.of(fixed("ACT-STACK-10", "10"), fixed("ACT-STACK-20", "20"))),
-                mock(ActivityRuleRuntimeService.class), StackStrategy.STACK, new BenefitEvaluator());
+                mock(ActivityRuleRuntimeService.class), StackStrategy.STACK, new BenefitEvaluator(DecisionMetrics.noop()));
 
         ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), true);
 
@@ -185,7 +185,7 @@ class ActivityQuerySafetyFallbackTest {
         ActivityCandidate larger = fixed("ACT-PRIORITY-20", "20");
         larger.setPriority(1);
         ActivityQueryService query = query(false, false, materials(List.of(preferred, larger)),
-                mock(ActivityRuleRuntimeService.class), StackStrategy.PRIORITY, new BenefitEvaluator());
+                mock(ActivityRuleRuntimeService.class), StackStrategy.PRIORITY, new BenefitEvaluator(DecisionMetrics.noop()));
 
         ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), true);
 
@@ -215,7 +215,7 @@ class ActivityQuerySafetyFallbackTest {
                                               DecisionDataLoader.Materials materials,
                                               ActivityRuleRuntimeService runtime) {
         return query(engineEnabled, javaBenefitEval, materials, runtime,
-                StackStrategy.MAX, new BenefitEvaluator());
+                StackStrategy.MAX, new BenefitEvaluator(DecisionMetrics.noop()));
     }
 
     private static ActivityQueryService query(boolean engineEnabled, boolean javaBenefitEval,
@@ -242,15 +242,19 @@ class ActivityQuerySafetyFallbackTest {
     private static final class EmptyOnceBenefitEvaluator extends BenefitEvaluator {
         private boolean empty = true;
 
+        EmptyOnceBenefitEvaluator() {
+            super(DecisionMetrics.noop());
+        }
+
         @Override
-        public ActivityRuleResult merge(List<ActivityCandidate> candidates, StackStrategy strategy, boolean explain) {
+        public ActivityRuleResult merge(ActivityRuleContext ctx, List<ActivityCandidate> candidates, StackStrategy strategy, boolean explain) {
             if (empty) {
                 empty = false;
                 ActivityRuleResult result = new ActivityRuleResult();
                 result.setStrategy(strategy);
                 return result;
             }
-            return super.merge(candidates, strategy, explain);
+            return super.merge(ctx, candidates, strategy, explain);
         }
     }
 

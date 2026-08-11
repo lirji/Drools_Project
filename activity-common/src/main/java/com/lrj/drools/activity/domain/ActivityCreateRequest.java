@@ -37,8 +37,38 @@ public record ActivityCreateRequest(
         List<Long> poolRefs,
         List<GiftInput> gifts,
         /** 折扣类的封顶减免额（元）。null = 不封顶——只有金额型才允许不封顶 */
-        BigDecimal redPackageMaxDiscount
+        BigDecimal redPackageMaxDiscount,
+        /**
+         * 每人限领份数。null / ≤0 = 不限。
+         *
+         * <p><b>这个字段此前根本不存在</b>：实体上有 {@code user_inventory} 列、候选里有
+         * {@code userInventory} 字段、快照还把它一路搬运过去——唯独提交入口没有它，
+         * 写入口又硬编码 {@code setUserInventory(0)}，全链路零读取。
+         * 也就是说它是条穿过整条流水线、两端都是空的幽灵字段：
+         * 运营看不到、填不了，工程上却处处像是支持了限领。
+         *
+         * <p>现在它由 {@code activity_grant} 发放流水按 {@code (活动, 用户)} 计数执行。
+         * 配了它的活动，claim 必须带 {@code userId}，否则一律拒绝——
+         * 无从判断是不是同一个人时放行，等于这条限制不存在。
+         */
+        Integer userInventory
 ) {
+    /** 兼容 22 参构造（带封顶、不带每人限领）。 */
+    public ActivityCreateRequest(
+            String requestId, String activityId, String activityName, String bizLine,
+            Integer activityType, String activityRule, Long activityStartTime, Long activityEndTime,
+            Integer activityAreaType, String districtIds, Integer priority, Integer inventory,
+            Integer redPackageTakeType, BigDecimal redPackageAmount, String redPackageAmountUnit,
+            String redPackageRangeAmount, String discountStrategy, ConditionNode eligibilityConditionTree,
+            List<SpuBinding> spuBindings, List<Long> poolRefs, List<GiftInput> gifts,
+            BigDecimal redPackageMaxDiscount) {
+        this(requestId, activityId, activityName, bizLine, activityType, activityRule,
+                activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
+                redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
+                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts,
+                redPackageMaxDiscount, null);
+    }
+
     /**
      * 兼容旧的 21 参构造（不带封顶）。
      *
@@ -56,7 +86,7 @@ public record ActivityCreateRequest(
         this(requestId, activityId, activityName, bizLine, activityType, activityRule,
                 activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
                 redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
-                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts, null);
+                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts, null, null);
     }
 
     /** 手动商品绑定行。 */

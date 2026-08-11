@@ -81,6 +81,33 @@ public class RuleConditionTranslator {
         String acc = accessor(field);
         Object value = leaf.getValue();
 
+        // ARRAY 字段上的标量算子 → 集合形态，与 ConditionTreeEvaluator 的存量兼容层**逐条对齐**。
+        // 两处不一致的后果是「控制台预览通过、线上求值结论相反」，而预览恰恰是运营的唯一自证手段。
+        if (field.valueType() == FieldValueType.ARRAY) {
+            switch (op) {
+                case EQ -> { return "(" + acc + " contains " + scalar(value, field) + ")"; }
+                case NE -> { return "(" + acc + " != null && " + acc + " not contains " + scalar(value, field) + ")"; }
+                case IN -> {
+                    List<?> vals = asList(value, -1, "in 需要一个非空列表");
+                    StringBuilder sb = new StringBuilder("(");
+                    for (int i = 0; i < vals.size(); i++) {
+                        if (i > 0) sb.append(" || ");
+                        sb.append(acc).append(" contains ").append(scalar(vals.get(i), field));
+                    }
+                    return sb.append(")").toString();
+                }
+                case NOT_IN -> {
+                    List<?> vals = asList(value, -1, "notIn 需要一个非空列表");
+                    StringBuilder sb = new StringBuilder("(").append(acc).append(" != null");
+                    for (Object v : vals) {
+                        sb.append(" && ").append(acc).append(" not contains ").append(scalar(v, field));
+                    }
+                    return sb.append(")").toString();
+                }
+                default -> { /* CONTAINS 系走下面的通用分支 */ }
+            }
+        }
+
         return switch (op) {
             case EQ -> "(" + acc + " == " + scalar(value, field) + ")";
             // 否定运算符加存在性护栏：缺字段短路成 false → 候选淘汰（fail-closed，防静默超发）

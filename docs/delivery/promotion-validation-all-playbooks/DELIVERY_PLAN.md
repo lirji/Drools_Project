@@ -1,5 +1,9 @@
 # 全玩法优惠验证 Delivery Plan
 
+
+> ⚠️ **本文件是 dated 归档，正文不重写**。其中「claim 不幂等」「每人限领无执行路径」两条断言已于 2026-08-11 被推翻（`activity_grant` 流水 + 唯一约束 = 幂等；`userInventory` 已按流水计数执行；冲正走 `POST /{id}/release`）。以同目录 `DELIVERY_STATUS.md` 顶部的现状声明为准——照本文件设计「重复 claim 应扣两次」的用例会稳定误报。
+
+
 > 实施注记（2026-08-10）：本文的 Repository Evidence 记录的是 Gate A 之前的基线，不是当前缺口清单。当前代码、单测、E2E 脚本与 CI 已实现；修复后 Docker 完整 `e2e:validate` 已一次通过 pass=472 / fail=0，Chrome 人工验收也已通过。最新证据以同目录的 `DELIVERY_STATUS.md` / `QA_REPORT.md` 为准。
 
 ## Requirement

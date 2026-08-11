@@ -8,6 +8,7 @@ import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.persistence.ActivityRuleEntity;
+import com.lrj.drools.activity.service.ActivityQueryService.DiscountItem;
 import com.lrj.drools.activity.service.ActivityQueryService.DiscountView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -91,8 +92,26 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("阶梯", "gold-ladder", null, TIERS, null, 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal(orderAmount)));
-            assertAmount(expected, v, why);
+            BigDecimal order = new BigDecimal(orderAmount);
+            DiscountView v = query.spuDiscount(req(spu, order));
+
+            // 落档结果看**逐活动明细**：那是活动自己算出来的减免，不受订单级封顶影响。
+            // 分成两个断言是因为「落到哪一档」和「最终发多少」在封顶引入后不再是同一件事：
+            // 0.01 元的订单落在首档（5 元），但出口只能给 0.01。合并成一个断言就会分不清
+            // 「落档错了」和「被封顶了」——而这两者的排查方向完全相反。
+            assertTrue(v.hit(), why + "：应当命中但没有（mode=" + v.mode() + "）");
+            BigDecimal tierAmount = v.items().stream()
+                    .filter(DiscountItem::applied)
+                    .map(DiscountItem::amount)
+                    .findFirst()
+                    .orElseThrow(() -> new AssertionError(why + "：明细里没有任何生效活动"));
+            assertEquals(0, tierAmount.compareTo(new BigDecimal(expected)),
+                    why + "：落档金额期望 " + expected + "，实际 " + tierAmount);
+
+            // 出口金额再过一道订单级封顶（订单金额 ≤0 视为「没有可用的订单金额」，不封顶，见 BenefitEvaluator）
+            BigDecimal capped = order.signum() > 0 ? new BigDecimal(expected).min(order) : new BigDecimal(expected);
+            assertEquals(0, v.hitAmount().compareTo(capped),
+                    why + "：出口金额期望 " + capped + "（落档 " + expected + " 经订单金额封顶后），实际 " + v.hitAmount());
         }
 
         @Test
@@ -278,7 +297,11 @@ class DecisionGoldenSetTest {
         void amountValueIsPreservedRegardlessOfScale(String amount) {
             long spu = nextSpu();
             online(marketing.create(red("精度", "gold-precision", new BigDecimal(amount), null, null, 1, spu, "MAX")));
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")));
+            // 订单金额取得足够大，让**订单级封顶不参与本用例**——这里验的是 scale 不影响数值
+            // （50 与 50.00 等价、1234.56 不被截位），不是封顶行为。原先用 500，1234.56 那一档
+            // 会被封顶成 500 而红，那是封顶生效的正确表现，却与本用例想守的东西无关。
+            // 封顶本身由 Ratio#stackedRatiosAreCappedAtOrderAmount 与 Ladder#ladderTierBoundaries 覆盖。
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("99999")));
             // 用 compareTo：scale 变化（50 → 50.00）不算回归，数值变了才算
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal(amount)),
                     "金额数值必须原样保留；期望 " + amount + " 实际 " + v.hitAmount());
@@ -465,8 +488,8 @@ class DecisionGoldenSetTest {
         }
 
         @Test
-        @DisplayName("STACK 下多张折扣券累加，**可能超过订单金额**——记录既有语义，不在此处改钱")
-        void stackedRatiosCanExceedOrderAmount() {
+        @DisplayName("STACK 累加超过订单金额时，按订单金额封顶（原语义为无上限累加，本轮已改）")
+        void stackedRatiosAreCappedAtOrderAmount() {
             long spu = nextSpu();
             // 两张一折券（各减 90%），订单 100 → 各 90，累加 180 > 100
             online(marketing.create(zhe("一折A", "gold-ratio-stack", new BigDecimal("1"),
@@ -476,13 +499,26 @@ class DecisionGoldenSetTest {
 
             DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
 
-            assertEquals(0, v.hitAmount().compareTo(new BigDecimal("180")),
-                    "STACK 就是无条件累加，不夹订单金额上限");
-            assertTrue(v.hitAmount().compareTo(new BigDecimal("100")) > 0,
-                    "**这是一个真实的超发面**：STACK 允许总减免超过订单金额。"
-                    + "它不是折扣型引入的——两张 60 元固定券在 100 元订单上同样会累加成 120。"
-                    + "折扣型只是让它更容易被触发。要夹上限就是改钱，必须单独立项、单独对拍，"
-                    + "不能在加形态的批次里顺手改。");
+            // ⚠ 本用例的断言在「金额出口封顶」这一轮被**有意改写**。
+            //
+            // 它原来断言 hitAmount == 180，并在注释里写明：这是一个真实的超发面，
+            // 「要夹上限就是改钱，必须单独立项、单独对拍，不能在加形态的批次里顺手改」。
+            // 本轮就是那个单独立项：出口统一 hitAmount = min(hitAmount, orderAmount)。
+            // 改断言不是为了让测试变绿，而是因为**被断言的那个行为本身被判定为错的**——
+            // 返回 180 意味着把「应付 −80 元」交给下游订单系统，没有任何业务惯例能接受。
+            assertEquals(0, v.hitAmount().compareTo(new BigDecimal("100")),
+                    "STACK 累加 180 超过订单金额 100，出口必须按订单金额封顶为 100");
+            assertTrue(v.clamped(),
+                    "被截断时 clamped 必须为 true —— 它是「有人配错了」唯一能被告警发现的信号");
+
+            // 封顶是**订单级**的，不改写各活动自己算出来的减免：逐活动明细仍要如实报 90 + 90。
+            // 下游要按券记账、客服要回答「我的两张券都用了吗」，靠的都是这份明细。
+            assertEquals(2, v.items().size(), "两张券都应出现在明细里");
+            for (var item : v.items()) {
+                assertTrue(item.applied(), "STACK 下两张券都真金白银出了钱");
+                assertEquals(0, item.amount().compareTo(new BigDecimal("90")),
+                        "逐活动明细报的是该活动自己算出的减免（90），不受订单级封顶影响");
+            }
         }
 
         @Test

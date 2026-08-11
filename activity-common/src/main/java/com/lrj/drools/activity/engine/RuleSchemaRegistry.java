@@ -111,8 +111,17 @@ public class RuleSchemaRegistry {
                         EnumSet.of(RuleOperator.EQ, RuleOperator.IN, RuleOperator.NOT_IN), List.of()),
                 new SchemaField("userTags", "用户标签", FieldValueType.ARRAY,
                         EnumSet.of(RuleOperator.CONTAINS, RuleOperator.NOT_CONTAINS, RuleOperator.CONTAINS_ANY), List.of()),
-                new SchemaField("spuId", "商品 SPU", FieldValueType.NUMBER,
-                        EnumSet.of(RuleOperator.EQ, RuleOperator.IN), List.of()),
+                // 商品 SPU 是**购物车里的一组商品**，不是一个标量。
+                //
+                // 它此前声明成 NUMBER，配套的属性映射写的是 `spuIdList.get(0)`——于是「商品 SPU = X」
+                // 实际判的是「购物车里排在第一位的商品是 X」：同样两件商品换个加购顺序，结论就不一样。
+                // 类型层面也表达不了运营真正想说的那句话（「买了 X」）。
+                //
+                // 改成 ARRAY 后，算子集合同时保留 CONTAINS 系（新配置用）与 EQ/IN/NOT_IN（存量配置用，
+                // 由 ConditionTreeEvaluator 映射成集合语义），所以**不需要数据迁移**，存量活动编辑也不会被拒。
+                new SchemaField("spuId", "商品 SPU", FieldValueType.ARRAY,
+                        EnumSet.of(RuleOperator.CONTAINS, RuleOperator.NOT_CONTAINS, RuleOperator.CONTAINS_ANY,
+                                RuleOperator.EQ, RuleOperator.IN, RuleOperator.NOT_IN), List.of()),
                 new SchemaField("storeId", "店铺", FieldValueType.NUMBER,
                         EnumSet.of(RuleOperator.EQ, RuleOperator.IN), List.of()));
         LinkedHashMap<String, SchemaField> m = new LinkedHashMap<>();

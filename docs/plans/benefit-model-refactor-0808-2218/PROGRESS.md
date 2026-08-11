@@ -32,7 +32,7 @@
 | B0-1 `storeId` 死条件 | ✅ | `SpuDiscountRequest.storeId` + `requestAttributes` 唯一映射表 + `DecisionContextFieldsTest` 守卫（抽掉来源即红） |
 | B0-1 `decision` ddl-auto | ✅ | 改 `validate` + `DecisionDdlGuardTest`（改回 update 即红） |
 | B0-1 `DynRowTable` :key | ✅ | WeakMap 稳定 key + 3 条 Vitest（改回 `:key="i"` 即红，报 `typed-B` 串到 `typed-C` 位） |
-| B0-2 金标集 | ✅ | `DecisionGoldenSetTest` **39 例**：阶梯边界 10 / 合并策略 9 / 资格淘汰 6 / 金额精度 6 / 生效窗 6 / explain 2 |
+| B0-2 金标集 | ✅ | `DecisionGoldenSetTest` **39 例**（B0-2 交付时）：阶梯边界 10 / 合并策略 9 / 资格淘汰 6 / 金额精度 6 / 生效窗 6 / explain 2。<br>⚠️ **现状已是 52 例**（后续六形态扩容加的：Ladder 12 / Ratio 13 / Merge 9 / Eligibility 6 / Precision 6 / Lifecycle 6）——本行是交付时点记录，别拿 39 当现在的基线核对 |
 | B0-3 决策指标 | ✅ | `DecisionMetrics`：耗时(scene,mode) / **回退率(scene,reason)** / 候选数 / 编译耗时 / fire 触顶 / 缓存三 Gauge |
 
 ### 接缝拆分（D12-2 前置）— 完成

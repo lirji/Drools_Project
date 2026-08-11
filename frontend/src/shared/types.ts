@@ -142,6 +142,40 @@ export interface SpuDiscountRequest {
   lines: DecisionOrderLine[] | null
 }
 
+/**
+ * 单个候选活动对本次决策的贡献。
+ *
+ * `applied=false` 时 `rejectReason` 说明为什么没生效（资格不满足 / 阶梯未落档 /
+ * 一口价高于订单金额 / 缺订单行 …）。**落选者也在列表里**——运营验证时最想知道的
+ * 恰恰是「我配的那个活动为什么没生效」，而不只是「最后减了多少」。
+ */
+export interface DiscountDecisionItem {
+  activityId: string
+  activityName: string | null
+  version: number | null
+  /** 与后端 BenefitForm 同源：AMOUNT / RATIO_ZHE / FIXED_PRICE / NTH_ZHE */
+  benefitForm: string
+  /** 该活动自己算出的减免，**不受订单级封顶影响** */
+  amount: number
+  applied: boolean
+  rejectReason: string | null
+}
+
+/**
+ * 这次决策的物料是从哪来的（后端 `DecisionProvenance`）。
+ *
+ * **必须是可选字段**：灰度期后端可能还没回传，此时 UI 要渲染成「后端未回传」而不是默认成 db——
+ * 默认成 db 等于替后端说了一句它没说过的话，而这句话恰好是运营用来判断该不该信任结论的那句。
+ */
+export interface DecisionProvenance {
+  /** 'snapshot' = 代际快照（零查询）；'db' = 逐请求查库 */
+  source: 'snapshot' | 'db'
+  /** 参与本次决策的快照桶里**最落后**的那一代；走库时为 null */
+  generation: number | null
+  /** 参与本次决策的快照桶数。>1 时 generation 是下确界而非某个桶的真值 */
+  buckets: number
+}
+
 export interface DiscountDecisionResponse {
   hit: boolean
   hitActivityId: string | null
@@ -150,9 +184,22 @@ export interface DiscountDecisionResponse {
   strategy: string
   traces: string[]
   mode: string
+  /** 命中活动的版本号——「这笔钱按哪一版算的」 */
+  hitVersion: number | null
+  /** 减免额是否被订单金额截断过。true 基本等价于「这个活动配错了」 */
+  clamped: boolean
+  /** 本次决策的对账锚点，与结构化日志同值；不落库 */
+  decisionId: string
+  /** 物料来源。没有它，验证页照出来的永远是自己那条路的结论 */
+  provenance?: DecisionProvenance
+  /** 逐活动明细。STACK 下多个活动同时出钱，只看 hitAmount 是看不出构成的 */
+  items: DiscountDecisionItem[]
 }
 
 export interface GiftDecisionItem {
+  /** 这件赠品由哪个活动、哪一版送出——否则收到一堆赠品名不知道是谁送的 */
+  activityId: string | null
+  version: number | null
   batchId: string | null
   giftName: string | null
   giftType: string | null
@@ -165,6 +212,8 @@ export interface GiftDecisionResponse {
   gifts: GiftDecisionItem[]
   traces: string[]
   mode: string
+  decisionId: string
+  provenance?: DecisionProvenance
 }
 
 export interface AddOnOption {
@@ -178,6 +227,7 @@ export interface AddOnOption {
 export interface AddOnOptionsResponse {
   options: AddOnOption[]
   traces: string[]
+  provenance?: DecisionProvenance
 }
 
 export interface AddOnQuoteResponse {
@@ -187,6 +237,8 @@ export interface AddOnQuoteResponse {
   addOnPrice: number | null
   reason: string | null
   traces: string[]
+  /** 第二阶段的 provenance 来自 quote **自己那次**重新装载，不是第一阶段的 */
+  provenance?: DecisionProvenance
 }
 
 export interface ApiResult<T = unknown> {
@@ -194,4 +246,32 @@ export interface ApiResult<T = unknown> {
   status: number
   json: T | null
   text: string
+}
+
+/** 快照诊断端点 `GET /decision/v1/snapshot` 的回执。 */
+export interface SnapshotBucket {
+  bizLine: string | null
+  generation: number
+  builtAt: string | null
+  ageSeconds: number | null
+  activityCount: number
+  containsActivity?: boolean
+}
+
+export interface SnapshotDiagnostics {
+  tenant: string | null
+  buckets: SnapshotBucket[]
+  bucketCount: number
+  activityId?: string
+  /** 这个活动在不在本租户的任何快照桶里——「三个值全绿但活动不命中」时唯一说得出话的读数 */
+  inSnapshot?: boolean
+  hostedByBizLines?: string[]
+  hint?: string
+}
+
+/** 写平面 `GET /activity-marketing/generation` 的回执，用作决策侧 generation 的参照物。 */
+export interface GenerationRef {
+  bizLine: string
+  generation: number
+  note: string
 }

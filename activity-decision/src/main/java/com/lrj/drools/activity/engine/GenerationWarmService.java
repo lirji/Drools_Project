@@ -1,5 +1,6 @@
 package com.lrj.drools.activity.engine;
 
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.persistence.ActivityArtifactEntity;
 import com.lrj.drools.activity.persistence.ActivityArtifactRepository;
 import com.lrj.drools.activity.persistence.ActivityGenerationEntity;
@@ -10,8 +11,11 @@ import com.lrj.drools.activity.snapshot.DecisionSnapshotStore;
 import com.lrj.drools.activity.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +45,17 @@ public class GenerationWarmService {
     private final DecisionSnapshotBuilder snapshotBuilder;
     private final DecisionSnapshotStore snapshotStore;
 
+    /**
+     * 快照兜底重建阈值（毫秒）。超过这个年龄的快照即使代际没动也强制重建。
+     *
+     * <p><b>它守的是「信号漏发」这一整类故障</b>，而不是某一个已知 bug：代际 bump 因为异常没提交、
+     * 轮询线程被拖死后恢复、构建期抛异常导致 lastSeen 没更新……这些都表现为快照静默过期，
+     * 而决策照常成功。有了兜底，后果从<b>永久</b>降为<b>一轮</b>。
+     * 设为 0 或负数关闭（测试里需要精确控制重建时机时用）。
+     */
+    @Value("${activity.marketing.snapshot.max-age-ms:60000}")
+    private long snapshotMaxAgeMs;
+
     /** key = tenant|bizLine → 已预热到的 generation。generation 从 1 起，故基线 0L 让首见即预热。 */
     private final Map<String, Long> lastSeen = new ConcurrentHashMap<>();
 
@@ -48,16 +63,21 @@ public class GenerationWarmService {
                                  ActivityArtifactRepository artifactRepo,
                                  ActivityRuleRuntimeService ruleRuntime,
                                  DecisionSnapshotBuilder snapshotBuilder,
-                                 DecisionSnapshotStore snapshotStore) {
+                                 DecisionSnapshotStore snapshotStore,
+                                 DecisionMetrics metrics) {
         this.genRepo = genRepo;
         this.artifactRepo = artifactRepo;
         this.ruleRuntime = ruleRuntime;
         this.snapshotBuilder = snapshotBuilder;
         this.snapshotStore = snapshotStore;
+        // 快照新鲜度只有 decision 侧有意义（console 无构建器、store 恒空），所以绑在这里而不是 store 自己。
+        metrics.bindSnapshotStore(snapshotStore);
     }
 
     /**
-     * 扫全部代际，对增长者提交预热。返回本轮提交的预热 {@link Future} 列表（调度线程 fire-and-forget 忽略；
+     * 扫全部代际，对增长者提交预热；随后做一轮**陈旧快照兜底重建**。
+     *
+     * <p>返回本轮提交的预热 {@link Future} 列表（调度线程 fire-and-forget 忽略；
      * 测试可 await 以做确定性断言）。异常隔离到单个 (tenant,bizLine)，不让一个租户的问题拖垮整轮。
      */
     public List<Future<?>> warmDueGenerations() {
@@ -69,7 +89,7 @@ public class GenerationWarmService {
                 continue;
             }
             try {
-                int warmed = warmTenantBizLine(gen.getTenantId(), gen.getBizLine(), futures);
+                int warmed = warmTenantBizLine(gen.getTenantId(), gen.getBizLine(), gen.getGeneration(), futures);
                 lastSeen.put(key, gen.getGeneration());
                 log.info("[generation-poll] 预热命中 tenant={} bizLine={} generation {}→{} 提交 {} 个 artifact 预热",
                         gen.getTenantId(), gen.getBizLine(), seen, gen.getGeneration(), warmed);
@@ -79,7 +99,40 @@ public class GenerationWarmService {
                         gen.getTenantId(), gen.getBizLine(), e.toString());
             }
         }
+        rebuildStaleSnapshots();
         return futures;
+    }
+
+    /**
+     * 兜底：把超过 {@link #snapshotMaxAgeMs} 没重建过的快照按数据库真相重建一遍，代际不变。
+     *
+     * <p><b>为什么值得单独做一轮扫描</b>：代际信号是「有人告诉我配置变了」，而这一轮问的是
+     * 「我手上这份物料是不是已经旧到不可信了」。前者依赖每一个写入口都记得发信号——那是一条
+     * 需要人持续维护的纪律，本仓库已经在它上面失手过一次（下线不 bump）。后者不依赖任何人记得什么。
+     *
+     * <p>走 {@link DecisionSnapshotStore#refresh} 而不是 {@code publish}：这不是一次发布，
+     * 不能占用回滚槽位（否则 rollback 会退到几十秒前的自己，等于没回滚）。
+     */
+    void rebuildStaleSnapshots() {
+        if (snapshotMaxAgeMs <= 0) return;
+        Instant now = Instant.now();
+        for (DecisionSnapshot stale : snapshotStore.all()) {
+            long ageMs = Duration.between(stale.builtAt(), now).toMillis();
+            if (ageMs < snapshotMaxAgeMs) continue;
+            String tenant = stale.tenant();
+            String bizLine = stale.bizLine();
+            try {
+                DecisionSnapshot fresh = TenantContext.callWith(tenant,
+                        () -> snapshotBuilder.build(tenant, bizLine, stale.generation()));
+                snapshotStore.refresh(fresh);
+                log.info("[generation-poll] 快照兜底重建 tenant={} bizLine={} 年龄={}ms（阈值 {}ms）",
+                        tenant, bizLine, ageMs, snapshotMaxAgeMs);
+            } catch (RuntimeException e) {
+                // 重建失败保留旧快照（有旧的总比没有强），下一轮继续试；age 指标会持续上涨并触发告警。
+                log.warn("[generation-poll] 快照兜底重建失败 tenant={} bizLine={}（保留旧快照，下轮重试）: {}",
+                        tenant, bizLine, e.toString());
+            }
+        }
     }
 
     /**
@@ -90,11 +143,15 @@ public class GenerationWarmService {
      *   <li>预热 ACTIVE artifact 的资格 DRL（M1.4 既有行为，保留）。</li>
      * </ol>
      * 顺序不能反：先建好快照再切指针，请求线程永远读到自洽的物料。
+     *
+     * @param generation 数据库里那一行的**真实代际号**。此前这里传的是 {@code lastSeen+1}，
+     *                   两次发布挤在一次轮询间隔内时（大促前批量上线很常见）快照会记下一个
+     *                   比实际小的代际号，让 rollback 与代际指标都对不上账。
      */
-    private int warmTenantBizLine(String tenant, String bizLine, List<Future<?>> sink) {
+    private int warmTenantBizLine(String tenant, String bizLine, long generation, List<Future<?>> sink) {
         // ① 快照：构建 → 就绪 → 切换（构建期的异常不能让指针指向半成品，故构建成功才 publish）
         TenantContext.callWith(tenant, () -> {
-            DecisionSnapshot snap = snapshotBuilder.build(tenant, bizLine, lastSeen.getOrDefault(tenant + "|" + bizLine, 0L) + 1);
+            DecisionSnapshot snap = snapshotBuilder.build(tenant, bizLine, generation);
             snapshotStore.publish(snap);
             return null;
         });

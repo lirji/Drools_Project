@@ -40,6 +40,28 @@ public class ActivityCandidate {
     /** 多活动碰撞优先级，越小越优先。 */
     private int priority = 0;
 
+    /**
+     * <b>本活动在这一次请求里圈到的 SPU 集合</b>＝「请求的 spuIdList」∩「本活动当前版本的生效绑定」。
+     *
+     * <p><b>为什么必须有它</b>：绑定关系此前只被当成<em>候选筛选器</em>——用 SPU 查出「哪些活动可能适用」，
+     * 之后绑定信息就被 {@code .distinct()} 丢掉了，求值层手上只剩 {@code orderAmount} 一个标量。
+     * 于是一个只绑了 A 商品的「9.9 一口价」，在「A + 一台 5000 元电视」的购物车里会算成
+     * {@code 5009.9 − 9.9}，<b>整车按 9.9 成交</b>；「指定商品 8 折」同理变成整单 8 折。
+     * 全程没有报错、没有 warning——金额是正数、决策成功、日志干净。
+     *
+     * <p>所以绑定必须从「筛选器」升级成<b>权益作用域</b>：它回答的是
+     * 「这个活动的钱该算在哪些商品上」，而不只是「这个活动要不要参与」。
+     *
+     * <p><b>null 与空集的区别是刻意的</b>：
+     * <ul>
+     *   <li>{@code null} = <b>作用域未知</b>（手工构造的候选、老的装配路径）→ 按整单算，与改造前逐字节一致</li>
+     *   <li>非空集合 = 作用域已知 → 由 {@code BenefitEvaluator.baseAmount} 决定基数</li>
+     * </ul>
+     * 两条生产装配路径（{@code DecisionDataLoader.flatten} 与 {@code DecisionSnapshot.materialize}）
+     * 都必须填它；漏填的表现是「这条路按整单算、另一条按作用域算」，同一张券在两条路上发不同的钱。
+     */
+    private java.util.Set<Long> scopedSpuIds;
+
     // 规则决策结果
     private boolean eligible = true;
     private String rejectReason;
@@ -124,6 +146,10 @@ public class ActivityCandidate {
 
     public int getPriority() { return priority; }
     public void setPriority(int priority) { this.priority = priority; }
+
+    /** 见字段注释。{@code null} = 作用域未知（按整单算），非 null = 已知作用域。 */
+    public java.util.Set<Long> getScopedSpuIds() { return scopedSpuIds; }
+    public void setScopedSpuIds(java.util.Set<Long> scopedSpuIds) { this.scopedSpuIds = scopedSpuIds; }
 
     public boolean isEligible() { return eligible; }
     public void setEligible(boolean eligible) { this.eligible = eligible; }

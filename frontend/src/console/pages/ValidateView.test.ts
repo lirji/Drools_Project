@@ -1,8 +1,10 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import {
+  currentGeneration,
   queryAddOnOptions,
   queryGifts,
   quoteAddOn,
+  snapshotDiagnostics,
   spuDiscount,
 } from '../activityApi'
 import { PLAYBOOKS } from '../playbooks'
@@ -20,6 +22,11 @@ vi.mock('../activityApi', () => ({
   queryGifts: vi.fn(),
   queryAddOnOptions: vi.fn(),
   quoteAddOn: vi.fn(),
+  // 诊断类调用是**解释性**的，不参与判定，所以默认桩成空回执即可。
+  // 但它们必须出现在这个整模块 mock 里——漏一个就是一片 Unhandled Rejection，
+  // 而用例本身照样绿（错误发生在 fire-and-forget 的 void 调用里）。
+  snapshotDiagnostics: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: null, text: '' })),
+  currentGeneration: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: null, text: '' })),
 }))
 
 const DISCOUNT_MISS: DiscountDecisionResponse = {
@@ -28,6 +35,10 @@ const DISCOUNT_MISS: DiscountDecisionResponse = {
   hitActivityName: null,
   hitAmount: 0,
   strategy: 'MAX',
+  hitVersion: null,
+  clamped: false,
+  decisionId: 'test-decision-miss',
+  items: [],
   traces: ['无候选活动'],
   mode: 'rule-engine',
 }
@@ -73,6 +84,10 @@ describe('ValidateView', () => {
       hitActivityName: '满减活动',
       hitAmount: 20,
       strategy: 'MAX',
+      hitVersion: 1,
+      clamped: false,
+      decisionId: 'test-decision',
+      items: [],
       traces: ['eligible: ACT-1'],
       mode: 'rule-engine',
     }))
@@ -174,7 +189,7 @@ describe('ValidateView', () => {
   })
 
   it('买赠通道渲染 empty 状态，切换场景会清掉旧结果', async () => {
-    const giftEmpty: GiftDecisionResponse = { gifts: [], traces: ['无生效买赠活动'], mode: 'rule-engine' }
+    const giftEmpty: GiftDecisionResponse = { gifts: [], traces: ['无生效买赠活动'], mode: 'rule-engine', decisionId: 'test-gift-miss' }
     vi.mocked(queryGifts).mockResolvedValueOnce(ok(giftEmpty))
     const wrapper = mountView()
     await chooseScenario(wrapper, 'gift')
@@ -194,9 +209,10 @@ describe('ValidateView', () => {
 
   it('买赠通道展示赠品明细', async () => {
     const gifts: GiftDecisionResponse = {
-      gifts: [{ batchId: 'B1', giftName: '保温杯', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 39.9, rightType: 'GIFT' }],
+      gifts: [{ activityId: 'ACT-G', version: 1, batchId: 'B1', giftName: '保温杯', giftType: 'PHYSICAL', giftNum: 1, absoluteAmount: 39.9, rightType: 'GIFT' }],
       traces: ['gift activity: ACT-G'],
       mode: 'rule-engine',
+      decisionId: 'test-gift',
     }
     vi.mocked(queryGifts).mockResolvedValueOnce(ok(gifts))
     const wrapper = mountView()
@@ -297,6 +313,10 @@ describe('ValidateView', () => {
       hitActivityName: '9.9 秒杀',
       hitAmount: 90.1,
       strategy: 'MAX',
+      hitVersion: 1,
+      clamped: false,
+      decisionId: 'test-decision',
+      items: [],
       traces: [],
       mode: 'rule-engine',
     }))
@@ -345,5 +365,136 @@ describe('ValidateView', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-testid="v-error"]').text()).toContain('网络不可达')
+  })
+  // ---- 决策平面（P1-9：验证页此前打的是 console 走库路径，快照侧问题一个都照不出） ----
+
+  it('默认打决策平面，切到控制台走库后才改打 marketing', async () => {
+    vi.mocked(spuDiscount).mockResolvedValue(ok(DISCOUNT_MISS))
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(spuDiscount).mock.calls[0][2]).toBe('decision')
+
+    await wrapper.get('[data-testid="v-plane-console"]').trigger('click')
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(spuDiscount).mock.calls[1][2]).toBe('console')
+  })
+
+  it('决策平面 404 显示为「不可达」而不是「未命中」——两者处置完全相反', async () => {
+    vi.mocked(spuDiscount).mockResolvedValueOnce({ ok: false, status: 404, json: null, text: '' })
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="v-plane-unreachable"]').text()).toContain('决策服务不可达')
+    expect(wrapper.find('[data-testid="validate-result"]').exists()).toBe(false)
+  })
+
+  it('401/403 判为「可达但未授权」，不当成不可达', async () => {
+    vi.mocked(spuDiscount).mockResolvedValueOnce({ ok: false, status: 403, json: null, text: '' })
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="v-plane-unreachable"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="v-error"]').text()).toContain('授权问题')
+  })
+
+  it('回显物料来源与代际，并标出快照落后库里几代', async () => {
+    vi.mocked(spuDiscount).mockResolvedValueOnce(ok({
+      ...DISCOUNT_MISS,
+      provenance: { source: 'snapshot' as const, generation: 5, buckets: 2 },
+    }))
+    vi.mocked(currentGeneration).mockResolvedValueOnce(
+      ok({ bizLine: 'mall', generation: 7, note: '' }))
+    vi.mocked(snapshotDiagnostics).mockResolvedValueOnce(
+      ok({ tenant: 't', buckets: [], bucketCount: 0 }))
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    const badge = wrapper.get('[data-testid="v-provenance"]')
+    expect(badge.text()).toContain('代际 5')
+    expect(badge.text()).toContain('2 个业务线桶')
+    expect(wrapper.get('[data-testid="v-generation-behind"]').text()).toContain('落后 2 代')
+  })
+
+  it('后端没回传 provenance 时显式说「无法自证」，不默认成走库', async () => {
+    vi.mocked(spuDiscount).mockResolvedValueOnce(ok(DISCOUNT_MISS))
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="v-provenance-missing"]').text()).toContain('无法自证')
+  })
+
+  it('逐活动明细把被淘汰的候选连同原因一起渲染出来', async () => {
+    vi.mocked(spuDiscount).mockResolvedValueOnce(ok({
+      ...DISCOUNT_MISS,
+      items: [
+        { activityId: 'ACT-1', activityName: '满减', version: 2, benefitForm: 'AMOUNT', amount: 20, applied: true, rejectReason: null },
+        { activityId: 'ACT-2', activityName: '八折', version: 1, benefitForm: 'RATIO_ZHE', amount: 0, applied: false, rejectReason: '不满足资格条件' },
+      ],
+    }))
+    const wrapper = mountView()
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    const table = wrapper.get('[data-testid="v-items"]')
+    expect(table.text()).toContain('不满足资格条件')
+    expect(table.findAll('tr.rejected')).toHaveLength(1)
+  })
+
+  it('双打对拍：两侧都读到快照时判红——那是对拍失效，不是一致', async () => {
+    const snap = { source: 'snapshot' as const, generation: 3, buckets: 1 }
+    vi.mocked(spuDiscount).mockResolvedValue(ok({ ...DISCOUNT_MISS, provenance: snap }))
+    const wrapper = mountView()
+    await wrapper.get('[data-testid="v-plane-compare"]').setValue(true)
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(spuDiscount)).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(spuDiscount).mock.calls[1][2]).toBe('console')
+    expect(wrapper.get('[data-testid="v-diff-degraded"]').text()).toContain('恒绿')
+    expect(wrapper.find('[data-testid="v-diff-match"]').exists()).toBe(false)
+  })
+
+  it('双打对拍：金额不一致时判红并逐字段列出', async () => {
+    vi.mocked(spuDiscount)
+      .mockResolvedValueOnce(ok({ ...DISCOUNT_MISS, hit: false, hitAmount: 0,
+        provenance: { source: 'snapshot' as const, generation: 3, buckets: 1 } }))
+      .mockResolvedValueOnce(ok({ ...DISCOUNT_MISS, hit: true, hitActivityId: 'ACT-9', hitAmount: 50,
+        provenance: { source: 'db' as const, generation: null, buckets: 0 } }))
+    const wrapper = mountView()
+    await wrapper.get('[data-testid="v-plane-compare"]').setValue(true)
+    await fillSpu(wrapper)
+    await wrapper.get('[data-testid="v-discount"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="v-diff-mismatch"]').text()).toContain('不一致')
+    expect(wrapper.get('[data-testid="v-plane-diff"]').findAll('tr.bad').length).toBeGreaterThan(0)
+  })
+
+  it('快照探针：活动不在任何桶里时给出明确结论', async () => {
+    vi.mocked(snapshotDiagnostics).mockResolvedValueOnce(ok({
+      tenant: 't', buckets: [{ bizLine: 'mall', generation: 4, builtAt: null, ageSeconds: 12, activityCount: 3, containsActivity: false }],
+      bucketCount: 1, activityId: 'ACT-X', inSnapshot: false, hostedByBizLines: [],
+      hint: '该活动不在本租户的任何快照桶里',
+    }))
+    const wrapper = mountView()
+    await wrapper.get('[data-testid="v-snapshot-probe-input"]').setValue('ACT-X')
+    await wrapper.get('[data-testid="v-snapshot-probe-run"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="v-snapshot-absent"]').text()).toContain('不在本租户的任何快照桶里')
   })
 })

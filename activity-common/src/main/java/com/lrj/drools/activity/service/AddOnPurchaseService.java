@@ -2,6 +2,7 @@ package com.lrj.drools.activity.service;
 
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.DecisionProvenance;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import org.springframework.stereotype.Service;
@@ -45,18 +46,34 @@ public class AddOnPurchaseService {
                               String itemName, BigDecimal addOnPrice) {}
 
     /** 第一阶段结果。{@code options} 为空表示这一单没有可换购的东西。 */
-    public record AddOnOptions(List<AddOnOption> options, List<String> traces) {}
+    public record AddOnOptions(List<AddOnOption> options, List<String> traces,
+                               DecisionProvenance provenance) {
+        /** 两参兼容构造：provenance 缺省为「走库」。 */
+        public AddOnOptions(List<AddOnOption> options, List<String> traces) {
+            this(options, traces, DecisionProvenance.db());
+        }
+    }
 
     /**
      * 第二阶段结果。{@code ok=false} 时 {@code reason} 说明为什么不能换购
      * （选项已失效 / 活动已下线 / 参数对不上）。
+     *
+     * <p>{@code provenance} 必须来自 quote <b>自己那次</b>重新装载，而不是第一阶段的——
+     * 两阶段之间快照可能已经换代，而「这个价是按哪一代报的」正是这个端点最该自证的事。
      */
     public record AddOnQuote(boolean ok, String activityId, String itemName,
-                             BigDecimal addOnPrice, String reason, List<String> traces) {
+                             BigDecimal addOnPrice, String reason, List<String> traces,
+                             DecisionProvenance provenance) {
         /** 保留旧五参构造，避免只消费报价值、不关心 trace 的 Java 调用方源码失配。 */
         public AddOnQuote(boolean ok, String activityId, String itemName,
                           BigDecimal addOnPrice, String reason) {
             this(ok, activityId, itemName, addOnPrice, reason, List.of());
+        }
+
+        /** 六参兼容构造：带 traces 但还没接上 provenance 的调用点落在这里，缺省为「走库」。 */
+        public AddOnQuote(boolean ok, String activityId, String itemName,
+                          BigDecimal addOnPrice, String reason, List<String> traces) {
+            this(ok, activityId, itemName, addOnPrice, reason, traces, DecisionProvenance.db());
         }
     }
 
@@ -80,7 +97,7 @@ public class AddOnPurchaseService {
         List<ActivityCandidate> candidates = materials.candidates();
         if (candidates.isEmpty()) {
             traces.add("无生效加价购活动");
-            return new AddOnOptions(List.of(), traces);
+            return new AddOnOptions(List.of(), traces, materials.provenance());
         }
 
         var ctx = eligibility.buildContext(req, candidates);
@@ -98,7 +115,7 @@ public class AddOnPurchaseService {
             }
         }
         traces.add("加价购选项 " + out.size() + " 个");
-        return new AddOnOptions(out, traces);
+        return new AddOnOptions(out, traces, materials.provenance());
     }
 
     /**
@@ -116,8 +133,10 @@ public class AddOnPurchaseService {
 
     public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName, boolean explain) {
         if (activityId == null || activityId.isBlank() || itemName == null || itemName.isBlank()) {
+            // provenance 显式为 null：这条路径**根本没装载过物料**。
+            // 填 db() 会声称查过库，而「没查过」与「查了库」是两件不同的事。
             return new AddOnQuote(false, activityId, itemName, null,
-                    "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"));
+                    "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"), null);
         }
         // 第二阶段必须重新装载并重跑资格：不能沿用第一阶段的候选或价格。
         AddOnOptions fresh = options(req, explain);
@@ -125,13 +144,14 @@ public class AddOnPurchaseService {
             if (activityId.equals(o.activityId()) && itemName.equals(o.itemName())) {
                 List<String> traces = new ArrayList<>(fresh.traces());
                 traces.add("加价购权威报价：" + o.activityId() + "/" + o.itemName());
-                return new AddOnQuote(true, o.activityId(), o.itemName(), o.addOnPrice(), null, traces);
+                return new AddOnQuote(true, o.activityId(), o.itemName(), o.addOnPrice(), null, traces,
+                        fresh.provenance());
             }
         }
         // 走到这里说明第一阶段给过的选项现在拿不到了。**不能回退到客户端给的价**。
         List<String> traces = new ArrayList<>(fresh.traces());
         traces.add("加价购报价拒绝：选项已失效或资格不满足");
         return new AddOnQuote(false, activityId, itemName, null,
-                "选项已失效或不适用于当前订单", traces);
+                "选项已失效或不适用于当前订单", traces, fresh.provenance());
     }
 }

@@ -3,6 +3,7 @@ package com.lrj.drools.activity.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionProvenance;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.GiftResult;
@@ -102,7 +103,22 @@ public class DecisionDataLoader {
      */
     public record Materials(List<ActivityCandidate> candidates,
                             List<EligibilityRuleDef> eligibilityDefs,
-                            Map<String, ConditionNode> eligibilityTrees) {}
+                            Map<String, ConditionNode> eligibilityTrees,
+                            DecisionProvenance provenance) {
+
+        /**
+         * 三参兼容构造：provenance 缺省为「走库」。
+         *
+         * <p>这不是为了少改几行——它让所有<b>手工构造物料</b>的测试桩与旧装配路径默认落在
+         * 「db」这个**保守且真实**的取值上。缺省成 snapshot 才是危险的：那会让一条从没碰过快照的路径
+         * 在响应里自称走了快照。
+         */
+        public Materials(List<ActivityCandidate> candidates,
+                         List<EligibilityRuleDef> eligibilityDefs,
+                         Map<String, ConditionNode> eligibilityTrees) {
+            this(candidates, eligibilityDefs, eligibilityTrees, DecisionProvenance.db());
+        }
+    }
 
     /**
      * 装齐一次决策的物料。
@@ -128,14 +144,47 @@ public class DecisionDataLoader {
             }
             Map<String, ConditionNode> trees = new LinkedHashMap<>();
             for (DecisionSnapshot snap : snaps) trees.putAll(snap.eligibilityTrees());
-            return new Materials(cands, defs, trees);
+            // 代际取**最小**：一次决策会合并该租户所有业务线的桶，任何一个桶落后都意味着
+            // 「刚发布的那次还没全进去」。取最大值会把落后的那个桶藏起来。
+            Long minGen = snaps.stream().map(DecisionSnapshot::generation).min(Long::compareTo).orElse(null);
+            return ordered(new Materials(cands, defs, trees,
+                    DecisionProvenance.snapshot(minGen, snaps.size())));
         }
         metrics.decisionSource(type.name(), "db");
-        return loadFromDb(spuIds, type, withGifts);
+        return ordered(loadFromDb(spuIds, type, withGifts));
+    }
+
+    /**
+     * <b>候选定序：合并的赢家不能由迭代顺序决定。</b>
+     *
+     * <p>{@code BenefitEvaluator} 的 {@code pickByAmount} / {@code pickByPriority} 在**打平**时是
+     * 严格 {@code >} 比较，即先到先得。而两条装配路径的天然顺序都不可靠：
+     * <ul>
+     *   <li><b>快照侧</b>：倒排索引的值是 {@code Set.copyOf}（{@code DecisionSnapshot}），
+     *       迭代序由 JDK 的 SALT 决定——<b>同一进程内稳定，每次 JVM 启动改变</b>。
+     *       表现是 decision 重启后一整片决策的赢家可能翻面，比逐请求抖动更难被认出来。</li>
+     *   <li><b>走库侧</b>：跟着 SQL 返回顺序走，没有 order by 就没有承诺。</li>
+     * </ul>
+     *
+     * <p>于是「金额并列的两张券谁赢」既不稳定、也在两条路上不一致。这里按 activityId 定序，
+     * 把它变成一个<b>确定且可解释</b>的结果。放在 loader 出口是因为这是两条路唯一的合流点
+     * （加价购也走同一个出口）。
+     */
+    private static Materials ordered(Materials m) {
+        if (m.candidates().size() < 2) return m;
+        List<ActivityCandidate> sorted = new ArrayList<>(m.candidates());
+        sorted.sort(java.util.Comparator.comparing(ActivityCandidate::getActivityId,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+        return new Materials(sorted, m.eligibilityDefs(), m.eligibilityTrees(), m.provenance());
     }
 
     private Materials loadFromDb(List<Long> spuIds, ActivityType type, boolean withGifts) {
-        List<String> activityIds = boundActivityIds(spuIds);
+        // ① 绑定行只查这一次：它同时回答「哪些活动是候选」和「每个活动圈到了哪些 SPU」。
+        // 后者就是权益作用域——此前这批行被 .distinct() 成一列 id 后就丢掉了，
+        // 于是求值层只剩 orderAmount 一个标量基数可用（商品级活动按整单算钱的根因）。
+        List<ActivitySpuBindingEntity> bindings = bindingRows(spuIds);
+        List<String> activityIds = bindings.stream()
+                .map(ActivitySpuBindingEntity::getActivityId).distinct().collect(Collectors.toList());
         if (activityIds.isEmpty()) {
             return new Materials(List.of(), List.of(), Map.of());
         }
@@ -145,9 +194,54 @@ public class DecisionDataLoader {
             return new Materials(List.of(), List.of(), Map.of());
         }
 
-        List<ActivityCandidate> candidates = flatten(valid, withGifts);
-        Eligibility elig = eligibility(valid);   // 条件行只查一次，defs 与 trees 同源
+        // 作用域先算，因为它同时决定「这个活动还算不算候选」——见下。
+        Map<String, java.util.Set<Long>> scope = scopeOf(bindings, valid);
+
+        // **候选身份也必须按版本收窄**（P1-9 的另一半）。绑定查询不带 version、旧版本的绑定行也不软删，
+        // 所以「v1 绑 A/B → 编辑成 v2 只绑 A」之后单查 B，这个活动依然会出现在 activityIds 里，
+        // 只是作用域为空。而空作用域**拦不住 AMOUNT 形态**——{@code BenefitEvaluator} 的直减/满减分支
+        // 不调 baseAmount，直接把 redPackageAmount 发出去。于是走库照发 50 元、走快照根本不是候选
+        // （快照侧按 (activityId, version) 取绑定，见 DecisionSnapshotBuilder），两条路发不同的钱。
+        //
+        // 判据与快照侧对齐：**当前线上版本的绑定 ∩ 本次请求的 SPU 为空 ⇒ 不是候选**。
+        // 这里不会误伤「全场券」：走库路径的候选身份本来就只从绑定行推出来，
+        // 没有任何绑定的活动压根进不了 activityIds。
+        List<ActivityManageEntity> inScope = valid.stream()
+                .filter(m -> !scope.getOrDefault(m.getActivityId(), java.util.Set.of()).isEmpty())
+                .collect(Collectors.toList());
+        if (inScope.isEmpty()) {
+            return new Materials(List.of(), List.of(), Map.of());
+        }
+
+        List<ActivityCandidate> candidates = flatten(inScope, withGifts, scope);
+        Eligibility elig = eligibility(inScope);   // 条件行只查一次，defs 与 trees 同源
         return new Materials(candidates, elig.defs(), elig.trees());
+    }
+
+    /**
+     * 每个活动在这一次请求里圈到的 SPU＝「请求的 SPU」∩「该活动**当前线上版本**的生效绑定」。
+     *
+     * <p><b>纯内存聚合，零额外查询</b>——数据全部来自第 ① 步已经查回的绑定行。
+     * 这一点是硬约束：为了拿「活动的全部绑定」再查一次绑定表，会把固定 5 次查询破掉
+     * （{@code DecisionQueryCountTest} 会当场抓住），而作用域要的本来就是交集、不是全集。
+     *
+     * <p><b>按版本配对</b>：绑定查询没有 version 条件（一个 SPU 可能同时匹配到某活动 v1、v2 的绑定行，
+     * 旧版本的绑定行不会被软删）。这里用「已解析出的当前线上版本」做内连接，
+     * 于是「v1 绑了 A/B、v2 只绑 A」时 B 不会再落进 v2 的作用域——
+     * 否则运营缩小圈选范围的编辑会在走库路径上悄悄失效，而快照路径是对的，两条路发不同的钱。
+     */
+    private static Map<String, java.util.Set<Long>> scopeOf(List<ActivitySpuBindingEntity> bindings,
+                                                            List<ActivityManageEntity> live) {
+        Map<String, Integer> versionOf = new LinkedHashMap<>();
+        for (ActivityManageEntity m : live) versionOf.put(m.getActivityId(), m.getVersion());
+
+        Map<String, java.util.Set<Long>> scope = new LinkedHashMap<>();
+        for (ActivitySpuBindingEntity b : bindings) {
+            Integer v = versionOf.get(b.getActivityId());
+            if (v == null || !v.equals(b.getVersion())) continue;   // 不是当前线上版本的绑定，不进作用域
+            scope.computeIfAbsent(b.getActivityId(), k -> new java.util.LinkedHashSet<>()).add(b.getSpuId());
+        }
+        return scope;
     }
 
     /** 合并策略按 bizLine 解析；候选为空时取默认 MAX。快照命中时直接读快照里的策略，同样零查询。 */
@@ -165,12 +259,10 @@ public class DecisionDataLoader {
 
     // ------------------------------------------------------------------ 内部
 
-    /** ① 按 SPU 查生效绑定 → 活动 id。 */
-    private List<String> boundActivityIds(List<Long> spuIds) {
+    /** ① 按 SPU 查生效绑定。返回**绑定行本身**（不再只返回 id）——作用域要用到 spuId 与 version。 */
+    private List<ActivitySpuBindingEntity> bindingRows(List<Long> spuIds) {
         if (spuIds == null || spuIds.isEmpty()) return List.of();
-        List<ActivitySpuBindingEntity> bindings = bindingRepo
-                .findBySpuIdInAndEffectiveAndIsDel(spuIds, EFFECTIVE, NOT_DEL);
-        return bindings.stream().map(ActivitySpuBindingEntity::getActivityId).distinct().collect(Collectors.toList());
+        return bindingRepo.findBySpuIdInAndEffectiveAndIsDel(spuIds, EFFECTIVE, NOT_DEL);
     }
 
     /**
@@ -205,8 +297,9 @@ public class DecisionDataLoader {
         return result;
     }
 
-    /** ③④ 批量取规则行（买赠时另取赠品行），拍平成候选事实。 */
-    private List<ActivityCandidate> flatten(List<ActivityManageEntity> manages, boolean withGifts) {
+    /** ③④ 批量取规则行（买赠时另取赠品行），拍平成候选事实。{@code scope} 由 {@link #scopeOf} 内存聚合而来。 */
+    private List<ActivityCandidate> flatten(List<ActivityManageEntity> manages, boolean withGifts,
+                                            Map<String, java.util.Set<Long>> scope) {
         List<String> ids = manages.stream().map(ActivityManageEntity::getActivityId).distinct().toList();
 
         // (activityId, version) → 首条规则行。原实现是 findFirst()，这里保持"取第一条"的语义。
@@ -219,7 +312,8 @@ public class DecisionDataLoader {
         if (withGifts) {
             for (ActivityGiftEntity g : giftRepo.findByActivityIdInAndIsDel(ids, NOT_DEL)) {
                 giftsByKey.computeIfAbsent(key(g.getActivityId(), g.getVersion()), k -> new ArrayList<>())
-                        .add(new GiftResult(g.getBatchId(), g.getGiftName(), g.getGiftType(),
+                        .add(new GiftResult(g.getActivityId(), g.getVersion(),
+                                g.getBatchId(), g.getGiftName(), g.getGiftType(),
                                 g.getGiftNum(), g.getAbsoluteAmount(), g.getRightType()));
             }
         }
@@ -238,6 +332,9 @@ public class DecisionDataLoader {
             c.setUserInventory(m.getUserInventory());
             c.setVersion(m.getVersion());
             c.setPriority(m.getPriority() == null ? 0 : m.getPriority());
+            // 作用域：决定这个活动的钱算在哪些商品上。两条装配路径都必须填，
+            // 只填一边的表现是「同一张券在走库与走快照两条路上发不同的钱」（SnapshotParityTest 守这条）。
+            c.setScopedSpuIds(scope.getOrDefault(m.getActivityId(), java.util.Set.of()));
 
             ActivityRuleEntity r = ruleByKey.get(key(m.getActivityId(), m.getVersion()));
             if (r != null) {

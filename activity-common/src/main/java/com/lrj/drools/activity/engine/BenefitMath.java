@@ -68,8 +68,48 @@ public final class BenefitMath {
 
     // ================================================================ 第 N 件折（第二件半价）
 
-    /** 订单行的最小表达：单价 + 件数。与 {@code SpuDiscountRequest.OrderLine} 解耦，便于纯函数测试。 */
-    public record Line(BigDecimal unitPrice, int quantity) {}
+    /**
+     * 订单行的最小表达：<b>归属 SPU</b> + 单价 + 件数。与 {@code SpuDiscountRequest.OrderLine} 解耦，便于纯函数测试。
+     *
+     * <p>{@code spuId} 是后加的，用于把行归到某个活动的作用域里。{@code null} = 归属不明——
+     * 在**限定了作用域**的计算里这样的行会被剔除（归属不明不猜），无作用域时不受影响。
+     */
+    public record Line(Long spuId, BigDecimal unitPrice, int quantity) {
+
+        /** 兼容两参构造：不带归属的行。纯数学用例与无作用域场景仍然直接用它。 */
+        public Line(BigDecimal unitPrice, int quantity) {
+            this(null, unitPrice, quantity);
+        }
+    }
+
+    /**
+     * 作用域小计：{@code Σ(单价 × 件数)}，只算归属于 {@code scope} 的行。
+     *
+     * <p><b>这是「商品级活动该拿什么当基数」的答案。</b>一个只绑了 B 商品的 8 折券，
+     * 在「A 1000 元 + B 10 元 ×2」的车里，基数必须是 20 而不是 1020——否则减免会是 204 元，
+     * 相当于用 B 的折扣把 A 也打了折。
+     *
+     * @param lines 订单行；null/空 → null
+     * @param scope 作用域 SPU 集合。{@code null} = 不限定（全部行都算）；
+     *              非空时只累计 {@code spuId ∈ scope} 的行，**没带 spuId 的行一律剔除**
+     * @return 小计，或 null 表示「算不出来」（无行、或作用域内一行都没匹配上）
+     */
+    public static BigDecimal scopedSubtotal(java.util.List<Line> lines, java.util.Set<Long> scope) {
+        if (lines == null || lines.isEmpty()) return null;
+        BigDecimal total = BigDecimal.ZERO;
+        boolean matched = false;
+        for (Line l : lines) {
+            if (l == null || l.unitPrice() == null) continue;
+            if (l.unitPrice().signum() < 0 || l.quantity() <= 0) continue;
+            if (scope != null && (l.spuId() == null || !scope.contains(l.spuId()))) continue;
+            total = total.add(l.unitPrice().multiply(BigDecimal.valueOf(l.quantity())));
+            matched = true;
+        }
+        // 一行都没匹配上 → 「算不出来」而不是「基数为 0」：后者会让一口价算出负减免、折扣算出 0 元优惠，
+        // 两者都会以一个看起来正常的数值参与合并竞争。
+        if (!matched) return null;
+        return total.setScale(MONEY_SCALE, MONEY_ROUNDING);
+    }
 
     /**
      * 「第 N 件打 X 折」的减免额。{@code nth=2, zhe=5} 就是第二件半价。
@@ -92,6 +132,20 @@ public final class BenefitMath {
      * @return 减免额（2 位小数，向下取整），或 null 表示不适用
      */
     public static BigDecimal nthItemDiscount(java.util.List<Line> lines, int nth, BigDecimal zhe) {
+        return nthItemDiscount(lines, nth, zhe, null);
+    }
+
+    /**
+     * 「第 N 件打 X 折」的减免额，<b>限定在活动的作用域内</b>。
+     *
+     * <p>不限定作用域时（{@code scope == null}）语义与三参重载完全一致。限定时，只有归属于
+     * {@code scope} 的行参与计算——活动只绑了 B，就不能让购物车里的 A 替它凑出「第二件」。
+     * 这不是收紧，是修正：「第二件半价」的商业语义从来都是<b>本活动商品</b>的第二件。
+     *
+     * @param scope 作用域 SPU 集合；null = 不限定（旧语义）。非空时**没带 spuId 的行一律剔除**
+     */
+    public static BigDecimal nthItemDiscount(java.util.List<Line> lines, int nth, BigDecimal zhe,
+                                             java.util.Set<Long> scope) {
         if (lines == null || lines.isEmpty()) return null;
         if (nth < 2) return null;
         if (zhe == null || zhe.signum() <= 0 || zhe.compareTo(TEN) >= 0) return null;
@@ -101,6 +155,8 @@ public final class BenefitMath {
         for (Line l : lines) {
             if (l == null || l.unitPrice() == null) continue;
             if (l.unitPrice().signum() <= 0 || l.quantity() <= 0) continue;
+            // 归属不在作用域内（或压根没带归属）的行不参与——它不是这个活动的商品
+            if (scope != null && (l.spuId() == null || !scope.contains(l.spuId()))) continue;
             int discounted = l.quantity() / nth;      // 每满 nth 件享 1 件
             if (discounted <= 0) continue;
             BigDecimal per = l.unitPrice()

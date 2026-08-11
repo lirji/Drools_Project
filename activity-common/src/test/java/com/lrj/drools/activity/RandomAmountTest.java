@@ -1,5 +1,6 @@
 package com.lrj.drools.activity;
 
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.BenefitForm;
@@ -26,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class RandomAmountTest {
 
-    private final BenefitEvaluator evaluator = new BenefitEvaluator();
+    private final BenefitEvaluator evaluator = new BenefitEvaluator(DecisionMetrics.noop());
 
     private static ActivityCandidate randomCandidate(String rangeJson) {
         ActivityCandidate c = new ActivityCandidate();
@@ -44,7 +45,13 @@ class RandomAmountTest {
         c.putAttr("userId", userId);
         c.putAttr("orderAmount", orderAmount);
         c.putAttr("quantity", 1);
-        c.putAttr("spuId", 990011L);
+        // spuId 现在是**整个购物车的 SPU 列表**（作用域改造）；
+        // 确定性随机的指纹刻意读另一个键 randomSeedSpu，好让种子在那次改造里保持不变。
+        // 两个都要放：只放 spuId 的话，指纹里的 SPU 段恒为 "null"，
+        // 「购物车指纹参与种子」这件事就没人守了——将来谁把 drawRandom 改回读 spuId，
+        // 线上随机红包会全量重抽，而测试全绿。
+        c.putAttr("spuId", java.util.List.of(990011L));
+        c.putAttr("randomSeedSpu", 990011L);
         return c;
     }
 
@@ -57,6 +64,19 @@ class RandomAmountTest {
     @Nested
     @DisplayName("确定性")
     class Determinism {
+
+        @Test
+        @DisplayName("100 与 100.00 必须抽到同一个金额——纯格式差异不得改变价格")
+        void scaleDifferenceDoesNotChangeAmount() {
+            BigDecimal plain = compute(randomCandidate("{\"min\":5,\"max\":20}"), ctx(1001L, new BigDecimal("100")));
+            BigDecimal scaled = compute(randomCandidate("{\"min\":5,\"max\":20}"), ctx(1001L, new BigDecimal("100.00")));
+
+            assertThat(scaled).as(
+                    "指纹此前直接用 toString()，于是 100 与 100.00 是两个种子、两个金额。"
+                            + "而「同一笔订单刷新不变价」正是确定性随机存在的全部理由——"
+                            + "一个纯粹的格式差异就能让用户看到价格跳动，是这套机制最不该出现的失效方式")
+                    .isEqualByComparingTo(plain);
+        }
 
         @Test
         @DisplayName("同一活动+用户+购物车，重复计算金额完全一致（刷新不变价）")

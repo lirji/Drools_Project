@@ -63,7 +63,10 @@ public class ActivityResourceServerConfig {
                                         "/activity-marketing/create",
                                         "/activity-marketing/*/status",
                                         "/activity-marketing/bulk-status",
-                                        "/activity-marketing/*/claim")
+                                        "/activity-marketing/*/claim",
+                                        // release 会**把库存加回去**并解除该用户的限领占用——
+                                        // 不设防的话，反复调它就能把一个限量活动的库存刷到任意大。
+                                        "/activity-marketing/*/release")
                                 .hasAuthority(writeAuthority);
                     }
                     auth.anyRequest().authenticated();

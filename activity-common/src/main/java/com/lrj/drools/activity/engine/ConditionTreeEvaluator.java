@@ -78,6 +78,34 @@ public class ConditionTreeEvaluator {
         FieldValueType type = field.valueType();
         Object raw = leaf.getValue();
 
+        // ARRAY 字段上的标量算子 → 集合语义（存量兼容层）。
+        //
+        // 背景：spuId 从 NUMBER 改成了 ARRAY——属性袋里装的从「购物车第一件」变成了「整个 SPU 列表」，
+        // 因为「第一件是 X」这个语义是错的（同样两件商品换个加购顺序，资格结论就不一样）。
+        // 但库里存量的条件树写的是 `spuId eq 990011` / `spuId in [...]`，运营也不该被要求重配一遍。
+        // 于是在求值层做语义映射：eq→contains、ne→not contains、in→containsAny、notIn→都不含。
+        //
+        // ⚠ 这是一次**语义放宽**：单 SPU 请求下两者完全等价；多 SPU 请求下
+        // 「购物车第一件是 X」→「购物车包含 X」会更容易命中。方向是往外发钱，属于有意为之——
+        // 运营配这个条件时想说的本来就是「买了 X」，而且配合权益作用域（活动只对自己圈的商品算钱），
+        // 「更容易命中」同时伴随「每次命中发得更少」，合起来不是放大敞口。
+        if (type == FieldValueType.ARRAY) {
+            Collection<?> actual = ctx.listAttr(field.key());
+            switch (op) {
+                case EQ -> { return actual != null && containsValue(actual, raw); }
+                case NE -> { return actual != null && !containsValue(actual, raw); }
+                case IN -> {
+                    List<?> vals = asList(raw);
+                    return actual != null && vals != null && vals.stream().anyMatch(v -> containsValue(actual, v));
+                }
+                case NOT_IN -> {
+                    List<?> vals = asList(raw);
+                    return actual != null && vals != null && vals.stream().noneMatch(v -> containsValue(actual, v));
+                }
+                default -> { /* CONTAINS 系与数值算子走下面的通用分支 */ }
+            }
+        }
+
         return switch (op) {
             case EQ -> {
                 Object actual = scalarAttr(ctx, field);

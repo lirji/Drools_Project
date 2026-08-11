@@ -49,6 +49,16 @@ public class DecisionMetrics {
     public static final String SOURCE = "activity.decision.source";
     /** 按活动的命中计数。**带基数上限**，见 {@link #hit}。 */
     public static final String HIT = "activity.decision.hit";
+    /** 减免额被订单金额截断的次数。**几乎等价于「有人配错了」**，见 {@link #clamped}。 */
+    public static final String CLAMPED = "activity.decision.clamped";
+    /** 实际发出的减免金额分布。**运营误配的唯一观测信号**，见 {@link #amount}。 */
+    public static final String AMOUNT = "activity.decision.amount";
+    /** 候选被淘汰的次数（按原因）。「配了但不发」的唯一信号，见 {@link #reject}。 */
+    public static final String REJECT = "activity.decision.reject";
+    /** 当前进程持有的决策快照桶数。0 = 全部决策在走库。 */
+    public static final String SNAPSHOT_COUNT = "activity.decision.snapshot.count";
+    /** 最旧快照的年龄（秒）。**止损可观测性的核心读数**，见 {@link #bindSnapshotStore}。 */
+    public static final String SNAPSHOT_AGE = "activity.decision.snapshot.age.seconds";
 
     /**
      * activityId 标签的基数上限。
@@ -86,14 +96,7 @@ public class DecisionMetrics {
      */
     public void hit(String scene, String activityId) {
         if (activityId == null || activityId.isBlank()) return;
-        String tag = activityId;
-        if (!taggedActivities.contains(activityId)) {
-            if (taggedActivities.size() >= ACTIVITY_TAG_CAP) {
-                tag = OVER_CAP;
-            } else {
-                taggedActivities.add(activityId);
-            }
-        }
+        String tag = cappedTag(activityId);
         Counter.builder(HIT)
                 .tag("scene", scene == null ? "unknown" : scene)
                 .tag("activityId", tag)
@@ -171,6 +174,79 @@ public class DecisionMetrics {
                 .increment();
     }
 
+    /**
+     * 记一次「减免额超过订单金额、被截断」。
+     *
+     * <p><b>这条指标的价值不在截断本身，而在它是运营误配的唯一告警信号。</b>
+     * 能触发封顶的配置几乎一定是错的（门槛写反、面额多打一个零、多券叠加没上限），
+     * 而这类错误在此之前于监控上完全隐形：不走回退、耗时正常、命中数只是稍高。
+     * 正常业务下它应当恒为 0，所以告警阈值可以设得极其激进——<b>出现一次就该看一眼</b>。
+     *
+     * <p>刻意不打 activityId 标签：触发时的活动 id 在 WARN 日志里（含金额、订单金额、策略），
+     * 而指标只回答「有没有发生」。基数账见 {@link #ACTIVITY_TAG_CAP}。
+     */
+    public void clamped() {
+        Counter.builder(CLAMPED)
+                .description("减免额超过订单金额被截断的次数（正常业务应恒为 0，出现即疑似配置错误）")
+                .register(registry)
+                .increment();
+    }
+
+    /**
+     * 记一次「实际发出了多少钱」。
+     *
+     * <p><b>补它之前，运营误配在监控上是全盘绿灯</b>：把「满 300 减 50」配成「满 3 减 50」，
+     * 回退率 0、耗时正常、命中数只是稍高——没有任何一条指标会动，因为
+     * <b>金额从来没被记录过</b>。{@code ActivityQueryService} 手上握着 {@code hitAmount}，
+     * 却只打了一个「命中了」的计数。
+     *
+     * <p>有了它，「客单减免均值突然翻倍」「p99 减免额异常」这类查询才成立，
+     * 财务问「这个月营销发了多少」也不必再从命中<em>次数</em>去估。
+     *
+     * <p>activityId 标签复用 {@link #hit} 那套基数保护（{@link #ACTIVITY_TAG_CAP}）。
+     */
+    public void amount(String scene, String activityId, java.math.BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) return;
+        DistributionSummary.builder(AMOUNT)
+                .description("单次决策实际发出的减免金额（元）")
+                .baseUnit("yuan")
+                .tag("scene", safe(scene))
+                .tag("activityId", cappedTag(activityId))
+                .publishPercentileHistogram()
+                .register(registry)
+                .record(amount.doubleValue());
+    }
+
+    /**
+     * 记一次「候选被淘汰」。
+     *
+     * <p><b>「配了但不发」此前在监控上完全不可见。</b>淘汰只写在候选对象的 {@code rejectReason} 上，
+     * 而热路径 {@code explain=false}，那个字段与 trace 两个出口在生产上都不打开。
+     * 唯一沾边的是空决策回退——可它只在「这张券是唯一候选」时才会走到，
+     * <b>恰恰是多活动并存这种最容易配错的场景观测全黑</b>。
+     *
+     * <p>{@code reason} 必须是有限枚举（ineligible / no-ladder-tier / missing-lines /
+     * price-above-order / bad-ratio / out-of-scope …），不要塞异常全文或活动名，否则标签基数会爆。
+     * 它的价值与回退率同级：一个回答「算错了吗」，一个回答「为什么没发」。
+     */
+    public void reject(String scene, String reason) {
+        Counter.builder(REJECT)
+                .description("候选活动被淘汰的次数（按原因）——「配了但不发」的唯一信号")
+                .tag("scene", safe(scene))
+                .tag("reason", safe(reason))
+                .register(registry)
+                .increment();
+    }
+
+    /** activityId 的基数保护：前 N 个各占一条序列，之后并入哨兵。见 {@link #ACTIVITY_TAG_CAP}。 */
+    private String cappedTag(String activityId) {
+        if (activityId == null || activityId.isBlank()) return "unknown";
+        if (taggedActivities.contains(activityId)) return activityId;
+        if (taggedActivities.size() >= ACTIVITY_TAG_CAP) return OVER_CAP;
+        taggedActivities.add(activityId);
+        return activityId;
+    }
+
     // ---------------------------------------------------------------- 规则引擎
 
     /** 计时一次 KieBase 编译。{@code outcome} = ok / error。**编译落在请求线程上时，这里就是 P99 尖刺的来源**。 */
@@ -217,6 +293,26 @@ public class DecisionMetrics {
         });
         registry.gauge("activity.rule.cache.weight.kb", cache, c ->
                 c.policy().eviction().map(e -> e.weightedSize().orElse(-1L)).orElse(-1L));
+    }
+
+    /**
+     * 把决策快照的**新鲜度**绑成 Gauge。只有 decision 侧会调用（console 没有快照构建器，store 恒空）。
+     *
+     * <p><b>为什么这两个指标必须有</b>：快照陈旧是一种「决策照常成功、只是发的钱是旧配置」的故障——
+     * 代际信号漏发、轮询线程卡死、构建持续失败，三种成因在<b>回退率、耗时、命中数上全部看不出来</b>，
+     * 因为它压根不走回退。在补这两个 gauge 之前，「下线了但线上还在发钱」在监控上是完全不可见的。
+     *
+     * <p><b>为什么不按 (tenant,bizLine) 打标签</b>：那是 {@link #ACTIVITY_TAG_CAP} 已经教过一次的
+     * 基数账——租户 × 业务线同样不是工程可控量。告警要的是「最旧的那个有多旧」这一个标量，
+     * 逐桶的 generation / builtAt 走 {@code GET /decision/v1/metrics} 的响应体（单实例视角、无序列成本）。
+     *
+     * <p>状态对象一律传 {@code store} 本身：Micrometer 对状态对象持<b>弱引用</b>，传构造期临时 lambda
+     * 会在方法返回后被 GC，指标随即变成 NaN——而 NaN 在面板上只表现为「没数据」，是最难察觉的埋点失效
+     * （本项目已在 docker 验证中踩过一次，见 {@link #bindKieBaseCache}）。
+     */
+    public void bindSnapshotStore(com.lrj.drools.activity.snapshot.DecisionSnapshotStore store) {
+        registry.gauge(SNAPSHOT_COUNT, store, s -> s.size());
+        registry.gauge(SNAPSHOT_AGE, store, s -> s.oldestAgeSeconds(java.time.Instant.now()));
     }
 
     private static String safe(String s) {

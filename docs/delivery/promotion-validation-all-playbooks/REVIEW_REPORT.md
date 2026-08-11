@@ -1,5 +1,9 @@
 # Review Report
 
+
+> ⚠️ **本文件是 dated 归档，正文不重写**。其中「claim 不幂等」「每人限领无执行路径」两条断言已于 2026-08-11 被推翻（`activity_grant` 流水 + 唯一约束 = 幂等；`userInventory` 已按流水计数执行；冲正走 `POST /{id}/release`）。以同目录 `DELIVERY_STATUS.md` 顶部的现状声明为准——照本文件设计「重复 claim 应扣两次」的用例会稳定误报。
+
+
 ## Scope
 
 本轮 review 覆盖全玩法优惠验证的生产求值语义、ValidateView/add-on traces、聚焦 E2E、响应式结果态、无库存副作断言、四眼发布、CI 隔离/清理和文档。review 为独立只读检查；修复由其它实施切片完成，本报告只记录已核对的状态。

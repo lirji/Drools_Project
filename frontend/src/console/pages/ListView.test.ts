@@ -132,11 +132,14 @@ describe('ListView 工作台', () => {
     expect(wrapper.get('[data-testid="list-view"]').text()).not.toContain('别家租户的活动名')
   })
 
-  it('决策指标缺口以说明卡记账，不画假图', async () => {
+  it('决策指标缺口以说明卡记账，不画假图，也不把已存在的端点说成待建', async () => {
     const wrapper = await setup([listRow({ activityId: 'ACT1', version: 1 })])
     const notice = wrapper.get('[data-testid="metrics-notice"]')
-    expect(notice.text()).toContain('决策指标尚未接入')
+    expect(notice.text()).toContain('决策指标尚未接入本页')
     expect(notice.text()).toContain('GET /decision/v1/metrics')
+    // 这两个端点早就存在于 DecisionPlaneController，说明卡曾把它们写成「待建」——
+    // 仓库里唯一一处会主动说假话的文案。别让它回去。
+    expect(notice.text()).not.toContain('待建')
   })
 
   it('详情侧板从 rule 导出权益形态，不只显示笼统的红包类型', async () => {
