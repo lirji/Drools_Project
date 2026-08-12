@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.DemoProductEntity;
 import com.lrj.drools.activity.persistence.DemoProductRepository;
@@ -69,12 +70,12 @@ class ActivityMarketingFlowTest {
         online(a); online(b);
 
         // 订单 200：A 通过（80）+ B（50）→ MAX 命中 80
-        DiscountView big = query.spuDiscount(spuReq(1001L, new BigDecimal("200")));
+        DiscountView big = query.spuDiscount(spuReq(1001L, new BigDecimal("200")), DecisionMode.HOT_PATH);
         assertTrue(big.hit());
         assertEquals(0, big.hitAmount().compareTo(new BigDecimal("80")), "订单达标应命中大额红包 80");
 
         // 订单 50：A 被资格淘汰 → 只剩 B（50）
-        DiscountView small = query.spuDiscount(spuReq(1001L, new BigDecimal("50")));
+        DiscountView small = query.spuDiscount(spuReq(1001L, new BigDecimal("50")), DecisionMode.HOT_PATH);
         assertTrue(small.hit());
         assertEquals(0, small.hitAmount().compareTo(new BigDecimal("50")), "订单不达标应只剩普通红包 50");
     }
@@ -85,10 +86,10 @@ class ActivityMarketingFlowTest {
         CreateResult a = marketing.create(redPackage("限时红包", "biz-b", new BigDecimal("30"),
                 null, 2001L, 1, null, null));
         online(a);
-        assertTrue(query.spuDiscount(spuReq(2001L, new BigDecimal("100"))).hit());
+        assertTrue(query.spuDiscount(spuReq(2001L, new BigDecimal("100")), DecisionMode.HOT_PATH).hit());
 
         marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.OFFLINE.code());
-        assertFalse(query.spuDiscount(spuReq(2001L, new BigDecimal("100"))).hit(), "下线后不应命中");
+        assertFalse(query.spuDiscount(spuReq(2001L, new BigDecimal("100")), DecisionMode.HOT_PATH).hit(), "下线后不应命中");
     }
 
     /** 版本化编辑：金额从 30 改到 60，版本 +1，查询命中新金额。 */
@@ -104,7 +105,7 @@ class ActivityMarketingFlowTest {
         assertEquals(2, v2.version(), "编辑后版本应为 2");
         online(v2);
 
-        DiscountView view = query.spuDiscount(spuReq(3001L, new BigDecimal("100")));
+        DiscountView view = query.spuDiscount(spuReq(3001L, new BigDecimal("100")), DecisionMode.HOT_PATH);
         assertTrue(view.hit());
         assertEquals(0, view.hitAmount().compareTo(new BigDecimal("60")), "应命中编辑后的 60");
     }
@@ -117,9 +118,9 @@ class ActivityMarketingFlowTest {
                 null, 4001L, 1, tiers, null));
         online(a);
 
-        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("50"))).hitAmount().compareTo(new BigDecimal("5")));
-        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("150"))).hitAmount().compareTo(new BigDecimal("12")));
-        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("300"))).hitAmount().compareTo(new BigDecimal("25")));
+        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("50")), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("5")));
+        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("150")), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("12")));
+        assertEquals(0, query.spuDiscount(spuReq(4001L, new BigDecimal("300")), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("25")));
     }
 
     /** 买赠：命中活动返回赠品。 */
@@ -135,7 +136,7 @@ class ActivityMarketingFlowTest {
         CreateResult a = marketing.create(req);
         online(a);
 
-        GiftView gifts = query.buyAndGetGifts(spuReq(5001L, new BigDecimal("100")));
+        GiftView gifts = query.buyAndGetGifts(spuReq(5001L, new BigDecimal("100")), DecisionMode.HOT_PATH);
         assertEquals(1, gifts.gifts().size(), "应返回 1 个赠品");
         assertEquals("赠品耳机", gifts.gifts().get(0).getGiftName());
     }
@@ -170,8 +171,8 @@ class ActivityMarketingFlowTest {
         online(a);
 
         // 6001 命中（electronics 120），6002 不命中（furniture）
-        assertTrue(query.spuDiscount(spuReq(6001L, new BigDecimal("100"))).hit(), "电子商品应命中池红包");
-        assertFalse(query.spuDiscount(spuReq(6002L, new BigDecimal("100"))).hit(), "非电子商品不应命中");
+        assertTrue(query.spuDiscount(spuReq(6001L, new BigDecimal("100")), DecisionMode.HOT_PATH).hit(), "电子商品应命中池红包");
+        assertFalse(query.spuDiscount(spuReq(6002L, new BigDecimal("100")), DecisionMode.HOT_PATH).hit(), "非电子商品不应命中");
     }
 
     // ------------------------------------------------------------------ helper

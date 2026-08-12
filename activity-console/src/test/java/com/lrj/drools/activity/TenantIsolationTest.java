@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -96,12 +97,12 @@ class TenantIsolationTest {
         CreateResult a = marketing.create(redPackage("A 的 SPU 红包", "biz-iso", new BigDecimal("60"), 7201L, null));
         marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code());
 
-        DiscountView av = query.spuDiscount(spuReq(7201L, new BigDecimal("100")));
+        DiscountView av = query.spuDiscount(spuReq(7201L, new BigDecimal("100")), DecisionMode.HOT_PATH);
         assertTrue(av.hit(), "A 自己查应命中");
         assertEquals(0, av.hitAmount().compareTo(new BigDecimal("60")));
 
         TenantContext.set(TENANT_B);
-        DiscountView bv = query.spuDiscount(spuReq(7201L, new BigDecimal("100")));
+        DiscountView bv = query.spuDiscount(spuReq(7201L, new BigDecimal("100")), DecisionMode.HOT_PATH);
         assertFalse(bv.hit(), "B 查 A 的 SPU 不应命中（跨租户隔离）");
     }
 

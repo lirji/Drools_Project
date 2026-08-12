@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -63,7 +64,7 @@ class LadderKieBaseFootprintTest {
         for (int i = 0; i < TIERS; i += 10) {
             BigDecimal orderAmount = new BigDecimal(i * 100 + 50);
             var v = query.spuDiscount(new SpuDiscountRequest(
-                    List.of(spu), 1001L, "110000", List.of("vip"), orderAmount, 1));
+                    List.of(spu), 1001L, "110000", List.of("vip"), orderAmount, 1), DecisionMode.HOT_PATH);
             assertTrue(v.hit(), "订单 " + orderAmount + " 应落在第 " + i + " 档");
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal(i + 1)),
                     "第 " + i + " 档的奖励应为 " + (i + 1) + "，实得 " + v.hitAmount());

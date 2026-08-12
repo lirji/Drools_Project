@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -52,7 +53,7 @@ class RatioLegacyFallbackTest {
         long spu = ++spuSeq;
         online(marketing.create(zhe("回退折扣券", new BigDecimal("8"), new BigDecimal("99999"), spu)));
 
-        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")), DecisionMode.HOT_PATH);
 
         assertEquals("legacy", v.mode(), "前提：本用例必须真的走到旧逻辑，否则它什么也没证明");
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20")),
@@ -65,7 +66,7 @@ class RatioLegacyFallbackTest {
         long spu = ++spuSeq;
         online(marketing.create(zhe("回退封顶券", new BigDecimal("8"), new BigDecimal("50"), spu)));
 
-        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("10000")));
+        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("10000")), DecisionMode.HOT_PATH);
 
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("50")),
                 "回退路径不封顶的话，越是引擎出问题的时候越会超发");
@@ -79,7 +80,7 @@ class RatioLegacyFallbackTest {
         online(marketing.create(zhe("八折", new BigDecimal("8"), new BigDecimal("99999"), spu)));
         online(marketing.create(fixed("固定十五", new BigDecimal("15"), spu)));
 
-        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")), DecisionMode.HOT_PATH);
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20")));
     }
 
@@ -89,7 +90,7 @@ class RatioLegacyFallbackTest {
         long spu = ++spuSeq;
         online(marketing.create(zhe("无金额", new BigDecimal("8"), new BigDecimal("50"), spu)));
 
-        DiscountView v = query.spuDiscount(req(spu, null));
+        DiscountView v = query.spuDiscount(req(spu, null), DecisionMode.HOT_PATH);
         assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO),
                 "没有订单金额就算不出折扣；出现 8 即为把折数当元");
     }

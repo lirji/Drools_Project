@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -52,7 +53,7 @@ class ActivityMarketingLegacyTest {
 
         // 订单只有 200：A 必须被资格淘汰；安全回退在剩余候选里取 max=30。
         DiscountView view = query.spuDiscount(new SpuDiscountRequest(
-                List.of(8001L), 1L, null, List.of(), new BigDecimal("200"), 1));
+                List.of(8001L), 1L, null, List.of(), new BigDecimal("200"), 1), DecisionMode.HOT_PATH);
 
         assertTrue(view.hit());
         assertEquals("legacy", view.mode(), "开关关闭应走 legacy");

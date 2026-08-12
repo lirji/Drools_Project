@@ -1,6 +1,7 @@
 package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.controller.ActivityMarketingController;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -73,7 +74,7 @@ class ActivityMarketingAddOnAliasTest {
 
     @Test
     void optionsReturns200AndForwardsCompleteDecisionContext() throws Exception {
-        when(addOn.options(any())).thenReturn(new AddOnOptions(
+        when(addOn.options(any(), eq(DecisionMode.EXPLAIN))).thenReturn(new AddOnOptions(
                 List.of(new AddOnOption("ACT-ADDON-1", "加价购", 3, "保温杯", new BigDecimal("9.90"))),
                 List.of("加价购选项 1 个")));
 
@@ -88,14 +89,14 @@ class ActivityMarketingAddOnAliasTest {
                 .andExpect(jsonPath("$.traces[0]").value("加价购选项 1 个"));
 
         ArgumentCaptor<SpuDiscountRequest> request = ArgumentCaptor.forClass(SpuDiscountRequest.class);
-        verify(addOn).options(request.capture());
+        verify(addOn).options(request.capture(), eq(DecisionMode.EXPLAIN));
         assertCompleteContext(request.getValue());
         verify(marketing, never()).claimInventory(anyString(), any(), anyInt());
     }
 
     @Test
     void validQuoteReturns200AndForwardsSelectionWithoutClaimingInventory() throws Exception {
-        when(addOn.quote(any(), eq("ACT-ADDON-1"), eq("保温杯")))
+        when(addOn.quote(any(), eq("ACT-ADDON-1"), eq("保温杯"), eq(DecisionMode.EXPLAIN)))
                 .thenReturn(new AddOnQuote(true, "ACT-ADDON-1", "保温杯", new BigDecimal("9.90"), null,
                         List.of("加价购权威报价：ACT-ADDON-1/保温杯")));
 
@@ -113,7 +114,7 @@ class ActivityMarketingAddOnAliasTest {
                 .andExpect(jsonPath("$.traces[0]").value("加价购权威报价：ACT-ADDON-1/保温杯"));
 
         ArgumentCaptor<SpuDiscountRequest> request = ArgumentCaptor.forClass(SpuDiscountRequest.class);
-        verify(addOn).quote(request.capture(), eq("ACT-ADDON-1"), eq("保温杯"));
+        verify(addOn).quote(request.capture(), eq("ACT-ADDON-1"), eq("保温杯"), eq(DecisionMode.EXPLAIN));
         assertCompleteContext(request.getValue());
         verify(marketing, never()).claimInventory(anyString(), any(), anyInt());
     }
@@ -124,7 +125,7 @@ class ActivityMarketingAddOnAliasTest {
             "FORGED-ACTIVITY, 保温杯"
     })
     void staleOrForgedQuoteReturns409WithReason(String activityId, String item) throws Exception {
-        when(addOn.quote(any(), eq(activityId), eq(item)))
+        when(addOn.quote(any(), eq(activityId), eq(item), eq(DecisionMode.EXPLAIN)))
                 .thenReturn(new AddOnQuote(false, activityId, item, null,
                         "选项已失效或不适用于当前订单",
                         List.of("加价购报价拒绝：选项已失效或资格不满足")));
@@ -140,7 +141,7 @@ class ActivityMarketingAddOnAliasTest {
                 .andExpect(jsonPath("$.reason").value("选项已失效或不适用于当前订单"))
                 .andExpect(jsonPath("$.traces[0]").value("加价购报价拒绝：选项已失效或资格不满足"));
 
-        verify(addOn).quote(any(), eq(activityId), eq(item));
+        verify(addOn).quote(any(), eq(activityId), eq(item), eq(DecisionMode.EXPLAIN));
         verify(marketing, never()).claimInventory(anyString(), any(), anyInt());
     }
 

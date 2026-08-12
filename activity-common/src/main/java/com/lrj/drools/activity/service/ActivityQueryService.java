@@ -5,7 +5,9 @@ import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DecisionProvenance;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
@@ -46,9 +48,9 @@ public class ActivityQueryService {
     private static final Logger audit = LoggerFactory.getLogger("activity.decision.audit");
     /** 候选数保护告警（P2-22，不静默截断）：过大候选集仍会拉高取数、trace 与算额成本。 */
     private static final int MAX_CANDIDATES = 200;
-    /** 指标 scene 标签（有限集合，防标签基数膨胀）。 */
-    private static final String SCENE_DISCOUNT = "spu-discount";
-    private static final String SCENE_GIFT = "gifts";
+    /** 指标 scene 标签（有限集合，防标签基数膨胀）——词汇表收敛在 {@link DecisionScene}。 */
+    private static final DecisionScene SCENE_DISCOUNT = DecisionScene.SPU_DISCOUNT;
+    private static final DecisionScene SCENE_GIFT = DecisionScene.GIFTS;
 
     private final DecisionDataLoader loader;
     private final ActivityRuleRuntimeService ruleRuntime;
@@ -74,22 +76,19 @@ public class ActivityQueryService {
     // ------------------------------------------------------------------ SPU 优惠
 
     /**
-     * 决策热路径默认 {@code explain=false}——不 emit trace。
+     * 商品红包决策。<b>档位必须显式传</b>（{@link DecisionMode}）——决策平面传
+     * {@link DecisionMode#HOT_PATH}，控制台试算传 {@link DecisionMode#EXPLAIN}。
      *
-     * <p>{@code ActivityDrlBuilder} 早就支持「构建期就不生成 {@code result.trace(...)} 语句」，
-     * 但四处调用一直走的是默认 true 重载，于是线上每一次决策都在拼 trace 字符串、装进 List、
-     * 序列化进响应体。大租户大规则集下这是纯粹的浪费，还顺带把规则内部结构
-     * （命中活动、命中策略、金额推导）暴露给了下游调用方。
+     * <p>此前这里有一个「省掉档位」的便捷重载（默认热路径），而姊妹服务
+     * {@code AddOnPurchaseService} 的同类重载默认的是试算档——<b>两个默认值方向相反</b>，
+     * 读者在调用点上无法本地推理这次决策是哪一档。删掉重载后，换档只能是一次显式编辑。
      *
-     * <p>控制台的试算入口显式传 {@code explain=true}——运营需要看链路；决策平面不传，走 false。
+     * <p>档位本身的开销不小：{@code EXPLAIN} 下每一次决策都在拼 trace 字符串、装进 List、
+     * 序列化进响应体，还顺带把规则内部结构（命中活动、命中策略、金额推导）暴露给下游调用方。
      */
-    public DiscountView spuDiscount(SpuDiscountRequest req) {
-        return spuDiscount(req, false);
-    }
-
-    public DiscountView spuDiscount(SpuDiscountRequest req, boolean explain) {
+    public DiscountView spuDiscount(SpuDiscountRequest req, DecisionMode mode) {
         DiscountView v = metrics.timeDecision(SCENE_DISCOUNT,
-                () -> spuDiscountInternal(req, explain), DiscountView::mode);
+                () -> spuDiscountInternal(req, mode), DiscountView::mode);
         // 按活动的命中计数打在**唯一出口**上，而不是引擎命中的那个分支里。
         // 打在分支里会漏掉回退路径（safeFallback 也会命中活动），于是「按活动命中量」在
         // 引擎回退时系统性少计——**少计的指标比没有指标更危险**，因为它看起来是权威的，
@@ -121,7 +120,7 @@ public class ActivityQueryService {
      * <p>格式刻意是**单行 JSON**：日志系统能直接按 {@code decisionId} 检索，
      * 而人也能在终端里一眼读完。热路径开销是一次字符串拼接，不做序列化框架调用。
      */
-    private void auditLog(String scene, SpuDiscountRequest req, DiscountView v) {
+    private void auditLog(DecisionScene scene, SpuDiscountRequest req, DiscountView v) {
         if (v == null || !audit.isInfoEnabled()) return;
         StringBuilder items = new StringBuilder("[");
         for (int i = 0; i < v.items().size(); i++) {
@@ -144,14 +143,14 @@ public class ActivityQueryService {
                         + "\"orderAmount\":{},\"hit\":{},\"hitActivityId\":{},\"hitVersion\":{},"
                         + "\"amount\":{},\"strategy\":\"{}\",\"clamped\":{},\"mode\":\"{}\","
                         + "\"source\":\"{}\",\"generation\":{},\"items\":{}}",
-                v.decisionId(), scene, req.userId(), req.spuIdList(),
+                v.decisionId(), scene.code(), req.userId(), req.spuIdList(),
                 req.orderAmount(), v.hit(),
                 v.hitActivityId() == null ? null : "\"" + v.hitActivityId() + "\"",
                 v.hitVersion(), v.hitAmount(), v.strategy(), v.clamped(), v.mode(),
                 p.source(), p.generation(), items);
     }
 
-    private DiscountView spuDiscountInternal(SpuDiscountRequest req, boolean explain) {
+    private DiscountView spuDiscountInternal(SpuDiscountRequest req, DecisionMode mode) {
         // 每次决策一个 id：它不落库，只是让「响应 / 结构化日志 / 下游账」三者能对上同一次决策。
         // 客服拿着用户给的这一串就能在日志里定位到当时的入参与逐候选结果。
         String decisionId = newDecisionId();
@@ -179,7 +178,7 @@ public class ActivityQueryService {
 
         if (!ruleEngineEnabled) {
             // 总开关关闭只切换算额实现，绝不能顺带把资格条件关闭。
-            eligibility.applyJava(ctx, materials, SCENE_DISCOUNT, explain, traces);
+            eligibility.applyJava(ctx, materials, SCENE_DISCOUNT, mode, traces);
             metrics.fallback(SCENE_DISCOUNT, "engine-disabled");
             DiscountView legacy = safeFallback(ctx, candidates, strategy, "开关关闭，走安全 Java 回退", decisionId,
                     materials.provenance());
@@ -187,22 +186,25 @@ public class ActivityQueryService {
         }
 
         // 1) 资格淘汰：线上只有这一份条件树语义。
-        eligibility.applyJava(ctx, materials, SCENE_DISCOUNT, explain, traces);
+        eligibility.applyJava(ctx, materials, SCENE_DISCOUNT, mode, traces);
 
         // 2) 阶梯落档 + 3) 折扣合并
         List<LadderActivityDef> ladderDefs = ladderDefs(candidates);
         // 六形态共用 BenefitEvaluator；旧 DRL 可留作隔离对拍，不再是生产切换项。
         benefits.applyLadder(ctx, candidates, ladderDefs);
-        List<String> applicableBefore = explain ? eligibleIds(candidates) : List.of();
-        benefits.computeAmounts(ctx, candidates);
-        if (explain) {
+        List<String> applicableBefore = mode.explains() ? eligibleIds(candidates) : List.of();
+        // TODO(R4·契约变更，独立提交)：这里传 BENEFIT（=「算额阶段」）而不是 SCENE_DISCOUNT，
+        //  是为了让 activity.decision.reject 的 scene 标签取值与改造前逐字节一致。换成真实通道
+        //  会改变已有 Prometheus 序列（同 decisionSource 那条 TODO），要与 Grafana 同批改。
+        benefits.computeAmounts(ctx, candidates, DecisionScene.BENEFIT);
+        if (mode.explains()) {
             for (ActivityCandidate c : candidates) {
                 if (!c.isEligible() && applicableBefore.contains(c.getActivityId())) {
                     traces.add("not applicable: " + c.getActivityId() + "（" + c.getRejectReason() + "）");
                 }
             }
         }
-        ActivityRuleResult disc = benefits.merge(ctx, candidates, strategy, explain);
+        ActivityRuleResult disc = benefits.merge(ctx, candidates, strategy, mode);
         if (disc != null && (disc.getHitActivityId() != null || disc.getHitAmount().signum() > 0)) {
             traces.addAll(disc.getTraces());
             return new DiscountView(true, disc.getHitActivityId(), disc.getHitActivityName(),
@@ -286,8 +288,11 @@ public class ActivityQueryService {
             c.setLadderApplied(false);
         }
         benefits.applyLadder(ctx, candidates, ladderDefs(candidates));
-        benefits.computeAmounts(ctx, candidates);
-        ActivityRuleResult result = benefits.merge(ctx, candidates, strategy, false);
+        // 同上：回退路径的淘汰计数也维持 benefit 这个阶段标签，不改序列。
+        benefits.computeAmounts(ctx, candidates, DecisionScene.BENEFIT);
+        // 回退路径不产 trace（与改造前的 explain=false 逐字节一致）：它的 trace 由本方法自己拼，
+        // 主路径那一份已经在 traces 里了，让求值器再补一份会出现重复行。
+        ActivityRuleResult result = benefits.merge(ctx, candidates, strategy, DecisionMode.HOT_PATH);
 
         List<String> traces = new ArrayList<>();
         if (note != null) traces.add(note);
@@ -305,15 +310,12 @@ public class ActivityQueryService {
 
     // ------------------------------------------------------------------ 买赠
 
-    public GiftView buyAndGetGifts(SpuDiscountRequest req) {
-        return buyAndGetGifts(req, false);
+    /** 买赠决策。档位同 {@link #spuDiscount} —— 便捷重载已删，调用点必须显式表态。 */
+    public GiftView buyAndGetGifts(SpuDiscountRequest req, DecisionMode mode) {
+        return metrics.timeDecision(SCENE_GIFT, () -> buyAndGetGiftsInternal(req, mode), GiftView::mode);
     }
 
-    public GiftView buyAndGetGifts(SpuDiscountRequest req, boolean explain) {
-        return metrics.timeDecision(SCENE_GIFT, () -> buyAndGetGiftsInternal(req, explain), GiftView::mode);
-    }
-
-    private GiftView buyAndGetGiftsInternal(SpuDiscountRequest req, boolean explain) {
+    private GiftView buyAndGetGiftsInternal(SpuDiscountRequest req, DecisionMode mode) {
         String decisionId = newDecisionId();
         DecisionDataLoader.Materials materials = loader.load(req.spuIdList(), ActivityType.BUY_AND_GET, true);
         List<ActivityCandidate> candidates = materials.candidates();
@@ -326,10 +328,12 @@ public class ActivityQueryService {
         ActivityRuleContext ctx = eligibility.buildContext(req, candidates);
         List<String> traces = new ArrayList<>();
         // 买赠和红包共享同一份资格语义；满额、数量、人群、门店、地域条件都先在这里淘汰。
-        eligibility.applyJava(ctx, materials, SCENE_GIFT, explain, traces);
+        eligibility.applyJava(ctx, materials, SCENE_GIFT, mode, traces);
 
         if (ruleEngineEnabled) {
-            ActivityRuleResult r = ruleRuntime.evalGift(ctx, explain);
+            // evalGift 的 explain 是**构建期**布尔：它选的是哪一份 DRL 文本（emit 不 emit trace 语句），
+            // 而 DRL 全文正是 compileOrGet 的缓存 key。故这里做一次显式降级，不把运行期档位铺进去。
+            ActivityRuleResult r = ruleRuntime.evalGift(ctx, mode.explains());
             if (r != null) {
                 traces.addAll(r.getTraces());
                 // 命中的买赠活动也要计数：此前 metrics.hit 的唯一调用点在红包出口，

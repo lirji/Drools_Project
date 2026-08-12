@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -58,7 +59,7 @@ class DecisionMetricsTest {
         marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code());
 
         var view = query.spuDiscount(new SpuDiscountRequest(
-                List.of(7701L), 1L, null, List.of(), new BigDecimal("200"), 1));
+                List.of(7701L), 1L, null, List.of(), new BigDecimal("200"), 1), DecisionMode.HOT_PATH);
         assertEquals("legacy", view.mode(), "本 context 关了引擎，应走 legacy");
 
         // ① 耗时：Timer 必须存在，且 mode 标签与响应体里的 mode 同源（面板才能按 legacy/rule-engine 分开看）

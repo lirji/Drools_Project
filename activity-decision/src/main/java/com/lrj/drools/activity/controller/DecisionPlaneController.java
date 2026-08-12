@@ -1,5 +1,6 @@
 package com.lrj.drools.activity.controller;
 
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
@@ -107,7 +108,7 @@ public class DecisionPlaneController {
     /** 商品红包优惠决策（= /activity-marketing/spu-discount 的决策平面别名）。 */
     @PostMapping("/spu-discount")
     public ResponseEntity<?> spuDiscount(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(query.spuDiscount(req));
+        return ResponseEntity.ok(query.spuDiscount(req, DecisionMode.HOT_PATH));
     }
 
     /**
@@ -117,9 +118,9 @@ public class DecisionPlaneController {
      */
     @PostMapping("/addon/options")
     public ResponseEntity<?> addOnOptions(@RequestBody SpuDiscountRequest req) {
-        // 决策热路径 explain=false：逐候选资格 trace 不外泄（与 spu-discount 的分档约定一致）。
-        // console 的 /activity-marketing/addon/* 别名是试算档，那边保持 true。
-        return ResponseEntity.ok(addOn.options(req, false));
+        // 决策热路径 HOT_PATH：逐候选资格 trace 不外泄（与 spu-discount 的分档约定一致）。
+        // console 的 /activity-marketing/addon/* 别名是试算档，那边是 EXPLAIN。
+        return ResponseEntity.ok(addOn.options(req, DecisionMode.HOT_PATH));
     }
 
     /**
@@ -133,14 +134,14 @@ public class DecisionPlaneController {
     public ResponseEntity<?> addOnQuote(@RequestBody SpuDiscountRequest req,
                                         @RequestParam("activityId") String activityId,
                                         @RequestParam("item") String item) {
-        var q = addOn.quote(req, activityId, item, false);
+        var q = addOn.quote(req, activityId, item, DecisionMode.HOT_PATH);
         return q.ok() ? ResponseEntity.ok(q) : ResponseEntity.status(409).body(q);
     }
 
     /** 商品买赠决策（= /activity-marketing/gifts 的决策平面别名）。 */
     @PostMapping("/gifts")
     public ResponseEntity<?> gifts(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(query.buyAndGetGifts(req));
+        return ResponseEntity.ok(query.buyAndGetGifts(req, DecisionMode.HOT_PATH));
     }
 
     /**

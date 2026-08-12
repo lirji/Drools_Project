@@ -4,7 +4,10 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.DecisionMode;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.DistributionMode;
+import com.lrj.drools.activity.domain.RejectReason;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
@@ -41,6 +44,9 @@ import java.util.List;
 public class BenefitEvaluator {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(BenefitEvaluator.class);
+
+    /** 算额阶段淘汰文案的前缀。资格阶段的淘汰**不加**这个前缀，见 {@link #notApplicable}。 */
+    private static final String NOT_APPLICABLE_PREFIX = "本活动不适用：";
 
     private final com.lrj.drools.activity.metrics.DecisionMetrics metrics;
 
@@ -114,6 +120,18 @@ public class BenefitEvaluator {
      * 要改必须单独立项、单独对拍。
      */
     public void computeAmounts(ActivityRuleContext ctx, List<ActivityCandidate> candidates) {
+        computeAmounts(ctx, candidates, DecisionScene.BENEFIT);
+    }
+
+    /**
+     * 带 scene 的重载。{@code scene} 只影响淘汰计数的标签，<b>不影响算出多少钱</b>。
+     *
+     * <p>此前这一层拿不到通道，只能在 {@link #notApplicable} 里把 {@code "benefit"} 硬编码进指标——
+     * 而 {@code benefit} 是<b>阶段</b>不是通道，直接造成「按 scene 统计买赠淘汰量会漏掉全部算额淘汰」。
+     * 现在通道由调用方传入，与 {@code ctx} / {@code mode} 一样是编排层已有的参数，不是新概念。
+     */
+    public void computeAmounts(ActivityRuleContext ctx, List<ActivityCandidate> candidates,
+                               DecisionScene scene) {
         for (ActivityCandidate c : candidates) {
             if (!c.isEligible()) continue;
             if (c.isAmountComputed()) continue;
@@ -123,19 +141,15 @@ public class BenefitEvaluator {
             // 被错误抢进随机分支，永远走不到下面的折扣计算。
             BenefitForm form = BenefitForm.of(c.getRedPackageAmountUnit());
 
-            // 随机红包必须排在 `redPackageAmount == null` 那道 guard **之前**：
-            // 它的金额来自区间（redPackageRangeAmount），而不是 redPackageAmount 那个字段，
-            // 放在 guard 之后的话「只配了区间、没配固定金额」的随机活动会被静默跳过。
+            // ===== 横切 guard ①（必须留在 switch 之外，且排在 guard ② 之前）=====
+            // 随机红包的金额来自区间（redPackageRangeAmount），而不是 redPackageAmount 那个字段，
+            // 放在 guard ② 之后的话「只配了区间、没配固定金额」的随机活动会被静默跳过。
             if (form == BenefitForm.AMOUNT && DistributionMode.RANDOM_AMOUNT == distributionOf(c)) {
-                BigDecimal drawn = drawRandom(ctx, c);
-                // 算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 ratioDiscount 的规矩：
-                // 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
-                if (drawn == null) { notApplicable(c, "bad-random-range", "随机区间缺失或非法"); continue; }
-                c.setComputedAmount(drawn);
-                c.setAmountComputed(true);
+                apply(c, random(ctx, c), scene);
                 continue;
             }
 
+            // ===== 横切 guard ②（对**所有形态**生效，不能塞进任何形态分支）=====
             // 走到这里说明既没有固定金额，也不是随机型（随机在上面已算完）——
             // 这个候选唯一可能的金额来源就是阶梯。阶梯没落过档 = 算不出金额 = 本活动不适用。
             //
@@ -147,50 +161,98 @@ public class BenefitEvaluator {
             // 合法 0 元优惠，用金额判别会误杀它（NotApplicableCandidateTest#legitimateZeroSurvives）。
             // 所以靠 ladderApplied 这个落档留痕来区分，而不是看 computedAmount。
             if (c.getRedPackageAmount() == null) {
-                if (!c.isLadderApplied()) { notApplicable(c, "no-ladder-tier", "阶梯未落档且无固定金额"); }
+                if (!c.isLadderApplied()) { notApplicable(c, RejectReason.NO_LADDER_TIER, scene); }
                 continue;
             }
 
-            // 第 N 件折（第二件半价）：折数在 redPackageAmount、第几件在 redPackageRangeAmount 的 {"nth":N}。
-            // 它必须有逐行单价才算得出来——缺 lines 时返回 null（不适用），
-            // **绝不退化成拿整单均价算**：混着贵重与便宜商品的车会静默算错钱。
-            if (form == BenefitForm.NTH_ZHE) {
-                BigDecimal off = nthDiscount(ctx, c);
-                if (off == null) { notApplicable(c, "missing-lines", "第 N 件折缺订单行或 N 非法"); continue; }
-                c.setComputedAmount(off);
-                c.setAmountComputed(true);
-                continue;
-            }
-
-            // 一口价（秒杀）：redPackageAmount 是"卖多少"不是"减多少"，减免额与当笔订单强相关。
-            // 秒杀还必须防超发，但决策服务连的是只读账号、物理上写不了库——所以这里**只算钱**，
-            // 库存扣减在写平面的 claim 端点（决策 ≠ 提交），决策侧的余量判断只是建议性闸门。
-            if (form == BenefitForm.FIXED_PRICE) {
-                BigDecimal base = baseAmount(ctx, c);
-                BigDecimal off = BenefitMath.fixedPriceDiscount(base, c.getRedPackageAmount());
-                // 订单比秒杀价还便宜 / 缺金额 / 作用域基数不可知 → 本活动不适用
-                if (off == null) { notApplicable(c, baseCodeOr(base, "price-above-base"), baseUnknownOr(base, "一口价高于作用域金额或缺订单金额")); continue; }
-                c.setComputedAmount(off);
-                c.setAmountComputed(true);
-                continue;
-            }
-
-            // 形态判别必须在最前面。漏了它，「打 8 折」会被当成「减 8 元」原样发出去——
-            // 而且看起来毫无异常：金额是正数、决策成功、日志干净。
-            if (form == BenefitForm.RATIO_ZHE) {
-                BigDecimal base = baseAmount(ctx, c);
-                BigDecimal off = BenefitMath.ratioDiscount(base, c.getRedPackageAmount(), c.getRedPackageMaxDiscount());
-                // 算不出来（没基数 / 折数越界）→ **不给优惠**，而不是给 0 元：
-                // 给 0 元会让它以 0 参与 MAX 竞争并可能挤掉别的活动。
-                if (off == null) { notApplicable(c, baseCodeOr(base, "bad-ratio"), baseUnknownOr(base, "缺订单金额或折数越界")); continue; }
-                c.setComputedAmount(off);
-                c.setAmountComputed(true);
-                continue;
-            }
-
-            c.setComputedAmount(c.getRedPackageAmount());
-            c.setAmountComputed(true);
+            // ===== 形态分派：枚举 switch **表达式**，刻意不写 default =====
+            // 加第七种形态而漏了这里 = 编译失败，而不是「被当成金额原样发出去」。
+            // ⚠ 不能改成 arrow switch **语句**：语句对枚举常量不强制穷尽，写成语句等于白改。
+            Computed r = switch (form) {
+                case NTH_ZHE     -> nth(ctx, c);
+                case FIXED_PRICE -> fixedPrice(ctx, c);
+                case RATIO_ZHE   -> ratio(ctx, c);
+                // 显式 arm，不是兜底。「未知单位回落金额型」这条 fail-safe 的权威在
+                // BenefitForm.of()（有注释、有测试），不该漂到求值器的最后一行。
+                case AMOUNT      -> Computed.of(c.getRedPackageAmount());
+            };
+            apply(c, r, scene);
         }
+    }
+
+    /**
+     * switch 一支的产出：<b>要么是金额，要么是淘汰原因</b>，二选一。
+     *
+     * <p>存在的理由是把「算」和「落库到候选上」分开：改造前每一支都自己写
+     * {@code setComputedAmount + setAmountComputed + continue} 三行，
+     * 漏掉 {@code setAmountComputed} 的那一支会被后续阶段重算，而这种漏写不会让任何测试变红。
+     */
+    private record Computed(BigDecimal amount, RejectReason reason) {
+        static Computed of(BigDecimal amount) {
+            return new Computed(amount, null);
+        }
+        static Computed reject(RejectReason reason) {
+            return new Computed(null, reason);
+        }
+    }
+
+    /** 把 switch 的产出统一落到候选上：有金额就记账，有原因就淘汰。 */
+    private void apply(ActivityCandidate c, Computed r, DecisionScene scene) {
+        if (r.reason() != null) {
+            notApplicable(c, r.reason(), scene);
+            return;
+        }
+        c.setComputedAmount(r.amount());
+        c.setAmountComputed(true);
+    }
+
+    /**
+     * 随机红包。算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 {@link #ratio} 的规矩：
+     * 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
+     */
+    private static Computed random(ActivityRuleContext ctx, ActivityCandidate c) {
+        BigDecimal drawn = drawRandom(ctx, c);
+        return drawn == null ? Computed.reject(RejectReason.BAD_RANDOM_RANGE) : Computed.of(drawn);
+    }
+
+    /**
+     * 第 N 件折（第二件半价）：折数在 redPackageAmount、第几件在 redPackageRangeAmount 的 {@code {"nth":N}}。
+     * 它必须有逐行单价才算得出来——缺 lines 时不适用，
+     * <b>绝不退化成拿整单均价算</b>：混着贵重与便宜商品的车会静默算错钱。
+     */
+    private static Computed nth(ActivityRuleContext ctx, ActivityCandidate c) {
+        BigDecimal off = nthDiscount(ctx, c);
+        return off == null ? Computed.reject(RejectReason.MISSING_LINES) : Computed.of(off);
+    }
+
+    /**
+     * 一口价（秒杀）：redPackageAmount 是"卖多少"不是"减多少"，减免额与当笔订单强相关。
+     * 秒杀还必须防超发，但决策服务连的是只读账号、物理上写不了库——所以这里<b>只算钱</b>，
+     * 库存扣减在写平面的 claim 端点（决策 ≠ 提交），决策侧的余量判断只是建议性闸门。
+     *
+     * <p>订单比秒杀价还便宜 / 缺金额 / 作用域基数不可知 → 本活动不适用。
+     */
+    private static Computed fixedPrice(ActivityRuleContext ctx, ActivityCandidate c) {
+        BigDecimal base = baseAmount(ctx, c);
+        BigDecimal off = BenefitMath.fixedPriceDiscount(base, c.getRedPackageAmount());
+        return off == null
+                ? Computed.reject(baseReasonOr(base, RejectReason.PRICE_ABOVE_BASE))
+                : Computed.of(off);
+    }
+
+    /**
+     * 打折。形态判别必须发生在算额之前——漏了它，「打 8 折」会被当成「减 8 元」原样发出去，
+     * 而且看起来毫无异常：金额是正数、决策成功、日志干净。
+     *
+     * <p>算不出来（没基数 / 折数越界）→ <b>不给优惠</b>，而不是给 0 元：
+     * 给 0 元会让它以 0 参与 MAX 竞争并可能挤掉别的活动。
+     */
+    private static Computed ratio(ActivityRuleContext ctx, ActivityCandidate c) {
+        BigDecimal base = baseAmount(ctx, c);
+        BigDecimal off = BenefitMath.ratioDiscount(base, c.getRedPackageAmount(), c.getRedPackageMaxDiscount());
+        return off == null
+                ? Computed.reject(baseReasonOr(base, RejectReason.BAD_RATIO))
+                : Computed.of(off);
     }
 
     /**
@@ -210,23 +272,25 @@ public class BenefitEvaluator {
      * <p><b>注意它会让「唯一候选不适用」走到空决策回退</b>（{@code ActivityQueryService} 的
      * {@code empty-decision}）。这与「候选全被资格条件淘汰」走的是同一条路，不是新增的异常路径。
      */
-    private void notApplicable(ActivityCandidate c, String reasonCode, String why) {
-        c.reject("本活动不适用：" + why);
+    private void notApplicable(ActivityCandidate c, RejectReason reason, DecisionScene scene) {
+        // 前缀只在算额阶段拼：资格阶段（DecisionEligibilityService）的两条淘汰文案**没有**这个前缀。
+        // 这个不对称是既有行为，原样保留——枚举里存的是不带前缀的 message。
+        c.reject(NOT_APPLICABLE_PREFIX + reason.message());
         // 「配了但不发」此前在监控上完全不可见：rejectReason 只写在候选对象上，
-        // 而热路径 explain=false，它与 trace 两个出口在生产上都不打开。
-        // scene 用 "benefit" 标出**阶段**（算额）而不是业务场景——与资格阶段的淘汰区分开，
-        // 因为这两者的排查方向完全不同：一个查配置的门槛，一个查入参与形态。
-        metrics.reject("benefit", reasonCode);
+        // 而热路径是 DecisionMode.HOT_PATH，它与 trace 两个出口在生产上都不打开。
+        // 码与文案现在同源（RejectReason），不再是两条各写各的独立语句。
+        metrics.reject(scene, reason);
     }
 
-    /** 基数算不出来时统一归到 out-of-scope，否则用形态自己的原因码。 */
-    private static String baseCodeOr(BigDecimal base, String otherwise) {
-        return base == null ? "out-of-scope" : otherwise;
-    }
-
-    /** 基数为 null 时给出更准确的原因——「算不出基数」和「基数不够」是两种完全不同的排查方向。 */
-    private static String baseUnknownOr(BigDecimal base, String otherwise) {
-        return base == null ? "作用域基数不可知（活动只圈了部分商品，但请求未带订单行）" : otherwise;
+    /**
+     * 基数算不出来时统一归到 {@link RejectReason#OUT_OF_SCOPE}，否则用形态自己的原因。
+     *
+     * <p>「算不出基数」和「基数不够」是两种完全不同的排查方向，所以不能合成一条。
+     * 改造前这是 {@code baseCodeOr} / {@code baseUnknownOr} 两个函数各判一次同一个条件、
+     * 各返回码与文案的一半——配对靠调用点手工对齐；现在只有一次判别、一个返回值。
+     */
+    private static RejectReason baseReasonOr(BigDecimal base, RejectReason otherwise) {
+        return base == null ? RejectReason.OUT_OF_SCOPE : otherwise;
     }
 
     /**
@@ -294,14 +358,20 @@ public class BenefitEvaluator {
      * 属于把未定义收敛成确定——不是行为变更。金额本身在两种实现下完全一致。
      *
      * <p><b>出口封顶</b>：无论哪种策略，最终减免额都不得超过订单金额，见 {@link #capToOrderAmount}。
+     *
+     * <p>本重载固定 {@link DecisionMode#HOT_PATH}，<b>只服务于不关心 trace 的求值层单测</b>；
+     * 编排层（{@code ActivityQueryService}）一律走带档位的四参版本，把档位一路透到底。
+     * 这里保留默认档不会造成「两侧默认值方向相反」那类事故——{@code merge} 只有一个默认方向，
+     * 且它不是决策入口，进不了 controller。
      */
     public ActivityRuleResult merge(ActivityRuleContext ctx, List<ActivityCandidate> candidates,
                                     StackStrategy strategy) {
-        return merge(ctx, candidates, strategy, false);
+        return merge(ctx, candidates, strategy, DecisionMode.HOT_PATH);
     }
 
     /**
-     * {@code explain=true} 时产出与原 DRL 同文案的 trace，控制台试算的展示不变。
+     * {@link DecisionMode#EXPLAIN} 时产出与原 DRL 同文案的 trace，控制台试算的展示不变。
+     * <b>档位只影响 trace，绝不影响金额与命中</b>。
      *
      * <p><b>为什么签名里必须有 {@code ctx}</b>：封顶要拿订单金额比，而订单金额只在上下文里。
      * 曾经的三参重载被刻意删掉而不是保留成「不封顶」的便捷版——留着它，任何一个新调用点
@@ -309,7 +379,7 @@ public class BenefitEvaluator {
      * {@code ctx} 与 {@link #applyLadder} / {@link #computeAmounts} 的首参一致，不是新概念。
      */
     public ActivityRuleResult merge(ActivityRuleContext ctx, List<ActivityCandidate> candidates,
-                                    StackStrategy strategy, boolean explain) {
+                                    StackStrategy strategy, DecisionMode mode) {
         ActivityRuleResult result = new ActivityRuleResult();
         result.setStrategy(strategy);
 
@@ -322,14 +392,14 @@ public class BenefitEvaluator {
                 if (c.getComputedAmount() != null) total = total.add(c.getComputedAmount());
             }
             result.setHitAmount(total);
-            if (explain) result.trace("stack sum amount=" + total);
+            if (mode.explains()) result.trace("stack sum amount=" + total);
             ActivityCandidate main = pickByPriority(eligible);
             if (main != null) {
                 result.setHitActivityId(main.getActivityId());
                 result.setHitActivityName(main.getActivityName());
-                if (explain) result.trace("stack main activityId=" + main.getActivityId());
+                if (mode.explains()) result.trace("stack main activityId=" + main.getActivityId());
             }
-            capToOrderAmount(ctx, result, explain);
+            capToOrderAmount(ctx, result, mode);
             return result;
         }
 
@@ -338,14 +408,14 @@ public class BenefitEvaluator {
                 : pickByPriority(eligible);
         if (winner != null) {
             result.hit(winner);
-            if (explain) {
+            if (mode.explains()) {
                 result.trace(strategy == StackStrategy.MAX
                         ? "hit by MAX: " + winner.getActivityId() + " amount=" + amount(winner)
                         : "hit by " + strategy.name() + ": " + winner.getActivityId()
                           + " priority=" + winner.getPriority() + " amount=" + amount(winner));
             }
         }
-        capToOrderAmount(ctx, result, explain);
+        capToOrderAmount(ctx, result, mode);
         return result;
     }
 
@@ -365,7 +435,7 @@ public class BenefitEvaluator {
      * 上游传订单金额），此时无从判断是否超发。一律按 0 处理会改掉现有金标语义、把正常决策打没。
      * 这是一条已知的、有意保留的边界——真要收紧应该在<b>入参契约</b>上要求订单金额，而不是在这里猜。
      */
-    private void capToOrderAmount(ActivityRuleContext ctx, ActivityRuleResult result, boolean explain) {
+    private void capToOrderAmount(ActivityRuleContext ctx, ActivityRuleResult result, DecisionMode mode) {
         BigDecimal amount = result.getHitAmount();
         if (amount == null) {
             result.setHitAmount(BigDecimal.ZERO);
@@ -381,7 +451,7 @@ public class BenefitEvaluator {
                 amount, order, result.getHitActivityId(), result.getStrategy());
         result.setHitAmount(order);
         result.setClamped(true);
-        if (explain) {
+        if (mode.explains()) {
             result.trace("clamped: 减免 " + amount + " 超过订单金额 " + order + "，按订单金额封顶");
         }
     }

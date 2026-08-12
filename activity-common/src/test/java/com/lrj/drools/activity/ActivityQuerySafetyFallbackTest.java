@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
@@ -67,14 +68,14 @@ class ActivityQuerySafetyFallbackTest {
         ActivityCandidate belowCandidate = fixed("ACT-LIMIT", "10");
         ActivityQueryService belowQuery = query(false,
                 thresholdMaterials(belowCandidate, 500), mock(ActivityRuleRuntimeService.class));
-        ActivityQueryService.DiscountView below = belowQuery.spuDiscount(request("499"), true);
+        ActivityQueryService.DiscountView below = belowQuery.spuDiscount(request("499"), DecisionMode.EXPLAIN);
         assertThat(below.hit()).isFalse();
         assertThat(below.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
 
         ActivityCandidate atCandidate = fixed("ACT-LIMIT", "10");
         ActivityQueryService atQuery = query(false,
                 thresholdMaterials(atCandidate, 500), mock(ActivityRuleRuntimeService.class));
-        assertThat(atQuery.spuDiscount(request("500"), true).hitAmount())
+        assertThat(atQuery.spuDiscount(request("500"), DecisionMode.EXPLAIN).hitAmount())
                 .isEqualByComparingTo("10");
     }
 
@@ -85,7 +86,7 @@ class ActivityQuerySafetyFallbackTest {
         ActivityQueryService query = query(true,
                 thresholdMaterials(candidate, 500), mock(ActivityRuleRuntimeService.class));
 
-        ActivityQueryService.DiscountView view = query.spuDiscount(request("499"), true);
+        ActivityQueryService.DiscountView view = query.spuDiscount(request("499"), DecisionMode.EXPLAIN);
 
         assertThat(view.hit()).isFalse();
         assertThat(view.hitAmount()).isEqualByComparingTo(BigDecimal.ZERO);
@@ -103,7 +104,7 @@ class ActivityQuerySafetyFallbackTest {
                 Map.of());
         ActivityQueryService query = query(false, broken, mock(ActivityRuleRuntimeService.class));
 
-        ActivityQueryService.DiscountView view = query.spuDiscount(request("999"), true);
+        ActivityQueryService.DiscountView view = query.spuDiscount(request("999"), DecisionMode.EXPLAIN);
 
         assertThat(view.hit()).isFalse();
         assertThat(candidate.getRejectReason()).isEqualTo("资格条件不可判定");
@@ -117,7 +118,7 @@ class ActivityQuerySafetyFallbackTest {
         for (BenefitCase c : benefitCases()) {
             ActivityQueryService query = query(false, materials(c.candidate().get()),
                     mock(ActivityRuleRuntimeService.class));
-            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), true);
+            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), DecisionMode.EXPLAIN);
 
             assertThat(view.mode()).as(c.name()).isEqualTo("legacy");
             assertThat(view.hit()).as(c.name()).isTrue();
@@ -133,7 +134,7 @@ class ActivityQuerySafetyFallbackTest {
             // 第一次 merge 模拟无可用决策，安全重算的第二次 merge 走真实 BenefitEvaluator。
             ActivityQueryService query = query(true, materials(c.candidate().get()), runtime,
                     StackStrategy.MAX, new EmptyOnceBenefitEvaluator());
-            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), true);
+            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), DecisionMode.EXPLAIN);
 
             assertThat(view.mode()).as(c.name()).isEqualTo("rule-engine");
             assertThat(view.hit()).as(c.name()).isTrue();
@@ -150,7 +151,7 @@ class ActivityQuerySafetyFallbackTest {
             ActivityRuleRuntimeService runtime = mock(ActivityRuleRuntimeService.class);
             ActivityQueryService query = query(true, materials(c.candidate().get()), runtime);
 
-            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), true);
+            ActivityQueryService.DiscountView view = query.spuDiscount(c.request(), DecisionMode.EXPLAIN);
 
             assertThat(view.hitAmount()).as(c.name()).isEqualByComparingTo(c.expected());
             verifyNoInteractions(runtime);
@@ -159,7 +160,7 @@ class ActivityQuerySafetyFallbackTest {
         ActivityRuleRuntimeService runtime = mock(ActivityRuleRuntimeService.class);
         ActivityCandidate limited = fixed("ACT-FLAG-LIMIT", "10");
         ActivityQueryService query = query(true, thresholdMaterials(limited, 500), runtime);
-        assertThat(query.spuDiscount(request("499"), true).hit()).isFalse();
+        assertThat(query.spuDiscount(request("499"), DecisionMode.EXPLAIN).hit()).isFalse();
         verifyNoInteractions(runtime);
     }
 
@@ -170,7 +171,7 @@ class ActivityQuerySafetyFallbackTest {
                 materials(List.of(fixed("ACT-STACK-10", "10"), fixed("ACT-STACK-20", "20"))),
                 mock(ActivityRuleRuntimeService.class), StackStrategy.STACK, new BenefitEvaluator(DecisionMetrics.noop()));
 
-        ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), true);
+        ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), DecisionMode.EXPLAIN);
 
         assertThat(view.hitAmount()).isEqualByComparingTo("30");
         assertThat(view.strategy()).isEqualTo("STACK");
@@ -187,7 +188,7 @@ class ActivityQuerySafetyFallbackTest {
         ActivityQueryService query = query(false, materials(List.of(preferred, larger)),
                 mock(ActivityRuleRuntimeService.class), StackStrategy.PRIORITY, new BenefitEvaluator(DecisionMetrics.noop()));
 
-        ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), true);
+        ActivityQueryService.DiscountView view = query.spuDiscount(request("100"), DecisionMode.EXPLAIN);
 
         assertThat(view.hitActivityId()).isEqualTo("ACT-PRIORITY-5");
         assertThat(view.hitAmount()).isEqualByComparingTo("5");
@@ -208,7 +209,7 @@ class ActivityQuerySafetyFallbackTest {
             }
             return result;
         });
-        return query(engineEnabled, materials, runtime).buyAndGetGifts(request(orderAmount), true);
+        return query(engineEnabled, materials, runtime).buyAndGetGifts(request(orderAmount), DecisionMode.EXPLAIN);
     }
 
     private static ActivityQueryService query(boolean engineEnabled,
@@ -245,14 +246,14 @@ class ActivityQuerySafetyFallbackTest {
         }
 
         @Override
-        public ActivityRuleResult merge(ActivityRuleContext ctx, List<ActivityCandidate> candidates, StackStrategy strategy, boolean explain) {
+        public ActivityRuleResult merge(ActivityRuleContext ctx, List<ActivityCandidate> candidates, StackStrategy strategy, DecisionMode mode) {
             if (empty) {
                 empty = false;
                 ActivityRuleResult result = new ActivityRuleResult();
                 result.setStrategy(strategy);
                 return result;
             }
-            return super.merge(ctx, candidates, strategy, explain);
+            return super.merge(ctx, candidates, strategy, mode);
         }
     }
 

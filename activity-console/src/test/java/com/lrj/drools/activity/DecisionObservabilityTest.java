@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -64,7 +65,7 @@ class DecisionObservabilityTest {
         long spu = nextSpu();
         CreateResult a = online(red("金额观测", new BigDecimal("30"), spu, null));
 
-        query.spuDiscount(req(spu, "500"));
+        query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
 
         double total = registry.find(DecisionMetrics.AMOUNT)
                 .tag("activityId", a.activityId())
@@ -80,7 +81,7 @@ class DecisionObservabilityTest {
         online(red("满100可用", new BigDecimal("20"), spu, leaf("orderAmount", "ge", 100)));
 
         double before = counter(DecisionMetrics.REJECT, "reason", "ineligible");
-        query.spuDiscount(req(spu, "99"));   // 99 < 100 → 资格淘汰
+        query.spuDiscount(req(spu, "99"), DecisionMode.HOT_PATH);   // 99 < 100 → 资格淘汰
         double after = counter(DecisionMetrics.REJECT, "reason", "ineligible");
 
         assertEquals(before + 1, after, 0.001,
@@ -96,7 +97,7 @@ class DecisionObservabilityTest {
         online(flash("贵秒杀", new BigDecimal("999"), spu));
 
         double before = counter(DecisionMetrics.REJECT, "reason", "price-above-base");
-        query.spuDiscount(req(spu, "10"));
+        query.spuDiscount(req(spu, "10"), DecisionMode.HOT_PATH);
         double after = counter(DecisionMetrics.REJECT, "reason", "price-above-base");
 
         assertEquals(before + 1, after, 0.001,
@@ -110,7 +111,7 @@ class DecisionObservabilityTest {
         online(red("超额券", new BigDecimal("50"), spu, null));
 
         double before = counter(DecisionMetrics.CLAMPED, null, null);
-        query.spuDiscount(req(spu, "30"));   // 50 元券打在 30 元订单上
+        query.spuDiscount(req(spu, "30"), DecisionMode.HOT_PATH);   // 50 元券打在 30 元订单上
         double after = counter(DecisionMetrics.CLAMPED, null, null);
 
         assertEquals(before + 1, after, 0.001,
@@ -123,7 +124,7 @@ class DecisionObservabilityTest {
         long spu = nextSpu();
         CreateResult a = online(gift("满额赠", spu));
 
-        query.buyAndGetGifts(req(spu, "500"));
+        query.buyAndGetGifts(req(spu, "500"), DecisionMode.HOT_PATH);
 
         double hits = registry.find(DecisionMetrics.HIT)
                 .tag("scene", "gifts")

@@ -1,6 +1,8 @@
 package com.lrj.drools.activity.metrics;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.lrj.drools.activity.domain.DecisionScene;
+import com.lrj.drools.activity.domain.RejectReason;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -94,11 +96,11 @@ public class DecisionMetrics {
      * {@link #OVER_CAP}。**不要因为"我们活动不多"就去掉这个上限**——活动数是运营行为，
      * 不是工程可控量，而基数爆炸的代价是整套监控在大促当天一起挂。
      */
-    public void hit(String scene, String activityId) {
+    public void hit(DecisionScene scene, String activityId) {
         if (activityId == null || activityId.isBlank()) return;
         String tag = cappedTag(activityId);
         Counter.builder(HIT)
-                .tag("scene", scene == null ? "unknown" : scene)
+                .tag("scene", scene == null ? "unknown" : scene.code())
                 .tag("activityId", tag)
                 .register(registry)
                 .increment();
@@ -121,12 +123,12 @@ public class DecisionMetrics {
     // ---------------------------------------------------------------- 决策
 
     /** 计时一次决策。{@code mode} 取 {@code rule-engine} / {@code legacy}，与响应体里的 mode 字段同源。 */
-    public <T> T timeDecision(String scene, Supplier<T> body, java.util.function.Function<T, String> modeOf) {
+    public <T> T timeDecision(DecisionScene scene, Supplier<T> body, java.util.function.Function<T, String> modeOf) {
         long t0 = System.nanoTime();
         T out = body.get();
         Timer.builder(DURATION)
                 .description("一次决策的端到端耗时")
-                .tag("scene", scene)
+                .tag("scene", code(scene))
                 .tag("mode", safe(modeOf.apply(out)))
                 .publishPercentileHistogram()
                 .register(registry)
@@ -139,20 +141,34 @@ public class DecisionMetrics {
      * 而不是运营配置的规则。reason 用有限集合（编译失败 / 执行异常 / 空决策 / 开关关闭），不要塞异常全文，
      * 否则标签基数会爆。
      */
+    public void fallback(DecisionScene scene, String reason) {
+        fallback(code(scene), reason);
+    }
+
+    /**
+     * 裸 String 档的回退计数。
+     *
+     * <p>TODO(R4·契约变更，独立提交)：唯一还在用它的调用点是
+     * {@code ActivityRuleRuntimeService.safeRun}，它传的是 {@code RuleScene.name()}
+     * （{@code ELIGIBILITY}/{@code LADDER}/{@code GIFT}）——<b>又一套与 {@link DecisionScene} 对不上的词汇</b>，
+     * 于是「买赠通道一共回退了多少次」按 {@code scene="gifts"} 查会漏掉规则执行失败的那些。
+     * 换成通道枚举会改变已有 Prometheus 序列（同 {@link #decisionSource} 那条 TODO），
+     * 需与 Grafana 面板/告警同批改，故不在本批次里动。
+     */
     public void fallback(String scene, String reason) {
         Counter.builder(FALLBACK)
                 .description("决策回退到旧 Java 逻辑的次数（会改变实际发放金额）")
-                .tag("scene", scene)
+                .tag("scene", safe(scene))
                 .tag("reason", safe(reason))
                 .register(registry)
                 .increment();
     }
 
     /** 候选活动数分布。折扣 MAX/PRIORITY 走 O(N²) 自连接，N 是性能的直接自变量。 */
-    public void candidates(String scene, int n) {
+    public void candidates(DecisionScene scene, int n) {
         DistributionSummary.builder(CANDIDATES)
                 .description("单次决策的候选活动数")
-                .tag("scene", scene)
+                .tag("scene", code(scene))
                 .publishPercentileHistogram()
                 .register(registry)
                 .record(n);
@@ -165,6 +181,11 @@ public class DecisionMetrics {
      * 掉下来就说明发布传播断了（代际没 bump、或轮询挂了），而症状是"变慢"而非"报错"——
      * 没有这个指标就只能等到 P99 告警才发现。
      */
+    // TODO(R4·契约变更，独立提交)：这里的 scene 仍是调用方传进来的 ActivityType.name()
+    //  （RED_PACKAGE / BUY_AND_GET / ADD_ON_PURCHASE），与 DecisionScene 的通道词汇表对不上，
+    //  于是 activity_decision_source_total{scene="gifts"} 查出来是空的。换成 DecisionScene.code()
+    //  会**改变已有 Prometheus 序列**，Grafana 面板与告警必须同批改（deploy/ 下有编排），
+    //  所以刻意不在本批次里动——那是有意的契约变更，不该混进「行为等价」的重构里。
     public void decisionSource(String scene, String source) {
         Counter.builder(SOURCE)
                 .description("决策物料来源：snapshot=代际快照（零查询）/ db=逐请求查库")
@@ -205,12 +226,12 @@ public class DecisionMetrics {
      *
      * <p>activityId 标签复用 {@link #hit} 那套基数保护（{@link #ACTIVITY_TAG_CAP}）。
      */
-    public void amount(String scene, String activityId, java.math.BigDecimal amount) {
+    public void amount(DecisionScene scene, String activityId, java.math.BigDecimal amount) {
         if (amount == null || amount.signum() <= 0) return;
         DistributionSummary.builder(AMOUNT)
                 .description("单次决策实际发出的减免金额（元）")
                 .baseUnit("yuan")
-                .tag("scene", safe(scene))
+                .tag("scene", code(scene))
                 .tag("activityId", cappedTag(activityId))
                 .publishPercentileHistogram()
                 .register(registry)
@@ -221,19 +242,21 @@ public class DecisionMetrics {
      * 记一次「候选被淘汰」。
      *
      * <p><b>「配了但不发」此前在监控上完全不可见。</b>淘汰只写在候选对象的 {@code rejectReason} 上，
-     * 而热路径 {@code explain=false}，那个字段与 trace 两个出口在生产上都不打开。
+     * 而热路径是 {@code DecisionMode.HOT_PATH}，那个字段与 trace 两个出口在生产上都不打开。
      * 唯一沾边的是空决策回退——可它只在「这张券是唯一候选」时才会走到，
      * <b>恰恰是多活动并存这种最容易配错的场景观测全黑</b>。
      *
-     * <p>{@code reason} 必须是有限枚举（ineligible / no-ladder-tier / missing-lines /
-     * price-above-order / bad-ratio / out-of-scope …），不要塞异常全文或活动名，否则标签基数会爆。
+     * <p>{@code reason} 是有限枚举 {@link RejectReason}——码与文案钉在同一行，
+     * 标签基数因此天然封闭。<b>这份清单曾经在 javadoc 里手抄过一遍并且抄错了</b>
+     * （这里写 {@code price-above-order}，代码实际发 {@code price-above-base}），
+     * 所以现在不再复述取值：**以 {@link RejectReason} 枚举为准**。
      * 它的价值与回退率同级：一个回答「算错了吗」，一个回答「为什么没发」。
      */
-    public void reject(String scene, String reason) {
+    public void reject(DecisionScene scene, RejectReason reason) {
         Counter.builder(REJECT)
                 .description("候选活动被淘汰的次数（按原因）——「配了但不发」的唯一信号")
-                .tag("scene", safe(scene))
-                .tag("reason", safe(reason))
+                .tag("scene", code(scene))
+                .tag("reason", reason == null ? "unknown" : reason.code())
                 .register(registry)
                 .increment();
     }
@@ -317,5 +340,10 @@ public class DecisionMetrics {
 
     private static String safe(String s) {
         return s == null || s.isBlank() ? "unknown" : s;
+    }
+
+    /** scene 标签取值的唯一出口。枚举保证取值封闭，null 只可能来自编程错误，兜成 unknown 而不是抛。 */
+    private static String code(DecisionScene scene) {
+        return scene == null ? "unknown" : scene.code();
     }
 }

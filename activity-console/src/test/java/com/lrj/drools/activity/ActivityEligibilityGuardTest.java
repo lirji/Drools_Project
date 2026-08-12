@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -109,6 +110,6 @@ class ActivityEligibilityGuardTest {
 
     private DiscountView discount(Long spuId, String district, List<String> tags) {
         return query.spuDiscount(new SpuDiscountRequest(
-                List.of(spuId), 1001L, district, tags, new BigDecimal("100"), 1));
+                List.of(spuId), 1001L, district, tags, new BigDecimal("100"), 1), DecisionMode.HOT_PATH);
     }
 }

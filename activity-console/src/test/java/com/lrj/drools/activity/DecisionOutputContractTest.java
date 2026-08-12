@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -74,7 +75,7 @@ class DecisionOutputContractTest {
             long spu = nextSpu();
             online(red("大额券", "out-cap", new BigDecimal("50"), spu, "MAX"));
 
-            DiscountView v = query.spuDiscount(req(spu, "30"));
+            DiscountView v = query.spuDiscount(req(spu, "30"), DecisionMode.HOT_PATH);
 
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal("30")),
                     "50 元券打在 30 元订单上只能减 30 —— 减 50 会让应付变成 −20");
@@ -89,7 +90,7 @@ class DecisionOutputContractTest {
             online(red("B", "out-cap3", new BigDecimal("50"), spu, "STACK"));
             online(red("C", "out-cap3", new BigDecimal("50"), spu, "STACK"));
 
-            DiscountView v = query.spuDiscount(req(spu, "120"));
+            DiscountView v = query.spuDiscount(req(spu, "120"), DecisionMode.HOT_PATH);
 
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal("120")),
                     "150 > 120，出口按订单金额封顶");
@@ -106,7 +107,7 @@ class DecisionOutputContractTest {
             long spu = nextSpu();
             online(red("正常券", "out-nocap", new BigDecimal("20"), spu, "MAX"));
 
-            DiscountView v = query.spuDiscount(req(spu, "500"));
+            DiscountView v = query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
 
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20")));
             assertFalse(v.clamped(), "正常决策不得标记截断，否则这个指标会被噪声淹没");
@@ -118,7 +119,7 @@ class DecisionOutputContractTest {
             long spu = nextSpu();
             online(red("无门槛券", "out-noamt", new BigDecimal("20"), spu, "MAX"));
 
-            DiscountView v = query.spuDiscount(req(spu, null));
+            DiscountView v = query.spuDiscount(req(spu, null), DecisionMode.HOT_PATH);
 
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20")),
                     "上游没传订单金额时无从判断是否超发，一律按 0 处理会把正常决策打没");
@@ -137,7 +138,7 @@ class DecisionOutputContractTest {
             online(red("小额", "out-items", new BigDecimal("10"), spu, "MAX"));
             online(red("大额", "out-items", new BigDecimal("80"), spu, "MAX"));
 
-            DiscountView v = query.spuDiscount(req(spu, "500"));
+            DiscountView v = query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
 
             assertEquals(2, v.items().size());
             assertEquals(1, v.items().stream().filter(DiscountItem::applied).count(),
@@ -153,7 +154,7 @@ class DecisionOutputContractTest {
             online(redWithCond("满100可用", "out-reject", new BigDecimal("20"), spu,
                     leaf("orderAmount", "ge", 100)));
 
-            DiscountView v = query.spuDiscount(req(spu, "99"));
+            DiscountView v = query.spuDiscount(req(spu, "99"), DecisionMode.HOT_PATH);
 
             assertFalse(v.hit(), "99 < 100 不该命中");
             assertEquals(1, v.items().size(), "被淘汰的候选也要出现在明细里");
@@ -169,7 +170,7 @@ class DecisionOutputContractTest {
             CreateResult v1 = marketing.create(red("版本券", "out-ver", new BigDecimal("15"), spu, "MAX"));
             marketing.changeStatus(v1.activityId(), v1.version(), ActivityStatus.ONLINE.code());
 
-            DiscountView v = query.spuDiscount(req(spu, "500"));
+            DiscountView v = query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
 
             assertEquals(v1.version(), v.hitVersion(), "命中活动的版本必须可见");
         }
@@ -185,8 +186,8 @@ class DecisionOutputContractTest {
             long spu = nextSpu();
             online(red("锚点券", "out-anchor", new BigDecimal("12"), spu, "MAX"));
 
-            DiscountView a = query.spuDiscount(req(spu, "500"));
-            DiscountView b = query.spuDiscount(req(spu, "500"));
+            DiscountView a = query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
+            DiscountView b = query.spuDiscount(req(spu, "500"), DecisionMode.HOT_PATH);
 
             assertNotNull(a.decisionId(), "客服拿这一串在日志里定位当时的决策");
             assertNotEquals(a.decisionId(), b.decisionId(), "两次决策必须能区分开");
@@ -195,7 +196,7 @@ class DecisionOutputContractTest {
         @Test
         @DisplayName("未命中的决策同样带 decisionId——「查不到」也需要能查")
         void missAlsoCarriesDecisionId() {
-            DiscountView v = query.spuDiscount(req(nextSpu(), "500"));
+            DiscountView v = query.spuDiscount(req(nextSpu(), "500"), DecisionMode.HOT_PATH);
             assertFalse(v.hit());
             assertNotNull(v.decisionId(), "「为什么我没优惠」正是最需要回溯的那一类工单");
         }
@@ -207,7 +208,7 @@ class DecisionOutputContractTest {
             CreateResult r = marketing.create(gift("满额赠", "out-gift", spu));
             marketing.changeStatus(r.activityId(), r.version(), ActivityStatus.ONLINE.code());
 
-            GiftView v = query.buyAndGetGifts(req(spu, "500"));
+            GiftView v = query.buyAndGetGifts(req(spu, "500"), DecisionMode.HOT_PATH);
 
             assertFalse(v.gifts().isEmpty(), "应发出赠品");
             assertNotNull(v.decisionId());

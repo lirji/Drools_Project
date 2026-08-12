@@ -3,6 +3,9 @@ package com.lrj.drools.activity.service;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
+import com.lrj.drools.activity.domain.DecisionScene;
+import com.lrj.drools.activity.domain.RejectReason;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
 import com.lrj.drools.activity.engine.ConditionTreeEvaluator;
@@ -84,14 +87,16 @@ public class DecisionEligibilityService {
     }
 
     /**
-     * 用结构化条件树淘汰不满足资格的候选，并按 explain 追加稳定 trace。
+     * 用结构化条件树淘汰不满足资格的候选，并按档位追加稳定 trace。
      *
-     * @param scene 有限集合的指标标签（如 spu-discount / gifts / addon）
+     * @param scene 决策通道（指标标签的唯一词汇表，见 {@link DecisionScene}）
+     * @param mode  决策档位（{@link DecisionMode#EXPLAIN} 才写 trace）。
+     *              <b>档位只影响 trace，绝不影响谁被淘汰</b>——淘汰与计数在两档下逐字节一致。
      */
     public void applyJava(ActivityRuleContext ctx,
                           DecisionDataLoader.Materials materials,
-                          String scene,
-                          boolean explain,
+                          DecisionScene scene,
+                          DecisionMode mode,
                           List<String> traces) {
         List<ActivityCandidate> candidates = materials.candidates() == null
                 ? List.of() : materials.candidates();
@@ -107,24 +112,35 @@ public class DecisionEligibilityService {
             if (tree == null) {
                 if (constrained.contains(candidate.getActivityId())) {
                     metrics.fallback(scene, "condition-tree-unavailable");
-                    metrics.reject(scene, "condition-unavailable");
-                    candidate.reject("资格条件不可判定");
-                    if (explain) {
+                    metrics.reject(scene, RejectReason.CONDITION_UNAVAILABLE);
+                    candidate.reject(RejectReason.CONDITION_UNAVAILABLE);
+                    if (mode.explains()) {
                         traces.add("eligibility reject: " + candidate.getActivityId() + "（条件树不可用）");
                     }
-                } else if (explain && candidate.isEligible()) {
+                } else if (mode.explains() && candidate.isEligible()) {
                     traces.add("eligible: " + candidate.getActivityId());
                 }
                 continue;
             }
 
-            if (!conditions.matches(tree, ctx, schemaRegistry.resolve(tenant, candidate.getBizLine()))) {
-                candidate.reject("不满足资格条件");
+            ConditionTreeEvaluator.Verdict verdict =
+                    conditions.evaluate(tree, ctx, schemaRegistry.resolve(tenant, candidate.getBizLine()));
+            if (verdict == ConditionTreeEvaluator.Verdict.UNDECIDABLE) {
+                // 树在，但里面有段读不懂（脏 logic / schema 漂移）。与上面「树压根不在」同一类故障，
+                // 走同一个原因码——**不能记成 INELIGIBLE**，否则数据故障会永久伪装成正常的门槛淘汰。
+                // 求值器此前直调 fromCode，这条路径的表现是整次请求 500（连累同请求里其它正常活动）。
+                metrics.reject(scene, RejectReason.CONDITION_UNAVAILABLE);
+                candidate.reject(RejectReason.CONDITION_UNAVAILABLE);
+                if (mode.explains()) {
+                    traces.add("eligibility reject: " + candidate.getActivityId() + "（条件树不可用）");
+                }
+            } else if (verdict == ConditionTreeEvaluator.Verdict.FAIL) {
+                candidate.reject(RejectReason.INELIGIBLE);
                 // 「配了但不发」的观测出口。与 condition-tree-unavailable 分开计数是关键：
                 // 「用户不符合门槛」是正常业务，「你的活动坏了」是故障，两者的处理方式完全相反。
-                metrics.reject(scene, "ineligible");
-                if (explain) traces.add("eligibility reject: " + candidate.getActivityId());
-            } else if (explain && candidate.isEligible()) {
+                metrics.reject(scene, RejectReason.INELIGIBLE);
+                if (mode.explains()) traces.add("eligibility reject: " + candidate.getActivityId());
+            } else if (mode.explains() && candidate.isEligible()) {
                 traces.add("eligible: " + candidate.getActivityId());
             }
         }

@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -142,7 +143,7 @@ class SnapshotParityTest {
         // ---- 第一遍：走库（store 为空）----
         store.clear();
         List<DiscountView> viaDb = new ArrayList<>();
-        for (Scenario sc : scenarios) viaDb.add(query.spuDiscount(sc.request()));
+        for (Scenario sc : scenarios) viaDb.add(query.spuDiscount(sc.request(), DecisionMode.HOT_PATH));
 
         // ---- 发布快照 ----
         for (String biz : List.of("par-ladder", "par-max", "par-prio", "par-elig", "par-store", "par-life",
@@ -156,7 +157,7 @@ class SnapshotParityTest {
         Statistics st = emf.unwrap(SessionFactory.class).getStatistics();
         st.clear();
         List<DiscountView> viaSnapshot = new ArrayList<>();
-        for (Scenario sc : scenarios) viaSnapshot.add(query.spuDiscount(sc.request()));
+        for (Scenario sc : scenarios) viaSnapshot.add(query.spuDiscount(sc.request(), DecisionMode.HOT_PATH));
         assertEquals(0, st.getPrepareStatementCount(),
                 "第二遍本应全部走快照，却发出了 " + st.getPrepareStatementCount()
                         + " 条 SQL —— 对拍已退化为『库 vs 库』，结果不可信");
@@ -211,11 +212,11 @@ class SnapshotParityTest {
 
         // ---- 走库 ----
         store.clear();
-        DiscountView viaDb = query.spuDiscount(req(dropped, "500", null));
+        DiscountView viaDb = query.spuDiscount(req(dropped, "500", null), DecisionMode.HOT_PATH);
 
         // ---- 走快照 ----
         store.publish(builder.build(tenant(), "par-narrow", 1L));
-        DiscountView viaSnapshot = query.spuDiscount(req(dropped, "500", null));
+        DiscountView viaSnapshot = query.spuDiscount(req(dropped, "500", null), DecisionMode.HOT_PATH);
 
         assertFalse(viaSnapshot.hit(),
                 "快照路径不该命中：v2 已经不绑这个 SPU（这一侧本来就是对的，红了说明快照侧也退化了）");
@@ -234,7 +235,7 @@ class SnapshotParityTest {
 
         Statistics st = emf.unwrap(SessionFactory.class).getStatistics();
         st.clear();
-        DiscountView v = query.spuDiscount(req(spu, "500", null));
+        DiscountView v = query.spuDiscount(req(spu, "500", null), DecisionMode.HOT_PATH);
 
         assertTrue(v.hit(), "快照路径应命中");
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("40")));
@@ -249,18 +250,18 @@ class SnapshotParityTest {
         CreateResult v1 = marketing.create(red("回滚验证", "par-rb", new BigDecimal("50"), null, null, 1, spu, "MAX"));
         online(v1);
         store.publish(builder.build(tenant(), "par-rb", 1L));
-        assertEquals(0, query.spuDiscount(req(spu, "500", null)).hitAmount().compareTo(new BigDecimal("50")));
+        assertEquals(0, query.spuDiscount(req(spu, "500", null), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("50")));
 
         // 发新版本 → 新快照
         CreateResult v2 = marketing.updateByVersion(edit(v1.activityId(), "回滚验证v2", "par-rb", new BigDecimal("88"), spu));
         online(v2);
         store.publish(builder.build(tenant(), "par-rb", 2L));
-        assertEquals(0, query.spuDiscount(req(spu, "500", null)).hitAmount().compareTo(new BigDecimal("88")),
+        assertEquals(0, query.spuDiscount(req(spu, "500", null), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("88")),
                 "新快照应给出 88");
 
         // 回滚 → 立刻恢复旧物料，无需重启、无需反向发布
         assertTrue(store.rollback(tenant(), "par-rb"), "应能回滚到上一代");
-        assertEquals(0, query.spuDiscount(req(spu, "500", null)).hitAmount().compareTo(new BigDecimal("50")),
+        assertEquals(0, query.spuDiscount(req(spu, "500", null), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("50")),
                 "回滚后应恢复成 50");
 
         // 只保留一代：再回滚一次应失败（而不是静默成功）

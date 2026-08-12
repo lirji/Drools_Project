@@ -76,10 +76,25 @@ public class ActivityCandidate {
 
     public ActivityCandidate() {}
 
-    /** 规则淘汰本候选（fail-closed 资格判定用）。 */
+    /**
+     * 规则淘汰本候选（fail-closed 资格判定用）。
+     *
+     * <p><b>String 重载必须保留</b>：生成的资格 DRL 里 emit 的就是
+     * {@code $c.reject("不满足资格条件");}（{@code ActivityDrlBuilder}），DRL 文本按值调用它；
+     * 算额阶段也要拼「本活动不适用：」前缀，同样落在这个重载上。
+     * Java 侧的新调用点一律用 {@link #reject(RejectReason)}。
+     */
     public void reject(String reason) {
         this.eligible = false;
         this.rejectReason = reason;
+    }
+
+    /**
+     * 按枚举淘汰——<b>码与文案同源</b>，写入的仍是 {@link RejectReason#message()} 这个 String，
+     * 故 {@link #getRejectReason()} 的取值与改造前逐字节一致（前端零改动）。
+     */
+    public void reject(RejectReason reason) {
+        reject(reason == null ? null : reason.message());
     }
 
     public void addGift(GiftResult gift) {

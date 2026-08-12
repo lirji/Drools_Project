@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityCreateRequest.GiftInput;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.ActivityGiftEntity;
@@ -150,18 +151,18 @@ class AddOnPurchaseWritePlaneTest {
             SpuDiscountRequest req = new SpuDiscountRequest(
                     List.of(spu), 1001L, null, null, new BigDecimal("200"), 1);
 
-            AddOnPurchaseService.AddOnOptions options = addOn.options(req);
+            AddOnPurchaseService.AddOnOptions options = addOn.options(req, DecisionMode.EXPLAIN);
             assertEquals(2, options.options().size(), "写平面存进去的换购品必须在决策侧列得出来");
             assertTrue(options.options().stream().anyMatch(o ->
                     "品牌保温杯".equals(o.itemName()) && o.addOnPrice().compareTo(new BigDecimal("9.9")) == 0));
 
             // 第二阶段只认「哪个活动的哪个换购品」，价格重新查——客户端传什么价都不读
-            AddOnPurchaseService.AddOnQuote quote = addOn.quote(req, r.activityId(), "定制帆布袋");
+            AddOnPurchaseService.AddOnQuote quote = addOn.quote(req, r.activityId(), "定制帆布袋", DecisionMode.EXPLAIN);
             assertTrue(quote.ok(), quote.reason());
             assertEquals(0, quote.addOnPrice().compareTo(new BigDecimal("19.9")));
 
             // 不存在的换购品不能报出价来（否则等于按不存在的配置卖货）
-            assertTrue(!addOn.quote(req, r.activityId(), "不存在的东西").ok());
+            assertTrue(!addOn.quote(req, r.activityId(), "不存在的东西", DecisionMode.EXPLAIN).ok());
         }
 
         private ActivityCreateRequest withSpu(long spu, List<GiftInput> items) {

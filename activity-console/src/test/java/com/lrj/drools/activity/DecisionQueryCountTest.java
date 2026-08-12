@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -86,7 +87,7 @@ class DecisionQueryCountTest {
         }
         Statistics st = stats();
         st.clear();
-        query.buyAndGetGifts(req(spu));
+        query.buyAndGetGifts(req(spu), DecisionMode.HOT_PATH);
         assertTrue(st.getQueryExecutionCount() + st.getPrepareStatementCount() <= EXPECTED_QUERIES * 2L,
                 "买赠链路同样不应随候选数增长，实际 statements=" + st.getPrepareStatementCount());
     }
@@ -96,7 +97,7 @@ class DecisionQueryCountTest {
     private long countQueriesFor(long spu) {
         Statistics st = stats();
         st.clear();
-        query.spuDiscount(req(spu));
+        query.spuDiscount(req(spu), DecisionMode.HOT_PATH);
         // JPQL 派生查询走 prepared statement，这里数真实语句数最直接
         return st.getPrepareStatementCount();
     }

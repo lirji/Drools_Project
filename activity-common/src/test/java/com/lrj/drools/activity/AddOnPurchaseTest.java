@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
@@ -103,7 +104,7 @@ class AddOnPurchaseTest {
     void phaseOneListsAll() {
         var svc = serviceReturning(List.of(
                 withGifts("ACT-A", gift("保温杯", "9.9"), gift("雨伞", "19.9"))));
-        var r = svc.options(req());
+        var r = svc.options(req(), DecisionMode.EXPLAIN);
         assertThat(r.options()).hasSize(2);
         assertThat(r.options()).extracting(AddOnPurchaseService.AddOnOption::itemName)
                 .containsExactly("保温杯", "雨伞");
@@ -114,7 +115,7 @@ class AddOnPurchaseTest {
     @Test
     @DisplayName("没有生效活动时返回空列表（正常结果，不是错误）")
     void phaseOneEmptyIsNormal() {
-        var r = serviceReturning(List.of()).options(req());
+        var r = serviceReturning(List.of()).options(req(), DecisionMode.EXPLAIN);
         assertThat(r.options()).isEmpty();
         assertThat(r.traces()).isNotEmpty();
     }
@@ -125,7 +126,7 @@ class AddOnPurchaseTest {
         var svc = serviceReturning(List.of(
                 withGifts("ACT-A", gift("白送的", "0"), gift("倒贴的", "-5"),
                         gift("没配价的", null), gift("正常的", "9.9"))));
-        var r = svc.options(req());
+        var r = svc.options(req(), DecisionMode.EXPLAIN);
         assertThat(r.options()).extracting(AddOnPurchaseService.AddOnOption::itemName)
                 .containsExactly("正常的");
     }
@@ -133,11 +134,11 @@ class AddOnPurchaseTest {
     @Test
     @DisplayName("加价购资格边界：499 不出选项，500 才出选项，并带资格 trace")
     void optionsRespectEligibilityBoundary() {
-        var below = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("499"));
+        var below = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("499"), DecisionMode.EXPLAIN);
         assertThat(below.options()).isEmpty();
         assertThat(below.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
 
-        var at = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("500"));
+        var at = serviceReturning(minimumOrderMaterials("ACT-LIMIT")).options(req("500"), DecisionMode.EXPLAIN);
         assertThat(at.options()).hasSize(1);
         assertThat(at.traces()).contains("eligible: ACT-LIMIT");
     }
@@ -146,13 +147,13 @@ class AddOnPurchaseTest {
     @DisplayName("第二阶段重新加载后重跑同一资格，资格变化会拒绝旧选项并带 trace")
     void quoteRechecksEligibility() {
         var rejected = serviceReturning(minimumOrderMaterials("ACT-LIMIT"))
-                .quote(req("499"), "ACT-LIMIT", "保温杯");
+                .quote(req("499"), "ACT-LIMIT", "保温杯", DecisionMode.EXPLAIN);
         assertThat(rejected.ok()).isFalse();
         assertThat(rejected.addOnPrice()).isNull();
         assertThat(rejected.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
 
         var accepted = serviceReturning(minimumOrderMaterials("ACT-LIMIT"))
-                .quote(req("500"), "ACT-LIMIT", "保温杯");
+                .quote(req("500"), "ACT-LIMIT", "保温杯", DecisionMode.EXPLAIN);
         assertThat(accepted.ok()).isTrue();
         assertThat(accepted.traces()).contains("eligible: ACT-LIMIT");
     }
@@ -166,10 +167,10 @@ class AddOnPurchaseTest {
                 minimumOrderMaterials("ACT-LIMIT", 500));
         AddOnPurchaseService svc = service(loader);
 
-        var first = svc.options(req("200"));
+        var first = svc.options(req("200"), DecisionMode.EXPLAIN);
         assertThat(first.options()).hasSize(1);
 
-        var quote = svc.quote(req("200"), "ACT-LIMIT", "保温杯");
+        var quote = svc.quote(req("200"), "ACT-LIMIT", "保温杯", DecisionMode.EXPLAIN);
         assertThat(quote.ok()).isFalse();
         assertThat(quote.addOnPrice()).isNull();
         assertThat(quote.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
@@ -187,10 +188,10 @@ class AddOnPurchaseTest {
                         List.of(withGifts("ACT-A", gift("雨伞", "19.9"))), List.of(), Map.of()));
         AddOnPurchaseService svc = service(loader);
 
-        assertThat(svc.options(req()).options())
+        assertThat(svc.options(req(), DecisionMode.EXPLAIN).options())
                 .extracting(AddOnPurchaseService.AddOnOption::itemName)
                 .containsExactly("保温杯");
-        var quote = svc.quote(req(), "ACT-A", "保温杯");
+        var quote = svc.quote(req(), "ACT-A", "保温杯", DecisionMode.EXPLAIN);
 
         assertThat(quote.ok()).isFalse();
         assertThat(quote.addOnPrice()).isNull();
@@ -202,7 +203,7 @@ class AddOnPurchaseTest {
     @DisplayName("第二阶段按「活动+换购品」重新查价，返回权威价格")
     void phaseTwoRequotes() {
         var svc = serviceReturning(List.of(withGifts("ACT-A", gift("保温杯", "9.9"))));
-        var q = svc.quote(req(), "ACT-A", "保温杯");
+        var q = svc.quote(req(), "ACT-A", "保温杯", DecisionMode.EXPLAIN);
         assertThat(q.ok()).isTrue();
         assertThat(q.addOnPrice()).isEqualByComparingTo(new BigDecimal("9.9"));
     }
@@ -213,7 +214,7 @@ class AddOnPurchaseTest {
         var svc = serviceReturning(List.of(withGifts("ACT-A", gift("保温杯", "9.9"))));
         // quote 的签名里压根没有"价格"这个参数，这本身就是防改价的设计。
         // 这条测试钉住这一点：只要接口还这样，改价就无从谈起。
-        var q = svc.quote(req(), "ACT-A", "保温杯");
+        var q = svc.quote(req(), "ACT-A", "保温杯", DecisionMode.EXPLAIN);
         assertThat(q.addOnPrice()).isEqualByComparingTo(new BigDecimal("9.9"));
     }
 
@@ -221,7 +222,7 @@ class AddOnPurchaseTest {
     @DisplayName("两阶段之间选项失效 → 拒绝，而不是沿用第一阶段的价格")
     void staleOptionRejected() {
         // 第一阶段拿到了选项，第二阶段活动已下线（loader 返回空）
-        var stale = serviceReturning(List.of()).quote(req(), "ACT-A", "保温杯");
+        var stale = serviceReturning(List.of()).quote(req(), "ACT-A", "保温杯", DecisionMode.EXPLAIN);
         assertThat(stale.ok()).isFalse();
         assertThat(stale.addOnPrice()).as("失效时绝不能带出价格").isNull();
         assertThat(stale.reason()).contains("失效");
@@ -231,9 +232,9 @@ class AddOnPurchaseTest {
     @DisplayName("选了不存在的换购品 / 缺参数 → 拒绝且不抛异常")
     void guards() {
         var svc = serviceReturning(List.of(withGifts("ACT-A", gift("保温杯", "9.9"))));
-        assertThat(svc.quote(req(), "ACT-A", "不存在的").ok()).isFalse();
-        assertThat(svc.quote(req(), "别的活动", "保温杯").ok()).isFalse();
-        assertThat(svc.quote(req(), null, "保温杯").ok()).isFalse();
-        assertThat(svc.quote(req(), "ACT-A", null).ok()).isFalse();
+        assertThat(svc.quote(req(), "ACT-A", "不存在的", DecisionMode.EXPLAIN).ok()).isFalse();
+        assertThat(svc.quote(req(), "别的活动", "保温杯", DecisionMode.EXPLAIN).ok()).isFalse();
+        assertThat(svc.quote(req(), null, "保温杯", DecisionMode.EXPLAIN).ok()).isFalse();
+        assertThat(svc.quote(req(), "ACT-A", null, DecisionMode.EXPLAIN).ok()).isFalse();
     }
 }

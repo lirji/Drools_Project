@@ -45,26 +45,74 @@ import java.util.Objects;
 public class ConditionTreeEvaluator {
 
     /**
-     * 求值整棵树。
+     * 一次树求值的三态结论。
      *
-     * @param schema 字段白名单（决定用哪种访问器语义），与创建期翻译时用的是同一份来源
-     * @return true = 满足资格；false = 淘汰。<b>树为 null 视为恒通过</b>（与"没有条件的活动不生成淘汰规则"一致）
+     * <p><b>为什么需要第三态</b>：{@link #UNDECIDABLE} 与 {@link #FAIL} 都会淘汰候选，但两者是完全不同的
+     * 两件事——「用户不满足运营配的门槛」是<b>正常业务</b>，「这棵树里有一段读不懂」是<b>故障</b>，
+     * 处理方式相反（后者要告警、要有人去修数据）。调用方据此选择 {@code RejectReason}，
+     * 指标上因此能分开计数；如果在这里就塌缩成一个 boolean，故障会永久伪装成正常淘汰。
      */
-    public boolean matches(ConditionNode root, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
-        if (root == null) return true;
-        return eval(root, ctx, schema);
+    public enum Verdict {
+        /** 满足资格。 */
+        PASS,
+        /** 明确不满足资格——正常业务淘汰。 */
+        FAIL,
+        /** 树里有读不懂的部分（脏数据 / schema 漂移）→ fail-closed 淘汰，但属于故障。 */
+        UNDECIDABLE
     }
 
-    private boolean eval(ConditionNode node, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
+    /**
+     * 求值整棵树（布尔出口，保留给不关心「为什么不通过」的调用方）。
+     *
+     * @param schema 字段白名单（决定用哪种访问器语义），与创建期翻译时用的是同一份来源
+     * @return true = 满足资格；false = 淘汰。<b>树为 null 视为恒通过</b>（与"没有条件的活动不生成淘汰规则"一致）。
+     *         不可判定按 fail-closed 归入 false
+     */
+    public boolean matches(ConditionNode root, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
+        return evaluate(root, ctx, schema) == Verdict.PASS;
+    }
+
+    /**
+     * 求值整棵树（三态出口）。生产资格判定走这一个，好让「不满足门槛」与「树坏了」在指标上分开。
+     *
+     * @see Verdict
+     */
+    public Verdict evaluate(ConditionNode root, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
+        if (root == null) return Verdict.PASS;
+        Boolean r = eval(root, ctx, schema);
+        if (r == null) return Verdict.UNDECIDABLE;
+        return r ? Verdict.PASS : Verdict.FAIL;
+    }
+
+    /**
+     * 内部三态求值：{@code TRUE}/{@code FALSE} = 判定结论，{@code null} = 这棵子树不可判定。
+     *
+     * <p>短路顺序与三态出现之前<b>逐字节一致</b>：不可判定只是在原来的两条短路之外多插一次
+     * 「读不懂就整棵树不可判定」的提前返回。干净数据上永远取不到 null 分支，行为不变。
+     */
+    private Boolean eval(ConditionNode node, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
         if (node.isGroup()) {
             List<ConditionNode> children = node.getChildren();
             if (children == null || children.isEmpty()) return true;   // 空组 = 无约束（翻译期也会剪掉）
-            RuleLogic logic = RuleLogic.fromCode(node.getLogic());
+            // {@code isGroup()} 已保证 logic 非空非空白，所以这里解析不出来只有一种含义：**读不懂**
+            // → fail-closed，整棵树不可判定。此处曾直调 fromCode（未知 code 抛 IAE），
+            // 而决策链路一路无 catch —— 一条脏 logic 会把**整次请求**打成 500，
+            // 连累同一次请求里其它完全正常的活动。
+            RuleLogic logic = RuleLogic.tryFromCode(node.getLogic());
+            if (logic == null) return null;
             if (logic == RuleLogic.OR) {
-                for (ConditionNode c : children) if (eval(c, ctx, schema)) return true;
+                for (ConditionNode c : children) {
+                    Boolean r = eval(c, ctx, schema);
+                    if (r == null) return null;
+                    if (r) return true;
+                }
                 return false;
             }
-            for (ConditionNode c : children) if (!eval(c, ctx, schema)) return false;
+            for (ConditionNode c : children) {
+                Boolean r = eval(c, ctx, schema);
+                if (r == null) return null;
+                if (!r) return false;
+            }
             return true;
         }
         return evalLeaf(node, ctx, schema);
@@ -91,21 +139,28 @@ public class ConditionTreeEvaluator {
         // 「购物车第一件是 X」→「购物车包含 X」会更容易命中。方向是往外发钱，属于有意为之——
         // 运营配这个条件时想说的本来就是「买了 X」，而且配合权益作用域（活动只对自己圈的商品算钱），
         // 「更容易命中」同时伴随「每次命中发得更少」，合起来不是放大敞口。
+        //
+        // ⚠ 这里刻意是 switch **表达式**且**不写 default**：新增一个算子时编译器会在这一行报错，
+        // 逼着作者回答「它在 ARRAY 字段上该走兼容映射还是通用分支」。改造前收尾的是 `default -> {}`，
+        // 新算子会**静默**落进下面的标量分支——对 ARRAY 字段按标量语义求值，直接改变谁能领券，
+        // 而且不报错、不回退、没有任何测试会红。null = 本块不处理，交给下面的通用分支。
         if (type == FieldValueType.ARRAY) {
             Collection<?> actual = ctx.listAttr(field.key());
-            switch (op) {
-                case EQ -> { return actual != null && containsValue(actual, raw); }
-                case NE -> { return actual != null && !containsValue(actual, raw); }
+            Boolean mapped = switch (op) {
+                case EQ -> actual != null && containsValue(actual, raw);
+                case NE -> actual != null && !containsValue(actual, raw);
                 case IN -> {
                     List<?> vals = asList(raw);
-                    return actual != null && vals != null && vals.stream().anyMatch(v -> containsValue(actual, v));
+                    yield actual != null && vals != null && vals.stream().anyMatch(v -> containsValue(actual, v));
                 }
                 case NOT_IN -> {
                     List<?> vals = asList(raw);
-                    return actual != null && vals != null && vals.stream().noneMatch(v -> containsValue(actual, v));
+                    yield actual != null && vals != null && vals.stream().noneMatch(v -> containsValue(actual, v));
                 }
-                default -> { /* CONTAINS 系与数值算子走下面的通用分支 */ }
-            }
+                // CONTAINS 系本来就是集合语义、数值算子在 ARRAY 上没有有意义的映射：都走下面的通用分支
+                case GT, GE, LT, LE, BETWEEN, CONTAINS, NOT_CONTAINS, CONTAINS_ANY -> null;
+            };
+            if (mapped != null) return mapped;
         }
 
         return switch (op) {

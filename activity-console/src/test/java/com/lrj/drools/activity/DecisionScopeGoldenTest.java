@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -79,7 +80,7 @@ class DecisionScopeGoldenTest {
 
         // ---- 走库 ----
         store.clear();
-        DiscountView viaDb = query.spuDiscount(req);
+        DiscountView viaDb = query.spuDiscount(req, DecisionMode.HOT_PATH);
         assertTrue(viaDb.hit(), "活动应命中");
         assertEquals(0, viaDb.hitAmount().compareTo(new BigDecimal("4.00")),
                 "只绑 spuB 的 8 折券应按 B 的小计(20) 算出 4.00；"
@@ -87,7 +88,7 @@ class DecisionScopeGoldenTest {
 
         // ---- 走快照 ----
         store.publish(builder.build(TENANT, BIZ, 1L));
-        DiscountView viaSnapshot = query.spuDiscount(req);
+        DiscountView viaSnapshot = query.spuDiscount(req, DecisionMode.HOT_PATH);
         assertEquals(0, viaDb.hitAmount().compareTo(viaSnapshot.hitAmount()),
                 "两条路径必须发同样的钱：库=" + viaDb.hitAmount() + " 快照=" + viaSnapshot.hitAmount());
         assertEquals(viaDb.hitActivityId(), viaSnapshot.hitActivityId());
@@ -106,7 +107,7 @@ class DecisionScopeGoldenTest {
                 List.of(spuA, spuB), 1001L, "110000", List.of("vip"),
                 new BigDecimal("1020"), 3, null, null);
 
-        DiscountView v = query.spuDiscount(req, true);
+        DiscountView v = query.spuDiscount(req, DecisionMode.EXPLAIN);
 
         assertFalse(v.hit(), "算不出作用域基数时宁可不发，不可按整单多发（会减 204）");
         assertTrue(v.traces().stream().anyMatch(t -> t.contains("作用域基数不可知"))
@@ -130,7 +131,7 @@ class DecisionScopeGoldenTest {
                 List.of(new SpuDiscountRequest.OrderLine(spuA, new BigDecimal("5000"), 1),
                         new SpuDiscountRequest.OrderLine(spuB, new BigDecimal("99.9"), 1)));
 
-        DiscountView v = query.spuDiscount(req);
+        DiscountView v = query.spuDiscount(req, DecisionMode.HOT_PATH);
 
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("90.00")),
                 "B 小计 99.9 − 一口价 9.9 = 90.00。若是 5090.00，就是「整车按 9.9 成交」那个缺陷。实际 "
@@ -145,7 +146,7 @@ class DecisionScopeGoldenTest {
         marketing.changeStatus(r.activityId(), r.version(), ActivityStatus.ONLINE.code());
 
         DiscountView v = query.spuDiscount(new SpuDiscountRequest(
-                List.of(spu), 1001L, "110000", List.of("vip"), new BigDecimal("100"), 1, null, null));
+                List.of(spu), 1001L, "110000", List.of("vip"), new BigDecimal("100"), 1, null, null), DecisionMode.HOT_PATH);
 
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20.00")),
                 "这是今天绝大多数流量的形状（单 SPU、不传订单行）。它一旦被 fail-closed，"
@@ -174,7 +175,7 @@ class DecisionScopeGoldenTest {
                 List.of(new SpuDiscountRequest.OrderLine(spuKeep, new BigDecimal("100"), 1),
                         new SpuDiscountRequest.OrderLine(spuDrop, new BigDecimal("200"), 1)));
 
-        DiscountView v = query.spuDiscount(req);
+        DiscountView v = query.spuDiscount(req, DecisionMode.HOT_PATH);
 
         assertEquals(0, v.hitAmount().compareTo(new BigDecimal("20.00")),
                 "v2 已撤掉 spuDrop，作用域只剩 spuKeep(100) → 8 折减 20.00。"

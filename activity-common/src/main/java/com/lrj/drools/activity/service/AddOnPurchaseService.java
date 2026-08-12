@@ -2,7 +2,9 @@ package com.lrj.drools.activity.service;
 
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DecisionProvenance;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import org.springframework.stereotype.Service;
@@ -31,7 +33,7 @@ import java.util.List;
 @Service
 public class AddOnPurchaseService {
 
-    private static final String SCENE_ADDON = "addon";
+    private static final DecisionScene SCENE_ADDON = DecisionScene.ADDON;
 
     private final DecisionDataLoader loader;
     private final DecisionEligibilityService eligibility;
@@ -77,14 +79,15 @@ public class AddOnPurchaseService {
      * <p>只回答「有哪些选项、各加多少钱」，**不替用户挑**。选项为空是正常结果，
      * 不是错误——调用方据此不展示换购入口即可。
      *
-     * <p>{@code explain} 与 discount 链路同一分档约定：console 试算传 true（逐候选资格 trace 外显），
-     * 决策热路径传 false（只保留结构性 trace）。此前这里写死 true，资格淘汰明细恒随热路径响应外泄。
+     * <p>{@code mode} 与 discount 链路同一分档约定：console 试算传 {@link DecisionMode#EXPLAIN}
+     * （逐候选资格 trace 外显），决策热路径传 {@link DecisionMode#HOT_PATH}（只保留结构性 trace）。
+     * 此前这里写死 true，资格淘汰明细恒随热路径响应外泄。
+     *
+     * <p><b>档位必须显式传</b>：便捷重载已删。它此前默认的是 {@code true}，
+     * 而姊妹服务 {@code ActivityQueryService} 的同类重载默认 {@code false}——两个默认值方向相反，
+     * 而调用点上看不出来。今天没出事只是因为 console 恰好调这一侧、decision 恰好调那一侧。
      */
-    public AddOnOptions options(SpuDiscountRequest req) {
-        return options(req, true);
-    }
-
-    public AddOnOptions options(SpuDiscountRequest req, boolean explain) {
+    public AddOnOptions options(SpuDiscountRequest req, DecisionMode mode) {
         List<String> traces = new ArrayList<>();
         DecisionDataLoader.Materials materials =
                 loader.load(req.spuIdList(), ActivityType.ADD_ON_PURCHASE, true);
@@ -95,7 +98,7 @@ public class AddOnPurchaseService {
         }
 
         var ctx = eligibility.buildContext(req, candidates);
-        eligibility.applyJava(ctx, materials, SCENE_ADDON, explain, traces);
+        eligibility.applyJava(ctx, materials, SCENE_ADDON, mode, traces);
 
         List<AddOnOption> out = new ArrayList<>();
         for (ActivityCandidate c : candidates) {
@@ -121,11 +124,7 @@ public class AddOnPurchaseService {
      * <p>选项在两阶段之间可能失效（活动下线、配置改了、换购品被删），
      * 此时返回 {@code ok=false} 而不是沿用第一阶段的价格——那等于按已经作废的配置卖货。
      */
-    public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName) {
-        return quote(req, activityId, itemName, true);
-    }
-
-    public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName, boolean explain) {
+    public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName, DecisionMode mode) {
         if (activityId == null || activityId.isBlank() || itemName == null || itemName.isBlank()) {
             // provenance 显式为 null：这条路径**根本没装载过物料**。
             // 填 db() 会声称查过库，而「没查过」与「查了库」是两件不同的事。
@@ -133,7 +132,7 @@ public class AddOnPurchaseService {
                     "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"), null);
         }
         // 第二阶段必须重新装载并重跑资格：不能沿用第一阶段的候选或价格。
-        AddOnOptions fresh = options(req, explain);
+        AddOnOptions fresh = options(req, mode);
         for (AddOnOption o : fresh.options()) {
             if (activityId.equals(o.activityId()) && itemName.equals(o.itemName())) {
                 List<String> traces = new ArrayList<>(fresh.traces());

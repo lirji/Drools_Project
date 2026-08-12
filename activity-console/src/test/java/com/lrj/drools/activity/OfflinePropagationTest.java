@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.ActivityGenerationRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
@@ -140,7 +141,7 @@ class OfflinePropagationTest {
 
         // decision 侧轮询见代际增长 → 建快照切指针
         store.publish(builder.build(TENANT, biz, generationOf(biz)));
-        DiscountView online = query.spuDiscount(req(spu));
+        DiscountView online = query.spuDiscount(req(spu), DecisionMode.HOT_PATH);
         assertTrue(online.hit(), "上线后应命中");
         assertEquals(0, online.hitAmount().compareTo(new BigDecimal("50")));
 
@@ -151,7 +152,7 @@ class OfflinePropagationTest {
         // 重建用的代际号取自库里那一行，与生产轮询取的是同一个值。
         store.publish(builder.build(TENANT, biz, generationOf(biz)));
 
-        DiscountView offline = query.spuDiscount(req(spu));
+        DiscountView offline = query.spuDiscount(req(spu), DecisionMode.HOT_PATH);
         assertFalse(offline.hit(),
                 "下线并重建快照后仍在命中 —— 已下线的活动还在发钱");
         assertEquals(0, BigDecimal.ZERO.compareTo(offline.hitAmount()), "下线后金额必须为 0");
@@ -169,7 +170,7 @@ class OfflinePropagationTest {
         marketing.changeStatus(r.activityId(), r.version(), ActivityStatus.OFFLINE.code());
 
         // 故意不重建快照，模拟「信号漏发 / 轮询卡住」
-        DiscountView stale = query.spuDiscount(req(spu));
+        DiscountView stale = query.spuDiscount(req(spu), DecisionMode.HOT_PATH);
         assertTrue(stale.hit(),
                 "本用例记录的是快照的固有性质：它是**正向物化**的（构建期按 ONLINE 过滤），"
                         + "『后来下线了』在快照的数据结构里无法表达，materialize 只重判类型与时间窗。"
@@ -178,7 +179,7 @@ class OfflinePropagationTest {
 
         // 兜底重建（GenerationWarmService 的陈旧扫描做的事）——不占回滚槽位
         store.refresh(builder.build(TENANT, biz, generationOf(biz)));
-        assertFalse(query.spuDiscount(req(spu)).hit(), "兜底重建后必须停止命中");
+        assertFalse(query.spuDiscount(req(spu), DecisionMode.HOT_PATH).hit(), "兜底重建后必须停止命中");
     }
 
     @Test
@@ -193,14 +194,14 @@ class OfflinePropagationTest {
         CreateResult v2 = marketing.updateByVersion(edit(v1.activityId(), "第二代", biz, new BigDecimal("60"), spu));
         marketing.changeStatus(v2.activityId(), v2.version(), ActivityStatus.ONLINE.code());
         store.publish(builder.build(TENANT, biz, 2L));
-        assertEquals(0, query.spuDiscount(req(spu)).hitAmount().compareTo(new BigDecimal("60")));
+        assertEquals(0, query.spuDiscount(req(spu), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("60")));
 
         // 兜底重建若走 publish，就会把 previous 槽位挤成「同一代的旧副本」，
         // 回滚将退到几十秒前的自己而不是上一个发布代际 —— 等于回滚失效。
         store.refresh(builder.build(TENANT, biz, 2L));
 
         assertTrue(store.rollback(TENANT, biz), "应仍能回滚");
-        assertEquals(0, query.spuDiscount(req(spu)).hitAmount().compareTo(new BigDecimal("20")),
+        assertEquals(0, query.spuDiscount(req(spu), DecisionMode.HOT_PATH).hitAmount().compareTo(new BigDecimal("20")),
                 "回滚必须退到上一个**发布代际**（20），而不是兜底重建前的同代副本（60）");
     }
 

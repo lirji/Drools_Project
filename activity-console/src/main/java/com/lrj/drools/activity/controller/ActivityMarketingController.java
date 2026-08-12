@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityStatusRequest;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DistributionMode;
 import com.lrj.drools.activity.domain.RuleLogic;
 import com.lrj.drools.activity.domain.RuleOperator;
@@ -158,13 +159,14 @@ public class ActivityMarketingController {
 
     @PostMapping("/spu-discount")
     public ResponseEntity<?> spuDiscount(@RequestBody SpuDiscountRequest req) {
-        // 控制台试算是运营的调试入口，显式开 explain；决策平面 /decision/v1 走默认 false
-        return ResponseEntity.ok(query.spuDiscount(req, true));
+        // 控制台试算是运营的调试入口，显式开 EXPLAIN；决策平面 /decision/v1 显式 HOT_PATH。
+        // 两边都必须写出来——服务侧已经没有「省掉档位」的重载了。
+        return ResponseEntity.ok(query.spuDiscount(req, DecisionMode.EXPLAIN));
     }
 
     @PostMapping("/gifts")
     public ResponseEntity<?> gifts(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(query.buyAndGetGifts(req, true));
+        return ResponseEntity.ok(query.buyAndGetGifts(req, DecisionMode.EXPLAIN));
     }
 
     /**
@@ -173,7 +175,7 @@ public class ActivityMarketingController {
      */
     @PostMapping("/addon/options")
     public ResponseEntity<?> addOnOptions(@RequestBody SpuDiscountRequest req) {
-        return ResponseEntity.ok(addOn.options(req));
+        return ResponseEntity.ok(addOn.options(req, DecisionMode.EXPLAIN));
     }
 
     /**
@@ -184,7 +186,7 @@ public class ActivityMarketingController {
     public ResponseEntity<?> addOnQuote(@RequestBody SpuDiscountRequest req,
                                         @RequestParam("activityId") String activityId,
                                         @RequestParam("item") String item) {
-        var quote = addOn.quote(req, activityId, item);
+        var quote = addOn.quote(req, activityId, item, DecisionMode.EXPLAIN);
         return quote.ok() ? ResponseEntity.ok(quote) : ResponseEntity.status(409).body(quote);
     }
 

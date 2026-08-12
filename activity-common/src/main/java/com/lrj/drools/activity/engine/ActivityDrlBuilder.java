@@ -1,5 +1,6 @@
 package com.lrj.drools.activity.engine;
 
+import com.lrj.drools.activity.domain.RejectReason;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -79,7 +80,11 @@ public class ActivityDrlBuilder {
                     .append("        $c : ActivityCandidate( activityId == \"").append(id).append("\", eligible == true )\n")
                     .append("        not ActivityRuleContext( ").append(def.constraint()).append(" )\n")
                     .append("    then\n")
-                    .append("        $c.reject(\"不满足资格条件\");\n");
+                    // 淘汰文案的第三份拷贝在这里被消掉：取值来自 RejectReason，而不是又抄一遍中文串。
+                    // **emit 出来的 DRL 文本必须与改造前逐字节一致**——变一个字节，compileOrGet 的
+                    // 缓存键就变了（缓存键是 DRL 全文），全量活动会在下一次编译时白跑一遍。
+                    // 所以这里拼的仍是字面量形式 $c.reject("不满足资格条件");，只是那串中文来自枚举。
+                    .append("        $c.reject(\"").append(RejectReason.INELIGIBLE.message()).append("\");\n");
             trace(sb, explain, "        result.trace(\"eligibility reject: " + id + "\");\n");
             sb.append("end\n\n");
         }

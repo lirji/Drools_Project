@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -93,7 +94,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(red("阶梯", "gold-ladder", null, TIERS, null, 1, spu, "MAX")));
 
             BigDecimal order = new BigDecimal(orderAmount);
-            DiscountView v = query.spuDiscount(req(spu, order));
+            DiscountView v = query.spuDiscount(req(spu, order), DecisionMode.HOT_PATH);
 
             // 落档结果看**逐活动明细**：那是活动自己算出来的减免，不受订单级封顶影响。
             // 分成两个断言是因为「落到哪一档」和「最终发多少」在封顶引入后不再是同一件事：
@@ -120,7 +121,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("阶梯带底价", "gold-ladder", new BigDecimal("7"), TIERS, null, 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, null));
+            DiscountView v = query.spuDiscount(req(spu, null), DecisionMode.HOT_PATH);
             assertAmount("7", v, "无订单金额时阶梯闸门不开，应落到 redPackageAmount");
         }
 
@@ -134,7 +135,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("阶梯空档", "gold-ladder-gap", null, GAPPED_TIERS, null, 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")), DecisionMode.HOT_PATH);
             assertFalse(v.hit(), "未落档就是算不出金额，报命中会让运营以为优惠发出去了");
             assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO));
         }
@@ -147,7 +148,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(red("阶梯空档", "gold-ladder-prio", null, GAPPED_TIERS, null, 0, spu, "PRIORITY")));
             online(marketing.create(red("固定减 10", "gold-ladder-prio", new BigDecimal("10"), null, null, 1, spu, "PRIORITY")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("200")), DecisionMode.HOT_PATH);
             assertAmount("10", v, "0 元幽灵候选凭 priority 击败真优惠，用户一分钱拿不到且无任何日志");
         }
     }
@@ -162,19 +163,19 @@ class DecisionGoldenSetTest {
         void maxPicksLargest() {
             long spu = nextSpu();
             onlineAll("gold-max", spu, "MAX", amt(30, 1), amt(80, 1), amt(55, 1));
-            assertAmount("80", query.spuDiscount(req(spu, new BigDecimal("500"))), "MAX 取最大");
+            assertAmount("80", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "MAX 取最大");
         }
 
         @Test @DisplayName("MAX · 单候选")
         void maxSingle() {
             long spu = nextSpu();
             onlineAll("gold-max", spu, "MAX", amt(42, 1));
-            assertAmount("42", query.spuDiscount(req(spu, new BigDecimal("500"))), "单候选即结果");
+            assertAmount("42", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "单候选即结果");
         }
 
         @Test @DisplayName("MAX · 零候选 → 不命中且金额为 0")
         void maxNoCandidate() {
-            DiscountView v = query.spuDiscount(req(nextSpu(), new BigDecimal("500")));
+            DiscountView v = query.spuDiscount(req(nextSpu(), new BigDecimal("500")), DecisionMode.HOT_PATH);
             assertFalse(v.hit(), "无绑定活动不应命中");
             assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO));
         }
@@ -183,14 +184,14 @@ class DecisionGoldenSetTest {
         void maxTie() {
             long spu = nextSpu();
             onlineAll("gold-max", spu, "MAX", amt(60, 1), amt(60, 2));
-            assertAmount("60", query.spuDiscount(req(spu, new BigDecimal("500"))), "并列时金额仍是 60");
+            assertAmount("60", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "并列时金额仍是 60");
         }
 
         @Test @DisplayName("PRIORITY · priority 数字小者胜，与金额大小无关")
         void priorityWinsOverAmount() {
             long spu = nextSpu();
             onlineAll("gold-priority", spu, "PRIORITY", amt(10, 1), amt(90, 5));
-            assertAmount("10", query.spuDiscount(req(spu, new BigDecimal("500"))),
+            assertAmount("10", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH),
                     "priority=1 优先于 priority=5，哪怕它金额更小");
         }
 
@@ -198,28 +199,28 @@ class DecisionGoldenSetTest {
         void priorityTieBreaksByAmount() {
             long spu = nextSpu();
             onlineAll("gold-priority", spu, "PRIORITY", amt(10, 3), amt(90, 3));
-            assertAmount("90", query.spuDiscount(req(spu, new BigDecimal("500"))), "同优先级取金额大者");
+            assertAmount("90", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "同优先级取金额大者");
         }
 
         @Test @DisplayName("MUTEX · 与 PRIORITY 同语义（互斥单选）")
         void mutexPicksByPriority() {
             long spu = nextSpu();
             onlineAll("gold-mutex", spu, "MUTEX", amt(15, 2), amt(70, 8));
-            assertAmount("15", query.spuDiscount(req(spu, new BigDecimal("500"))), "MUTEX 按 priority 单选");
+            assertAmount("15", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "MUTEX 按 priority 单选");
         }
 
         @Test @DisplayName("STACK · 全部候选金额累加")
         void stackSumsAll() {
             long spu = nextSpu();
             onlineAll("gold-stack", spu, "STACK", amt(10, 1), amt(20, 2), amt(30, 3));
-            assertAmount("60", query.spuDiscount(req(spu, new BigDecimal("500"))), "STACK 累加 10+20+30");
+            assertAmount("60", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "STACK 累加 10+20+30");
         }
 
         @Test @DisplayName("STACK · 单候选等于其自身")
         void stackSingle() {
             long spu = nextSpu();
             onlineAll("gold-stack", spu, "STACK", amt(33, 1));
-            assertAmount("33", query.spuDiscount(req(spu, new BigDecimal("500"))), "单条累加即自身");
+            assertAmount("33", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "单条累加即自身");
         }
     }
 
@@ -234,7 +235,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("满 100 可用", "gold-elig", new BigDecimal("20"), null,
                     leaf("orderAmount", "ge", 100), 1, spu, "MAX")));
-            assertAmount("20", query.spuDiscount(req(spu, new BigDecimal("150"))), "150 ≥ 100 应命中");
+            assertAmount("20", query.spuDiscount(req(spu, new BigDecimal("150")), DecisionMode.HOT_PATH), "150 ≥ 100 应命中");
         }
 
         @Test @DisplayName("条件不满足 → 淘汰，且不得回退成命中")
@@ -242,7 +243,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("满 100 可用", "gold-elig", new BigDecimal("20"), null,
                     leaf("orderAmount", "ge", 100), 1, spu, "MAX")));
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("99")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("99")), DecisionMode.HOT_PATH);
             assertFalse(v.hit(), "99 < 100 应被资格淘汰；若这里变成命中，说明 fail-closed 破了");
             assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO));
         }
@@ -254,7 +255,7 @@ class DecisionGoldenSetTest {
                     leaf("orderAmount", "ge", 100000), 1, spu, "MAX")));
             online(marketing.create(red("无门槛小额", "gold-elig", new BigDecimal("8"), null,
                     null, 1, spu, "MAX")));
-            assertAmount("8", query.spuDiscount(req(spu, new BigDecimal("500"))),
+            assertAmount("8", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH),
                     "大额被淘汰后应取剩下的 8，而不是回退成 99");
         }
 
@@ -264,7 +265,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(red("门店专享", "gold-elig", new BigDecimal("18"), null,
                     leaf("storeId", "eq", 1), 1, spu, "MAX")));
             DiscountView v = query.spuDiscount(new SpuDiscountRequest(
-                    List.of(spu), 1001L, "110000", List.of("vip"), new BigDecimal("500"), 1, 1));
+                    List.of(spu), 1001L, "110000", List.of("vip"), new BigDecimal("500"), 1, 1), DecisionMode.HOT_PATH);
             assertAmount("18", v, "storeId 已进入决策入参，条件必须能命中");
         }
 
@@ -273,7 +274,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("门店专享", "gold-elig", new BigDecimal("18"), null,
                     leaf("storeId", "eq", 1), 1, spu, "MAX")));
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")));   // 不传 storeId
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH);   // 不传 storeId
             assertFalse(v.hit(), "缺字段必须 fail-closed（宁可不发，不可超发）");
         }
 
@@ -282,7 +283,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             online(marketing.create(red("VIP 专享", "gold-elig", new BigDecimal("25"), null,
                     leaf("userTags", "contains", "vip"), 1, spu, "MAX")));
-            assertAmount("25", query.spuDiscount(req(spu, new BigDecimal("500"))), "标签含 vip 应命中");
+            assertAmount("25", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "标签含 vip 应命中");
         }
     }
 
@@ -301,7 +302,7 @@ class DecisionGoldenSetTest {
             // （50 与 50.00 等价、1234.56 不被截位），不是封顶行为。原先用 500，1234.56 那一档
             // 会被封顶成 500 而红，那是封顶生效的正确表现，却与本用例想守的东西无关。
             // 封顶本身由 Ratio#stackedRatiosAreCappedAtOrderAmount 与 Ladder#ladderTierBoundaries 覆盖。
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("99999")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("99999")), DecisionMode.HOT_PATH);
             // 用 compareTo：scale 变化（50 → 50.00）不算回归，数值变了才算
             assertEquals(0, v.hitAmount().compareTo(new BigDecimal(amount)),
                     "金额数值必须原样保留；期望 " + amount + " 实际 " + v.hitAmount());
@@ -311,7 +312,7 @@ class DecisionGoldenSetTest {
         void stackKeepsPrecision() {
             long spu = nextSpu();
             onlineAll("gold-stackp", spu, "STACK", amt(new BigDecimal("0.01"), 1), amt(new BigDecimal("0.02"), 2));
-            assertAmount("0.03", query.spuDiscount(req(spu, new BigDecimal("500"))), "0.01+0.02 必须等于 0.03");
+            assertAmount("0.03", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "0.01+0.02 必须等于 0.03");
         }
     }
 
@@ -325,7 +326,7 @@ class DecisionGoldenSetTest {
         void draftNotConsidered() {
             long spu = nextSpu();
             marketing.create(red("草稿", "gold-life", new BigDecimal("50"), null, null, 1, spu, "MAX"));
-            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500"))).hit(), "NORMAL 状态不应命中");
+            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH).hit(), "NORMAL 状态不应命中");
         }
 
         @Test @DisplayName("已下线的活动不参与决策")
@@ -334,7 +335,7 @@ class DecisionGoldenSetTest {
             CreateResult r = marketing.create(red("待下线", "gold-life", new BigDecimal("50"), null, null, 1, spu, "MAX"));
             online(r);
             marketing.changeStatus(r.activityId(), r.version(), ActivityStatus.OFFLINE.code());
-            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500"))).hit(), "OFFLINE 不应命中");
+            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH).hit(), "OFFLINE 不应命中");
         }
 
         @Test @DisplayName("未开始的活动不参与决策")
@@ -343,7 +344,7 @@ class DecisionGoldenSetTest {
             long from = System.currentTimeMillis() + 3_600_000L;
             long to = from + 7_200_000L;
             online(marketing.create(redWindow("未来活动", "gold-life", new BigDecimal("50"), spu, from, to)));
-            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500"))).hit(), "时间窗未到不应命中");
+            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH).hit(), "时间窗未到不应命中");
         }
 
         @Test @DisplayName("编辑已上线的活动，线上版本继续服务（P0-4：编辑不等于下线）")
@@ -351,7 +352,7 @@ class DecisionGoldenSetTest {
             long spu = nextSpu();
             CreateResult v1 = marketing.create(red("在跑的活动", "gold-life", new BigDecimal("50"), null, null, 1, spu, "MAX"));
             online(v1);
-            assertAmount("50", query.spuDiscount(req(spu, new BigDecimal("500"))), "上线后应命中 50");
+            assertAmount("50", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "上线后应命中 50");
 
             // 运营改了个字（金额也顺手改了）→ 产生 v2 草稿
             CreateResult v2 = marketing.updateByVersion(
@@ -359,7 +360,7 @@ class DecisionGoldenSetTest {
             assertEquals(2, v2.version().intValue(), "编辑应产生 v2");
 
             // 关键断言：v1 仍在服务，金额不变。旧实现在这里会 hit=false（活动凭空消失）
-            assertAmount("50", query.spuDiscount(req(spu, new BigDecimal("500"))),
+            assertAmount("50", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH),
                     "编辑只产生草稿，正在服务的 v1 不得被下线");
         }
 
@@ -372,7 +373,7 @@ class DecisionGoldenSetTest {
                     edit(v1.activityId(), "待换版v2", "gold-life", new BigDecimal("80"), spu));
 
             online(v2);
-            assertAmount("80", query.spuDiscount(req(spu, new BigDecimal("500"))), "发布后应命中 v2 的 80");
+            assertAmount("80", query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH), "发布后应命中 v2 的 80");
 
             // 且不能出现"两个版本同时在线"——旧版本必须被退役
             long onlineCount = manageRepo.findByActivityIdAndActivityStatusAndIsDel(
@@ -386,7 +387,7 @@ class DecisionGoldenSetTest {
             long to = System.currentTimeMillis() - 3_600_000L;
             long from = to - 7_200_000L;
             online(marketing.create(redWindow("过期活动", "gold-life", new BigDecimal("50"), spu, from, to)));
-            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500"))).hit(), "时间窗已过不应命中");
+            assertFalse(query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH).hit(), "时间窗已过不应命中");
         }
     }
 
@@ -397,14 +398,14 @@ class DecisionGoldenSetTest {
     void modeIsRuleEngineWhenHit() {
         long spu = nextSpu();
         online(marketing.create(red("模式", "gold-mode", new BigDecimal("11"), null, null, 1, spu, "MAX")));
-        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")));
+        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH);
         assertEquals("rule-engine", v.mode(), "mode 是总开关兼容档位，不是 discount 算额执行器声明");
     }
 
     @Test
     @DisplayName("无候选时 mode=legacy 且不命中")
     void modeIsLegacyWhenNoCandidate() {
-        DiscountView v = query.spuDiscount(req(nextSpu(), new BigDecimal("500")));
+        DiscountView v = query.spuDiscount(req(nextSpu(), new BigDecimal("500")), DecisionMode.HOT_PATH);
         assertEquals("legacy", v.mode());
         assertFalse(v.hit());
     }
@@ -416,7 +417,7 @@ class DecisionGoldenSetTest {
     void hotPathEmitsNoTrace() {
         long spu = nextSpu();
         online(marketing.create(red("无 trace", "gold-explain", new BigDecimal("13"), null, null, 1, spu, "MAX")));
-        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")));
+        DiscountView v = query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH);
         assertAmount("13", v, "关掉 trace 不能影响金额");
         assertTrue(v.traces().isEmpty(),
                 "决策热路径不应 emit trace（构建期就不该生成 result.trace 语句），实际=" + v.traces());
@@ -427,8 +428,8 @@ class DecisionGoldenSetTest {
     void consolePreviewEmitsTrace() {
         long spu = nextSpu();
         online(marketing.create(red("有 trace", "gold-explain", new BigDecimal("13"), null, null, 1, spu, "MAX")));
-        DiscountView hot = query.spuDiscount(req(spu, new BigDecimal("500")), false);
-        DiscountView dbg = query.spuDiscount(req(spu, new BigDecimal("500")), true);
+        DiscountView hot = query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.HOT_PATH);
+        DiscountView dbg = query.spuDiscount(req(spu, new BigDecimal("500")), DecisionMode.EXPLAIN);
 
         assertFalse(dbg.traces().isEmpty(), "开 explain 应能看到命中链路");
         assertEquals(0, hot.hitAmount().compareTo(dbg.hitAmount()),
@@ -459,7 +460,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(zhe("折扣", "gold-ratio", new BigDecimal(zheValue),
                     new BigDecimal("99999"), 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal(orderAmount)));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal(orderAmount)), DecisionMode.HOT_PATH);
             assertAmount(expected, v, why);
         }
 
@@ -471,7 +472,7 @@ class DecisionGoldenSetTest {
                     new BigDecimal("50"), 1, spu, "MAX")));
 
             // 不封顶的话 10000 × 20% = 2000
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("10000")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("10000")), DecisionMode.HOT_PATH);
             assertAmount("50", v, "封顶必须截断——不封顶等于无上限支出");
         }
 
@@ -482,7 +483,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(zhe("无金额", "gold-ratio", new BigDecimal("8"),
                     new BigDecimal("50"), 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, null));
+            DiscountView v = query.spuDiscount(req(spu, null), DecisionMode.HOT_PATH);
             assertEquals(0, v.hitAmount().compareTo(BigDecimal.ZERO),
                     "没有订单金额就算不出折扣；若这里出现 8，说明折数被当成了 8 元发出去");
         }
@@ -497,7 +498,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(zhe("一折B", "gold-ratio-stack", new BigDecimal("1"),
                     new BigDecimal("99999"), 2, spu, "STACK")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")), DecisionMode.HOT_PATH);
 
             // ⚠ 本用例的断言在「金额出口封顶」这一轮被**有意改写**。
             //
@@ -538,7 +539,7 @@ class DecisionGoldenSetTest {
             ruleRepo.save(rule);
             online(r);
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")), DecisionMode.HOT_PATH);
 
             // 阶梯在 orderAmount=100 上会落到 reward=12；折扣算出来是 20。
             // 两条路都必须以「折扣覆盖阶梯」收敛（与固定金额覆盖阶梯的既有语义同源）。
@@ -555,7 +556,7 @@ class DecisionGoldenSetTest {
             online(marketing.create(red("固定券", "gold-ratio-mix", new BigDecimal("15"),
                     null, null, 1, spu, "MAX")));
 
-            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")));
+            DiscountView v = query.spuDiscount(req(spu, new BigDecimal("100")), DecisionMode.HOT_PATH);
             assertAmount("20", v, "折扣券应以 20 元参与 MAX 竞争并胜出");
         }
     }
