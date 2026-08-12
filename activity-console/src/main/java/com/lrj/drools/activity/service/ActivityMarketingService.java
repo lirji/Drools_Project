@@ -28,6 +28,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -55,7 +56,11 @@ public class ActivityMarketingService {
     private final PoolRefRepository poolRefRepo;
     private final ActivityStrategyRepository strategyRepo;
     private final ActivityIdempotencyRepository idempotencyRepo;
-    private final ActivityGrantRepository grantRepo;
+
+    /** 「当前是哪一版」的唯一出口（两套互斥定义都在那里）。 */
+    private final ActivityVersionResolver versions;
+    /** 发放台账。本类只保留同名委派方法，实现在那边（见 {@link GrantService} 类注释）。 */
+    private final GrantService grants;
 
     private final RuleConditionTranslator translator;
     private final RuleSchemaRegistry schemaRegistry;
@@ -79,7 +84,8 @@ public class ActivityMarketingService {
                                     PoolRefRepository poolRefRepo,
                                     ActivityStrategyRepository strategyRepo,
                                     ActivityIdempotencyRepository idempotencyRepo,
-                                    ActivityGrantRepository grantRepo,
+                                    ActivityVersionResolver versions,
+                                    GrantService grants,
                                     RuleConditionTranslator translator,
                                     RuleSchemaRegistry schemaRegistry,
                                     ActivityDrlBuilder drlBuilder,
@@ -94,7 +100,8 @@ public class ActivityMarketingService {
         this.poolRefRepo = poolRefRepo;
         this.strategyRepo = strategyRepo;
         this.idempotencyRepo = idempotencyRepo;
-        this.grantRepo = grantRepo;
+        this.versions = versions;
+        this.grants = grants;
         this.translator = translator;
         this.schemaRegistry = schemaRegistry;
         this.drlBuilder = drlBuilder;
@@ -107,6 +114,19 @@ public class ActivityMarketingService {
 
     @Transactional(rollbackFor = Exception.class)
     public CreateResult create(ActivityCreateRequest req) {
+        return createInternal(req);
+    }
+
+    /**
+     * create / updateByVersion 的<b>共同实现</b>。
+     *
+     * <p>两个公开入口都自带同款 {@code @Transactional}，所以 {@code updateByVersion} 从前那句
+     * {@code return create(req)} 在行为上并无问题——但它是一次<b>绕过代理的自调用</b>：
+     * 读者要先确认「两边注解一样」才能放心，而下一次有人给 {@code create} 单独加个切面
+     * （重试 / 审计 / 更严的传播级别）时，编辑这条路径会静默不生效。
+     * 走私有实现方法则让「自调用不经代理」这件事根本无从发生。
+     */
+    private CreateResult createInternal(ActivityCreateRequest req) {
         validateCommon(req);
 
         // ISSUE-07 幂等：查独立幂等表（覆盖 create 与 edit 重放；租户由 @TenantId 自动作用域）。
@@ -127,8 +147,9 @@ public class ActivityMarketingService {
 
         if (isEdit) {
             activityId = req.activityId();
-            ActivityManageEntity current = manageRepo
-                    .findFirstByActivityIdAndIsDelOrderByVersionDesc(activityId, NOT_DEL)
+            // 编辑基线 = **最高未删除版**（见 {@link #latestDraftVersion}）：编辑要接着草稿改，
+            // 而不是回到正在服务的那一版。这里显式选一套定义，不再让「取哪一版」散在调用点里。
+            ActivityManageEntity current = latestVersionRow(activityId)
                     .orElseThrow(() -> new IllegalArgumentException("活动不存在: " + req.activityId()));
             if (ActivityStatus.OFFLINE.code() == current.getActivityStatus()) {
                 throw new IllegalArgumentException("已下线活动不可编辑: " + activityId);
@@ -211,36 +232,78 @@ public class ActivityMarketingService {
         if (req.activityId() == null || req.activityId().isBlank()) {
             throw new IllegalArgumentException("编辑必须带 activityId");
         }
-        return create(req);
+        return createInternal(req);
     }
 
     // ------------------------------------------------------------------ 上下线
 
+    /**
+     * 「一个活动能被置成哪些状态」的三态活跃集：{@link ActivityStatus#NORMAL} /
+     * {@link ActivityStatus#ONLINE} / {@link ActivityStatus#OFFLINE}。
+     * {@link ActivityStatus#PENDING_EFFECT} 刻意不在其中，见 {@link #resolveTargetStatus}。
+     */
+    private static final Set<ActivityStatus> LIVE_STATUSES =
+            Set.of(ActivityStatus.NORMAL, ActivityStatus.ONLINE, ActivityStatus.OFFLINE);
+
+    /**
+     * 允许的状态迁移表 from × to。
+     *
+     * <p>此前 {@link #changeStatus} 只把 targetStatus 过一遍 {@code fromCode}，<b>从不看当前状态</b>——
+     * 「哪些流转是合法的」在代码里没有任何一处写下来，接手人只能从各个调用点反推。这张表把它写下来。
+     *
+     * <p><b>本表按今天实际发生的流转成文，不趁机收紧</b>（收紧是行为变更，要单独立项）。
+     * 于是三个活跃态之间是全通的，其中两条容易被误当成 bug、都请<b>原样保留</b>：
+     * <ul>
+     *   <li><b>OFFLINE → ONLINE</b>：控制台列表页的上下线按钮就是 {@code status===1 ? 2 : 1}
+     *       （{@code ListView.vue}），已下线的活动点一下就重新上架。注意它与 {@link #create} 里
+     *       「已下线活动不可编辑」<b>不对称</b>：改不了、却能原样重新上线。本表只是让这个不对称
+     *       从「没人写过」变成「写下来了」，没有改变它。</li>
+     *   <li><b>X → X</b> 同态自转：批量下线时勾中一个已经下线的行，今天照样成功并推进代际。
+     *       禁掉它会让批量回执凭空多出一批「失败」，而运营的意图（让这些活动都停）其实已经达成。</li>
+     * </ul>
+     *
+     * <p>{@code PENDING_EFFECT} 作为<b>源</b>仍可迁出（历史/外部导入数据的逃生口，否则这种行会被永久冻住），
+     * 作为<b>目标</b>则全面封死——它没有出现在任何一个 value 里。
+     */
+    private static final Map<ActivityStatus, Set<ActivityStatus>> ALLOWED_TRANSITIONS = Map.of(
+            ActivityStatus.NORMAL, LIVE_STATUSES,
+            ActivityStatus.ONLINE, LIVE_STATUSES,
+            ActivityStatus.OFFLINE, LIVE_STATUSES,
+            ActivityStatus.PENDING_EFFECT, LIVE_STATUSES);
+
+    /** 迁移动作：合法性判定通过之后、状态落到 row 之前执行的副作用。 */
+    @FunctionalInterface
+    private interface TransitionAction {
+        void apply(ActivityManageEntity row);
+    }
+
+    /**
+     * 每个目标状态挂的副作用，<b>按列表顺序执行</b>（四眼要在退役旧线上版之前，否则一次被拒的发布
+     * 会先把正在服务的版本退役掉）。今天只有上线有动作，此前它们是散在方法体里的两段
+     * {@code if (target == ONLINE)}。
+     */
+    private final Map<ActivityStatus, List<TransitionAction>> transitionActions = Map.of(
+            ActivityStatus.ONLINE, List.of(this::enforceFourEyesIfEnabled, this::retireOtherOnlineVersions));
+
     @Transactional(rollbackFor = Exception.class)
     public CreateResult changeStatus(String activityId, Integer version, Integer targetStatus) {
-        ActivityManageEntity row = (version != null)
-                ? manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, version, NOT_DEL)
-                    .orElseThrow(() -> new IllegalArgumentException("活动版本不存在: " + activityId + " v" + version))
-                : manageRepo.findFirstByActivityIdAndIsDelOrderByVersionDesc(activityId, NOT_DEL)
-                    .orElseThrow(() -> new IllegalArgumentException("活动不存在: " + activityId));
-
-        ActivityStatus target = ActivityStatus.fromCode(targetStatus);
-        if (target == null) throw new IllegalArgumentException("目标状态非法: " + targetStatus);
-        // P1-8 四眼：发布(上线)是敏感动作，开关开启时要求审批人身份存在且 ≠ 提交人（提交人不能自审自发）。
-        if (fourEyesEnabled && target == ActivityStatus.ONLINE) {
-            enforceFourEyes(row);
+        // 对外仍可传 null，但**在这里就解析成具名的那一套**（最高未删除版 = 编辑基线同一套定义），
+        // 不把「null 是什么意思」带进方法体后半段——那正是「批量下线打到草稿」那类事故的温床。
+        Integer v = (version != null) ? version : latestDraftVersion(activityId);
+        if (v == null) {
+            throw new IllegalArgumentException("活动不存在: " + activityId);
         }
-        // P0-4 原子指针切换：新版本上线的同一事务里，把该活动其它仍处于 ONLINE 的版本退役。
-        // 没有这一步，编辑不下线之后会出现「v1 与 v2 同时在线」，决策取谁取决于实现细节而非发布动作。
-        if (target == ActivityStatus.ONLINE) {
-            for (ActivityManageEntity old : manageRepo.findByActivityIdAndActivityStatusAndIsDel(
-                    activityId, ActivityStatus.ONLINE.code(), NOT_DEL)) {
-                if (old.getVersion() != null && !old.getVersion().equals(row.getVersion())) {
-                    old.setActivityStatus(ActivityStatus.OFFLINE.code());
-                    old.setModifiedStime(Instant.now());
-                    manageRepo.save(old);
-                }
-            }
+        ActivityManageEntity row = manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL)
+                .orElseThrow(() -> new IllegalArgumentException("活动版本不存在: " + activityId + " v" + v));
+
+        ActivityStatus target = resolveTargetStatus(targetStatus);
+        ActivityStatus from = currentStatusOf(row);
+        if (!ALLOWED_TRANSITIONS.getOrDefault(from, Set.of()).contains(target)) {
+            throw new IllegalArgumentException("状态流转非法: " + from.label() + " → " + target.label()
+                    + "（" + activityId + " v" + row.getVersion() + "）");
+        }
+        for (TransitionAction action : transitionActions.getOrDefault(target, List.of())) {
+            action.apply(row);
         }
         row.setActivityStatus(target.code());
         row.setModifiedStime(Instant.now());
@@ -271,8 +334,14 @@ public class ActivityMarketingService {
      * 而回执还报 23 个全部成功——这正是本功能要消灭的那类静默失败。
      * 现在由调用方按它在列表里看到的那一行传 version：下线传当前 ONLINE 版本，发布传要发的草稿版本。
      * {@code version} 仍允许为 null（表示「随便哪一版，取最高」），但工作台不该这么用。
+     *
+     * <p><b>targetStatus 在进循环之前校验一次</b>。它是整个请求级的参数，不是逐条的结果：
+     * 此前非法目标状态要等每一条各自查完库、各自失败一次才暴露，几十条就是几十次无谓往返，
+     * 回执还长得像「这几十个活动各有各的问题」。现在整请求快速失败（controller 转 400），
+     * 与单条 {@code /status} 接口对同一个非法入参的反应一致。
      */
     public BulkStatusResult bulkChangeStatus(List<BulkStatusItem> items, Integer targetStatus) {
+        resolveTargetStatus(targetStatus);
         List<String> succeeded = new ArrayList<>();
         List<BulkFailure> failed = new ArrayList<>();
         if (items == null) {
@@ -309,6 +378,55 @@ public class ActivityMarketingService {
     public record BulkFailure(String activityId, String reason) {}
 
     /**
+     * 解析并校验<b>目标</b>状态。
+     *
+     * <p>{@link ActivityStatus#PENDING_EFFECT}(3) 在写入口直接拒：它是 {@code fromCode} 认可的合法码，
+     * 但全 main 源码<b>零生产者零消费者</b>——活动被置成 3 之后代际照常推进（传播是有的），
+     * 可它永远进不了任何读路径。也就是说运营看到状态变了、决策侧什么都不会发生，
+     * 而这个落差没有任何一条日志或指标会说出来。与其为一个没人实现的状态立法，不如在入口封口。
+     */
+    private static ActivityStatus resolveTargetStatus(Integer targetStatus) {
+        ActivityStatus target = ActivityStatus.fromCode(targetStatus);
+        if (target == null) throw new IllegalArgumentException("目标状态非法: " + targetStatus);
+        if (!LIVE_STATUSES.contains(target)) {
+            throw new IllegalArgumentException("目标状态非法: " + targetStatus
+                    + "（待生效(3) 尚未实现：置成该状态的活动进不了任何读路径，代际却照常推进）");
+        }
+        return target;
+    }
+
+    /** 解析<b>当前</b>状态（迁移表的 from 侧）。 */
+    private static ActivityStatus currentStatusOf(ActivityManageEntity row) {
+        ActivityStatus from = ActivityStatus.fromCode(row.getActivityStatus());
+        if (from == null) {
+            throw new IllegalStateException("活动当前状态为空: " + row.getActivityId() + " v" + row.getVersion());
+        }
+        return from;
+    }
+
+    /** 上线迁移动作①：P1-8 四眼（开关关闭时无操作）。 */
+    private void enforceFourEyesIfEnabled(ActivityManageEntity row) {
+        if (fourEyesEnabled) {
+            enforceFourEyes(row);
+        }
+    }
+
+    /**
+     * 上线迁移动作②：P0-4 原子指针切换——新版本上线的同一事务里，把该活动其它仍处于 ONLINE 的版本退役。
+     * 没有这一步，编辑不下线之后会出现「v1 与 v2 同时在线」，决策取谁取决于实现细节而非发布动作。
+     */
+    private void retireOtherOnlineVersions(ActivityManageEntity row) {
+        for (ActivityManageEntity old : manageRepo.findByActivityIdAndActivityStatusAndIsDel(
+                row.getActivityId(), ActivityStatus.ONLINE.code(), NOT_DEL)) {
+            if (old.getVersion() != null && !old.getVersion().equals(row.getVersion())) {
+                old.setActivityStatus(ActivityStatus.OFFLINE.code());
+                old.setModifiedStime(Instant.now());
+                manageRepo.save(old);
+            }
+        }
+    }
+
+    /**
      * P1-8 四眼：发布(上线)必须由**非提交人**的审批人执行。
      * 审批人身份缺失 → 拒（无从校验分离，fail-closed）；审批人 == 该版本提交人 → 拒（不能自审自发）。
      */
@@ -328,9 +446,18 @@ public class ActivityMarketingService {
         return manageRepo.findByIsDelOrderByModifiedStimeDesc(NOT_DEL);
     }
 
+    /**
+     * 活动详情——返回的是 <b>{@link #latestDraftVersion 最高未删除版}</b>，也就是草稿（若有）。
+     *
+     * <p><b>不要改成返回线上版</b>：编辑器（{@code EditorView.vue}）拿它当编辑基线，
+     * 编辑就该编草稿；改了会让编辑器加载到一份不可编辑的旧配置。
+     *
+     * <p>但「详情这一版可能不是正在发钱的那一版」必须说出来，而不是留给调用方自己去猜——
+     * 所以另带一个 {@code servingVersion}（当前 ONLINE 版，没有上线版本时为 null）。
+     * 工作台据此提示「你看的是 v2 草稿、在服务的是 v1」（{@code ListView.vue} 的 versionMismatch）。
+     */
     public ActivityDetail getDetail(String activityId) {
-        ActivityManageEntity manage = manageRepo
-                .findFirstByActivityIdAndIsDelOrderByVersionDesc(activityId, NOT_DEL)
+        ActivityManageEntity manage = latestVersionRow(activityId)
                 .orElseThrow(() -> new IllegalArgumentException("活动不存在: " + activityId));
         Integer v = manage.getVersion();
         return new ActivityDetail(
@@ -339,7 +466,31 @@ public class ActivityMarketingService {
                 conditionRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
                 bindingRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
                 giftRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
-                poolRefRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL));
+                poolRefRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
+                currentOnlineVersion(activityId));
+    }
+
+    // ------------------------------------------------------------------ 版本解析（委派给唯一出口）
+
+    /**
+     * <b>最高未删除版</b>——编辑基线 / {@link #changeStatus} 的缺省 / {@link #getDetail}。
+     * 定义与注意事项见 {@link ActivityVersionResolver#latestDraftVersion}。
+     */
+    public Integer latestDraftVersion(String activityId) {
+        return versions.latestDraftVersion(activityId);
+    }
+
+    /**
+     * <b>最高 ONLINE 版</b>——正在服务（正在发钱）的那一版。
+     * 定义与注意事项见 {@link ActivityVersionResolver#currentOnlineVersion}。
+     */
+    public Integer currentOnlineVersion(String activityId) {
+        return versions.currentOnlineVersion(activityId);
+    }
+
+    /** {@link #latestDraftVersion} 的整行版本（编辑与详情要的是整行，不只是版本号）。 */
+    private java.util.Optional<ActivityManageEntity> latestVersionRow(String activityId) {
+        return versions.latestVersionRow(activityId);
     }
 
     // ------------------------------------------------------------------ 校验
@@ -798,187 +949,43 @@ public class ActivityMarketingService {
 
     public record PreviewResult(boolean ok, String constraint, String drl, String message) {}
 
+    /**
+     * @param manage         <b>最高未删除版</b>那一行（草稿优先，见 {@link #getDetail}）
+     * @param servingVersion 当前正在服务的 ONLINE 版本号；没有上线版本时为 null。
+     *                       与 {@code manage.getVersion()} 不等就意味着「你看的这一版还没在发钱」——
+     *                       此前这个落差只能由调用方各自去猜，现在写在响应里（纯增量字段）
+     */
     public record ActivityDetail(ActivityManageEntity manage,
                                  List<ActivityRuleEntity> rules,
                                  List<ActivityConditionEntity> conditions,
                                  List<ActivitySpuBindingEntity> bindings,
                                  List<ActivityGiftEntity> gifts,
-                                 List<PoolRefEntity> poolRefs) {}
+                                 List<PoolRefEntity> poolRefs,
+                                 Integer servingVersion) {}
     // ================================================================ 秒杀库存扣减（一口价配套）
+    //
+    // 实现全部在 {@link GrantService}——发放台账与配置写入口零共享状态。
+    // 这里只保留同名委派：既有调用方（controller / 测试）按这组签名写的，签名不变即零改动。
 
-    /**
-     * claim 结果。{@code ok=false} 时 {@code reason} 说明为什么没抢到；
-     * {@code replay=true} 表示这一单本来就领过了（幂等命中，没有产生新的扣减）。
-     */
-    public record ClaimResult(boolean ok, String activityId, Integer version, int claimed,
-                              String reason, boolean replay, Long grantId) {
-
-        public ClaimResult(boolean ok, String activityId, Integer version, int claimed, String reason) {
-            this(ok, activityId, version, claimed, reason, false, null);
-        }
+    /** 委派 {@link GrantService#claimInventory(String, Integer, Integer, String, String)}。 */
+    public GrantService.ClaimResult claimInventory(String activityId, Integer version, Integer quantity,
+                                                   String userId, String orderId) {
+        return grants.claimInventory(activityId, version, quantity, userId, orderId);
     }
 
-    /**
-     * 抢占库存并落发放流水——**秒杀防超发与发放对账的权威动作**。
-     *
-     * <p><b>为什么必须在写平面、不能在决策链路里做</b>：决策服务连的是只读账号
-     * （{@code deploy/mysql-init/01-decision-readonly-user.sql} 只 GRANT SELECT，
-     * 且 {@code DecisionDdlGuardTest} 钉死），物理上写不了库。这不是疏漏——
-     * 决策热路径是高 QPS 只读，让它去写库会同时毁掉「只读副本可扩」与「写面独占 DDL」两条边界。
-     *
-     * <p>所以分工是：<b>决策只报价，claim 才是提交</b>。
-     * 决策结果里的库存判断是<b>建议性</b>的（读到的那一刻余量可能已被别人抢走，天然 TOCTOU），
-     * 真正的裁决只发生在这里的原子 UPDATE 上。调用方拿到决策报价后必须再 claim 一次，
-     * claim 失败就是没抢到——<b>不能拿决策成功当作抢到了</b>。
-     *
-     * <p><b>本轮修掉的三件事</b>：
-     * <ol>
-     *   <li><b>版本打错行</b>：不传 version 时原来取「最高未删除版本」＝<em>草稿</em>，
-     *       而决策发的是「最高 ONLINE 版本」——防超发的闸门装在了另一行数据上，
-     *       线上版本的库存一件没少、草稿的库存被扣干净。现在缺省解析成<b>当前线上版本</b>。</li>
-     *   <li><b>扣减谓词太松</b>：原来只判 {@code isDel + inventory >= n}，
-     *       已下线、未开始、已结束、草稿版本的库存<b>都能被扣干净</b>。现在补上状态与时间窗。</li>
-     *   <li><b>不幂等</b>：原来同一个用户连点两次就扣两次，因为没有任何东西记得「这一单领过了」。
-     *       现在先插 {@link ActivityGrantEntity}（唯一约束 {@code tenant+order+activity}）再扣减，
-     *       重复提交在数据库层被挡住并返回首次结果。</li>
-     * </ol>
-     *
-     * <p><b>顺序不能反</b>：先插流水后扣库存。反过来（先扣后插）时，插入撞唯一约束会回滚整个事务，
-     * 库存看似安全；但如果扣减成功而插入因为别的原因失败，就会出现「扣了库存却没有账」的黑洞。
-     * 先插流水则让唯一约束在<b>任何扣减发生之前</b>就拦住重复请求。
-     *
-     * @param orderId 订单号。<b>幂等键的一半</b>；为空时退化成不幂等（并在结果里说明），
-     *                因为没有订单号就无从判断「是不是同一单」
-     * @param userId  领取人。每人限领按它计数；为空时该活动若配了 {@code userInventory} 一律拒绝——
-     *                无从判断是不是同一个人时放行，等于限领形同虚设
-     */
-    @Transactional
-    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity,
-                                      String userId, String orderId) {
-        int n = quantity == null ? 1 : quantity;
-        if (activityId == null || activityId.isBlank()) {
-            return new ClaimResult(false, activityId, version, 0, "缺 activityId");
-        }
-        if (n <= 0) return new ClaimResult(false, activityId, version, 0, "扣减数量必须为正");
-
-        // 版本缺省 → 当前**线上**版本（不是最高版本，见方法注释第 1 条）
-        Integer v = version;
-        if (v == null) {
-            v = currentOnlineVersion(activityId);
-            if (v == null) {
-                return new ClaimResult(false, activityId, null, 0, "活动不存在或当前没有上线版本");
-            }
-        }
-
-        ActivityManageEntity row = manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL)
-                .orElse(null);
-        if (row == null) return new ClaimResult(false, activityId, v, 0, "活动版本不存在");
-
-        // ① 幂等：这一单的这个活动领过没有
-        String order = blankToNull(orderId);
-        if (order != null) {
-            var dup = grantRepo.findFirstByOrderIdAndActivityId(order, activityId);
-            if (dup.isPresent()) {
-                ActivityGrantEntity g = dup.get();
-                return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(),
-                        null, true, g.getId());
-            }
-        }
-
-        // ② 每人限领：userInventory > 0 时按流水计数。**拿不到 userId 就拒绝**——
-        // 无从判断是不是同一个人时放行，等于这条限制不存在。
-        Integer perUser = row.getUserInventory();
-        String user = blankToNull(userId);
-        if (perUser != null && perUser > 0) {
-            if (user == null) {
-                return new ClaimResult(false, activityId, v, 0, "该活动限每人 " + perUser + " 份，claim 必须带 userId");
-            }
-            int already = grantRepo.claimedQuantityByUser(activityId, user);
-            if (already + n > perUser) {
-                return new ClaimResult(false, activityId, v, 0,
-                        "超出每人限领（已领 " + already + "，本次 " + n + "，上限 " + perUser + "）");
-            }
-        }
-
-        // ③ 先落流水，再扣库存。**顺序不能反**：
-        // 唯一约束要在任何扣减发生之前就拦住「并发的同一单重复提交」，
-        // 反过来（先扣后插）时两个并发请求会各自扣成功，再由其中一个撞约束回滚——
-        // 回滚能救回库存，但那要靠事务边界一路不出错，而不是靠一条约束。
-        Instant now = Instant.now();
-        ActivityGrantEntity grant = null;
-        if (order != null) {
-            grant = new ActivityGrantEntity(activityId, v, user, order, n,
-                    null, ActivityGrantEntity.HELD, null, now);
-            grantRepo.saveAndFlush(grant);
-        }
-
-        // ④ 判断余量与减一压在同一条 UPDATE 里，靠数据库对同一行的串行化防超发。
-        // **绝不能改成先查后减**——那是 check-then-act 竞态，低并发测不出来、大促必现。
-        int affected = manageRepo.decrementInventory(activityId, v, n, now);
-        if (affected <= 0) {
-            // 没抢到（余量不足 / 活动已下线 / 不在活动期）→ 把刚插的流水撤掉。
-            // 不能留着：一条 HELD 却没有对应扣减的记录，在对账上就是「有账无货」，
-            // 而且会永久占掉这个用户的限领额度、并让这一单再也 claim 不了（幂等分支会命中它）。
-            // 用显式删除而不是抛异常回滚整个事务，是为了保住既有契约——
-            // 调用方一直按「返回 ok=false」处理没抢到，抛异常会让所有调用点的降级逻辑失效。
-            if (grant != null) {
-                grantRepo.delete(grant);
-                grantRepo.flush();
-            }
-            return new ClaimResult(false, activityId, v, 0, "库存不足或活动不可用");
-        }
-        return new ClaimResult(true, activityId, v, n, null, false, grant == null ? null : grant.getId());
+    /** 委派 {@link GrantService#claimInventory(String, Integer, Integer)}（旧三参签名）。 */
+    public GrantService.ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
+        return grants.claimInventory(activityId, version, quantity);
     }
 
-    /** 兼容旧签名（无 userId/orderId）：退化成不幂等、不执行每人限领。新调用方一律用五参版本。 */
-    @Transactional
-    public ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
-        return claimInventory(activityId, version, quantity, null, null);
+    /** 委派 {@link GrantService#releaseGrant}。 */
+    public GrantService.ClaimResult releaseGrant(String orderId, String activityId) {
+        return grants.releaseGrant(orderId, activityId);
     }
 
-    /**
-     * 释放已发放的份额并归还库存——退款 / 取消 / 超时的冲正入口。
-     *
-     * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，且用户的「每人限领」额度也一并作废。
-     * 幂等：已经 RELEASED 的记录直接返回成功，不会重复加库存。
-     */
-    @Transactional
-    public ClaimResult releaseGrant(String orderId, String activityId) {
-        String order = blankToNull(orderId);
-        if (order == null || activityId == null || activityId.isBlank()) {
-            return new ClaimResult(false, activityId, null, 0, "缺 orderId 或 activityId");
-        }
-        ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElse(null);
-        if (g == null) return new ClaimResult(false, activityId, null, 0, "没有对应的发放记录");
-        if (ActivityGrantEntity.RELEASED.equals(g.getState())) {
-            // 幂等：重复释放不重复加库存
-            return new ClaimResult(true, activityId, g.getVersion(), 0, "已释放", true, g.getId());
-        }
-
-        Instant now = Instant.now();
-        g.setState(ActivityGrantEntity.RELEASED);
-        g.setModifiedStime(now);
-        grantRepo.save(g);
-        // 归还不判活动状态与时间窗：活动结束之后仍可能有退款进来（见 incrementInventory 的说明）
-        manageRepo.incrementInventory(activityId, g.getVersion(), g.getQuantity(), now);
-        return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(), null, false, g.getId());
-    }
-
-    /** 某订单上的全部发放记录。客服「这一单用了哪些优惠」的数据源。 */
+    /** 委派 {@link GrantService#grantsOfOrder}。 */
     public List<ActivityGrantEntity> grantsOfOrder(String orderId) {
-        String order = blankToNull(orderId);
-        return order == null ? List.of() : grantRepo.findByOrderId(order);
+        return grants.grantsOfOrder(orderId);
     }
-
-    /** 当前线上版本号；没有上线版本时返回 null。 */
-    private Integer currentOnlineVersion(String activityId) {
-        return manageRepo.findByActivityIdAndActivityStatusAndIsDel(
-                        activityId, ActivityStatus.ONLINE.code(), NOT_DEL).stream()
-                .map(ActivityManageEntity::getVersion)
-                .filter(java.util.Objects::nonNull)
-                .max(Integer::compareTo)
-                .orElse(null);
-    }
-
 
 }

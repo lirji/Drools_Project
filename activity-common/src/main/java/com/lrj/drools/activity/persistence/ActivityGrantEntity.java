@@ -8,7 +8,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
-import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -50,7 +49,7 @@ import java.time.Instant;
                 // 对账 / 客服按单查
                 @Index(name = "idx_grant_order", columnList = "order_id")
         })
-public class ActivityGrantEntity {
+public class ActivityGrantEntity extends TenantScopedEntity {
 
     /** 已占用但未确认（下单未支付）。库存已扣。 */
     public static final String HELD = "HELD";
@@ -62,11 +61,6 @@ public class ActivityGrantEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    /** 租户隔离列：@TenantId 自动追加谓词 + insert 自动落值。 */
-    @TenantId
-    @Column(name = "tenant_id", length = 64)
-    private String tenantId;
 
     @Column(name = "activity_id", length = 64, nullable = false)
     private String activityId;
@@ -97,12 +91,6 @@ public class ActivityGrantEntity {
     @Column(name = "decision_id", length = 64)
     private String decisionId;
 
-    @Column(name = "created_stime", nullable = false)
-    private Instant createdStime;
-
-    @Column(name = "modified_stime", nullable = false)
-    private Instant modifiedStime;
-
     public ActivityGrantEntity() {}
 
     public ActivityGrantEntity(String activityId, Integer version, String userId, String orderId,
@@ -116,15 +104,12 @@ public class ActivityGrantEntity {
         this.amount = amount;
         this.state = state;
         this.decisionId = decisionId;
-        this.createdStime = now;
-        this.modifiedStime = now;
+        setCreatedStime(now);
+        setModifiedStime(now);
     }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public String getActivityId() { return activityId; }
     public void setActivityId(String activityId) { this.activityId = activityId; }
@@ -149,10 +134,4 @@ public class ActivityGrantEntity {
 
     public String getDecisionId() { return decisionId; }
     public void setDecisionId(String decisionId) { this.decisionId = decisionId; }
-
-    public Instant getCreatedStime() { return createdStime; }
-    public void setCreatedStime(Instant createdStime) { this.createdStime = createdStime; }
-
-    public Instant getModifiedStime() { return modifiedStime; }
-    public void setModifiedStime(Instant modifiedStime) { this.modifiedStime = modifiedStime; }
 }

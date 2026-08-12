@@ -156,4 +156,46 @@ describe('ListView 工作台', () => {
     await flushPromises()
     expect(wrapper.get('[data-testid="panel-benefit-form"]').text()).toContain('一口价')
   })
+
+  // 详情端点取的是**最高未删除版**（草稿优先，编辑器要的就是它），而列表行是**正在服务的 ONLINE 版**——
+  // 两套定义不同名。侧板不说破的话，运营会以为看到的就是正在发钱的那份配置。
+  it('详情是草稿版而列表行是线上版时，侧板必须挑明版本落差', async () => {
+    const wrapper = await setup(
+      [
+        listRow({ activityId: 'ACT1', version: 2, activityStatus: 0 }),
+        listRow({ activityId: 'ACT1', version: 1, activityStatus: 1 }),
+      ],
+      {
+        manage: { version: 2 },
+        rules: [{ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }],
+        conditions: [], bindings: [], gifts: [], poolRefs: [], servingVersion: 1,
+      },
+    )
+
+    await wrapper.get('[data-testid="activity-row-ACT1"] .activity-name').trigger('click')
+    await flushPromises()
+
+    const panel = wrapper.get('[data-testid="panel-detail"]')
+    expect(panel.find('.banner-warn').exists()).toBe(true)
+    expect(panel.text()).toContain('最新版本 v2')
+    expect(panel.text()).toContain('正在服务的 v1')
+  })
+
+  it('详情版本与列表行一致时不弹版本落差提示（免得每次点开都是警告）', async () => {
+    const wrapper = await setup(
+      [listRow({ activityId: 'ACT1', version: 1, activityStatus: 1 })],
+      {
+        manage: { version: 1 },
+        rules: [{ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }],
+        conditions: [], bindings: [], gifts: [], poolRefs: [], servingVersion: 1,
+      },
+    )
+
+    await wrapper.get('[data-testid="activity-row-ACT1"] .activity-name').trigger('click')
+    await flushPromises()
+
+    const panel = wrapper.get('[data-testid="panel-detail"]')
+    expect(panel.find('.banner-warn').exists()).toBe(false)
+    expect(panel.text()).not.toContain('正在服务的 v')
+  })
 })

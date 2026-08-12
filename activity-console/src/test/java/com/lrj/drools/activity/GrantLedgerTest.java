@@ -5,8 +5,9 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.persistence.ActivityGrantEntity;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
-import com.lrj.drools.activity.service.ActivityMarketingService.ClaimResult;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
+// 发放台账拆出去了（R12），ClaimResult 跟着它走；断言仍打 ActivityMarketingService 上的同名委派方法。
+import com.lrj.drools.activity.service.GrantService.ClaimResult;
 import com.lrj.drools.activity.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

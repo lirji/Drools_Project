@@ -226,8 +226,9 @@ class ActivityAuthIntegrationTest {
         String writer = mint("activity-acme-cid", true);
         mvc.perform(post("/activity-marketing/ACT-NOT-FOUND/claim")
                         .header("Authorization", "Bearer " + writer))
-                // 通过鉴权后才到业务层；不存在的活动按 claim 契约返回 409。
-                .andExpect(status().isConflict());
+                // 通过鉴权后才到业务层；活动不存在 → 404（R13 起 claim 按失败种类分流：
+                // 缺参 400 / 查无此活动 404 / 抢不到 409，此前一律 409）。
+                .andExpect(status().isNotFound());
     }
 
     /**

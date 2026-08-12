@@ -7,10 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 
 /**
  * 商品池圈选规则。收敛自来源 {@code ActivityProductPoolRule}（去掉车辆维度字段，
@@ -23,16 +21,11 @@ import java.time.Instant;
 @Table(name = "activity_product_pool_rule", indexes = {
         @Index(name = "idx_pr_pool_del", columnList = "tenant_id,pool_id,is_del")
 })
-public class ProductPoolRuleEntity {
+public class ProductPoolRuleEntity extends SoftDeletableTenantEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    /** 租户隔离列（P0-4）：Hibernate @TenantId 自动为每条 SQL 追加 tenant_id 谓词、insert 自动落值，业务代码不手动 set。 */
-    @TenantId
-    @Column(name = "tenant_id", length = 64)
-    private String tenantId;
 
     @Column(name = "pool_id", nullable = false)
     private Long poolId;
@@ -54,21 +47,9 @@ public class ProductPoolRuleEntity {
     @Column(name = "enabled", nullable = false)
     private Integer enabled;
 
-    @Column(name = "is_del", nullable = false)
-    private Integer isDel;
-
-    @Column(name = "created_stime", nullable = false)
-    private Instant createdStime;
-
-    @Column(name = "modified_stime", nullable = false)
-    private Instant modifiedStime;
-
     public ProductPoolRuleEntity() {}
 
     public Long getId() { return id; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public Long getPoolId() { return poolId; }
     public void setPoolId(Long poolId) { this.poolId = poolId; }
@@ -87,13 +68,4 @@ public class ProductPoolRuleEntity {
 
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
-
-    public Integer getIsDel() { return isDel; }
-    public void setIsDel(Integer isDel) { this.isDel = isDel; }
-
-    public Instant getCreatedStime() { return createdStime; }
-    public void setCreatedStime(Instant createdStime) { this.createdStime = createdStime; }
-
-    public Instant getModifiedStime() { return modifiedStime; }
-    public void setModifiedStime(Instant modifiedStime) { this.modifiedStime = modifiedStime; }
 }

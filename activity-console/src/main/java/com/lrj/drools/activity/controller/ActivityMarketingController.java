@@ -17,6 +17,7 @@ import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.service.GenerationService;
+import com.lrj.drools.activity.service.GrantService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -98,10 +99,18 @@ public class ActivityMarketingController {
      * <p>入参是 {@code items:[{activityId, version}]} 而不是裸 id 列表：P0-4 之后线上版与草稿并存，
      * 不传版本就会打到草稿、线上继续发钱（见
      * {@link com.lrj.drools.activity.service.ActivityMarketingService#bulkChangeStatus}）。
+     *
+     * <p>唯一的例外是 {@code targetStatus} 本身非法（含已封死的「待生效」3）：那是<b>整个请求</b>的参数错误，
+     * 不是某几条活动的结果，逐条回执反而会把一次参数写错报成「几十个活动各有各的毛病」。
+     * 这种情况按单条 {@code /status} 接口的同款反应转 400。
      */
     @PostMapping("/bulk-status")
     public ResponseEntity<?> bulkStatus(@RequestBody BulkStatusRequest req) {
-        return ResponseEntity.ok(marketing.bulkChangeStatus(req.items(), req.targetStatus()));
+        try {
+            return ResponseEntity.ok(marketing.bulkChangeStatus(req.items(), req.targetStatus()));
+        } catch (IllegalArgumentException ex) {
+            return bad(ex);
+        }
     }
 
     public record BulkStatusRequest(java.util.List<ActivityMarketingService.BulkStatusItem> items,
@@ -110,8 +119,8 @@ public class ActivityMarketingController {
     /**
      * 抢占秒杀库存。**决策 ≠ 提交**：决策接口只报价，这里才是权威扣减。
      *
-     * <p>返回 200 表示抢到、409 表示没抢到（库存不足或活动不可用）。
-     * 用 409 而不是 200+ok:false，是为了让调用方的重试/降级逻辑能靠状态码分流——
+     * <p>返回 200 表示抢到；没抢到时按 {@link GrantService.FailureKind} 分流状态码（见 {@link #claimStatus}）。
+     * 不用 200+ok:false，是为了让调用方的重试/降级逻辑能靠状态码分流——
      * 200 会被大多数客户端当成成功而继续走下单流程，那正是超发的来源。
      */
     @PostMapping("/{activityId}/claim")
@@ -120,8 +129,7 @@ public class ActivityMarketingController {
                                    @RequestParam(value = "quantity", required = false) Integer quantity,
                                    @RequestParam(value = "userId", required = false) String userId,
                                    @RequestParam(value = "orderId", required = false) String orderId) {
-        var r = marketing.claimInventory(activityId, version, quantity, userId, orderId);
-        return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(409).body(r);
+        return respond(marketing.claimInventory(activityId, version, quantity, userId, orderId));
     }
 
     /**
@@ -129,12 +137,41 @@ public class ActivityMarketingController {
      *
      * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，用户的每人限领额度也一并作废。
      * 幂等：重复释放返回 200 且不重复加库存。
+     *
+     * <p>状态码与 claim 走同一张映射表：<b>缺参是 400、真的查无此单才是 404</b>。
+     * 此前两者都返回 404，客服拿到 404 无法区分「这一单确实没领过」和「调用方漏传了 orderId」。
      */
     @PostMapping("/{activityId}/release")
     public ResponseEntity<?> release(@PathVariable("activityId") String activityId,
                                      @RequestParam("orderId") String orderId) {
-        var r = marketing.releaseGrant(orderId, activityId);
-        return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(404).body(r);
+        return respond(marketing.releaseGrant(orderId, activityId));
+    }
+
+    /**
+     * claim / release 的统一出口：成功 200，失败按<b>失败种类</b>给状态码。
+     *
+     * <p>从前这里只有一个布尔可用，于是 claim 一律 409、release 一律 404——
+     * 「少传一个参数」与「库存真的没了」对客户端是同一个信号，
+     * 而这两件事的正确反应恰好相反（改请求 vs 别再重试）。
+     */
+    private ResponseEntity<?> respond(GrantService.ClaimResult r) {
+        return r.ok() ? ResponseEntity.ok(r) : ResponseEntity.status(claimStatus(r.failureKind())).body(r);
+    }
+
+    /**
+     * 失败种类 → HTTP 状态码。<b>switch 表达式且不写 default</b>：新增一种失败种类而漏了这里就是编译失败，
+     * 不会静默落进某个「差不多的」状态码。
+     *
+     * <p>{@code null}（旧的三参 {@code ClaimResult} 构造器，未标注种类）沿用历史行为 409，
+     * 这样任何没被覆盖到的老路径都不会因为本次改造改变状态码。
+     */
+    private static int claimStatus(GrantService.FailureKind kind) {
+        if (kind == null) return 409;
+        return switch (kind) {
+            case BAD_REQUEST -> 400;
+            case NOT_FOUND -> 404;
+            case OUT_OF_STOCK, PER_USER_LIMIT -> 409;
+        };
     }
 
     /** 按订单查发放记录——客服「这一单用了哪些优惠、各发了多少」的数据源。 */

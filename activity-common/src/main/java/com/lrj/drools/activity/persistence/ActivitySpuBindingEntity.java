@@ -7,9 +7,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.TenantId;
-
-import java.time.Instant;
 
 /**
  * 商品绑定层。收敛自来源 {@code ActivityAdminStoreSpuProduct}。
@@ -22,16 +19,11 @@ import java.time.Instant;
         @Index(name = "idx_sb_spu_eff_del", columnList = "tenant_id,spu_id,effective,is_del"),
         @Index(name = "idx_sb_aid_ver", columnList = "tenant_id,activity_id,version")
 })
-public class ActivitySpuBindingEntity {
+public class ActivitySpuBindingEntity extends SoftDeletableTenantEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    /** 租户隔离列（P0-4）：Hibernate @TenantId 自动为每条 SQL 追加 tenant_id 谓词、insert 自动落值，业务代码不手动 set。 */
-    @TenantId
-    @Column(name = "tenant_id", length = 64)
-    private String tenantId;
 
     @Column(name = "activity_id", length = 64, nullable = false)
     private String activityId;
@@ -57,21 +49,9 @@ public class ActivitySpuBindingEntity {
     @Column(name = "effective", nullable = false)
     private Integer effective;
 
-    @Column(name = "is_del", nullable = false)
-    private Integer isDel;
-
-    @Column(name = "created_stime", nullable = false)
-    private Instant createdStime;
-
-    @Column(name = "modified_stime", nullable = false)
-    private Instant modifiedStime;
-
     public ActivitySpuBindingEntity() {}
 
     public Long getId() { return id; }
-
-    public String getTenantId() { return tenantId; }
-    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
     public String getActivityId() { return activityId; }
     public void setActivityId(String activityId) { this.activityId = activityId; }
@@ -93,13 +73,4 @@ public class ActivitySpuBindingEntity {
 
     public Integer getEffective() { return effective; }
     public void setEffective(Integer effective) { this.effective = effective; }
-
-    public Integer getIsDel() { return isDel; }
-    public void setIsDel(Integer isDel) { this.isDel = isDel; }
-
-    public Instant getCreatedStime() { return createdStime; }
-    public void setCreatedStime(Instant createdStime) { this.createdStime = createdStime; }
-
-    public Instant getModifiedStime() { return modifiedStime; }
-    public void setModifiedStime(Instant modifiedStime) { this.modifiedStime = modifiedStime; }
 }

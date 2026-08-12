@@ -54,17 +54,26 @@ class TenantArchGuardTest {
         for (BeanDefinition def : defs) {
             Class<?> clazz = Class.forName(def.getBeanClassName());
             if (GLOBAL_ENTITIES.contains(clazz.getSimpleName())) continue;
-            boolean hasTenantId = false;
-            for (Field f : clazz.getDeclaredFields()) {
-                if (f.isAnnotationPresent(TenantId.class)) {
-                    hasTenantId = true;
-                    break;
-                }
-            }
-            if (!hasTenantId) missing.add(clazz.getSimpleName());
+            if (!hasTenantIdField(clazz)) missing.add(clazz.getSimpleName());
         }
         assertTrue(missing.isEmpty(),
                 "以下 @Entity 缺 @TenantId（隔离漏洞；确为全局表请登记 GLOBAL_ENTITIES）：" + missing);
+    }
+
+    /**
+     * <b>要沿继承链往上找</b>：租户列现在收在 {@code TenantScopedEntity}（{@code @MappedSuperclass}）里，
+     * 只看 {@code getDeclaredFields()} 会把每一个继承来的实体误判成「缺租户列」。
+     *
+     * <p>这里守的是「这张表的 SQL 会不会被自动加 tenant 谓词」——Hibernate 认继承来的 {@code @TenantId}，
+     * 那么本测试也必须认，否则它守的就不再是隔离，而是「字段写在哪个文件里」。
+     */
+    private static boolean hasTenantIdField(Class<?> clazz) {
+        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (f.isAnnotationPresent(TenantId.class)) return true;
+            }
+        }
+        return false;
     }
 
     @Test
