@@ -13,10 +13,9 @@ import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderActivityDef;
-import com.lrj.drools.activity.engine.ActivityDrlBuilder.LadderTier;
 import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
-import com.lrj.drools.activity.engine.LadderRangeParser;
+import com.lrj.drools.activity.engine.RangePayload;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,7 +110,7 @@ public class ActivityQueryService {
         String decisionId = newDecisionId();
 
         // 取数固定 5 次查询（此前 3N+2 次，评估报告 D1）
-        DecisionDataLoader.Materials materials = loader.load(req.spuIdList(), ActivityType.RED_PACKAGE, false);
+        Materials materials = loader.load(req.spuIdList(), ActivityType.RED_PACKAGE, false);
         List<ActivityCandidate> candidates = materials.candidates();
         metrics.candidates(SCENE_DISCOUNT, candidates.size());
 
@@ -129,7 +128,8 @@ public class ActivityQueryService {
         ActivityRuleContext ctx = eligibility.buildContext(req, candidates);
         List<String> traces = new ArrayList<>();
         // 执行器可回退，业务合并策略不能回退：STACK/PRIORITY/MAX 始终取当前配置。
-        StackStrategy strategy = loader.resolveStrategy(candidates);
+        // 它随物料一起从**同一个来源**出来（快照桶里的 / 走库查出来的），编排层不再自己判一次来源。
+        StackStrategy strategy = materials.strategy();
 
         if (!ruleEngineEnabled) {
             // 总开关关闭只切换算额实现，绝不能顺带把资格条件关闭。
@@ -294,7 +294,7 @@ public class ActivityQueryService {
 
     private GiftView buyAndGetGiftsInternal(SpuDiscountRequest req, DecisionMode mode) {
         String decisionId = newDecisionId();
-        DecisionDataLoader.Materials materials = loader.load(req.spuIdList(), ActivityType.BUY_AND_GET, true);
+        Materials materials = loader.load(req.spuIdList(), ActivityType.BUY_AND_GET, true);
         List<ActivityCandidate> candidates = materials.candidates();
         metrics.candidates(SCENE_GIFT, candidates.size());
         if (candidates.isEmpty()) {
@@ -352,13 +352,24 @@ public class ActivityQueryService {
         return DecisionEligibilityService.requestAttributes(req);
     }
 
+    /**
+     * 挑出配了阶梯分档的候选。解析走 {@link RangePayload#parse} ——{@code redPackageRangeAmount}
+     * 一列三用途，判别规则只能有一份（R9）。
+     *
+     * <p>这里<b>只认 {@link RangePayload.Ladder}</b>：随机区间 / 第 N 件 / 解不开的内容都不是阶梯，
+     * 与改造前「{@code LadderRangeParser} 见到非数组返回空档位」的结果逐分支一致。
+     */
     private List<LadderActivityDef> ladderDefs(List<ActivityCandidate> candidates) {
         List<LadderActivityDef> defs = new ArrayList<>();
         for (ActivityCandidate c : candidates) {
-            if (c.getRedPackageRangeAmount() == null || c.getRedPackageRangeAmount().isBlank()) continue;
-            List<LadderTier> tiers = LadderRangeParser.parse(c.getRedPackageRangeAmount());
+            RangePayload payload = RangePayload.parse(
+                    BenefitForm.of(c.getRedPackageAmountUnit()),
+                    c.getRedPackageTakeType(),
+                    c.getRedPackageRangeAmount());
             // 电商阶梯落档比订单金额；出行等其它 bizLine 由 schema 决定字段（Track A 固定 orderAmount）
-            if (!tiers.isEmpty()) defs.add(new LadderActivityDef(c.getActivityId(), tiers, DecisionAttrs.ORDER_AMOUNT));
+            if (payload instanceof RangePayload.Ladder ladder) {
+                defs.add(new LadderActivityDef(c.getActivityId(), ladder.tiers(), DecisionAttrs.ORDER_AMOUNT));
+            }
         }
         return defs;
     }

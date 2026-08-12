@@ -4,6 +4,7 @@ import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
 import com.lrj.drools.activity.engine.BenefitMath;
 import com.lrj.drools.activity.engine.LadderRangeParser;
@@ -30,14 +31,16 @@ class RandomAmountTest {
     private final BenefitEvaluator evaluator = new BenefitEvaluator(DecisionMetrics.noop());
 
     private static ActivityCandidate randomCandidate(String rangeJson) {
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId("ACT-RAND-1");
-        c.setActivityName("随机红包");
-        c.setVersion(1);
-        c.setRedPackageTakeType(2);              // DistributionMode.RANDOM_AMOUNT
-        c.setRedPackageRangeAmount(rangeJson);
-        c.setEligible(true);
-        return c;
+        return new ActivityCandidate(randomSpec(rangeJson).build());
+    }
+
+    private static OfferSpec.Builder randomSpec(String rangeJson) {
+        return OfferSpec.builder()
+                .activityId("ACT-RAND-1")
+                .activityName("随机红包")
+                .version(1)
+                .redPackageTakeType(2)           // DistributionMode.RANDOM_AMOUNT
+                .redPackageRangeAmount(rangeJson);
     }
 
     private static ActivityRuleContext ctx(Object userId, Object orderAmount) {
@@ -114,8 +117,8 @@ class RandomAmountTest {
         @DisplayName("运营改了版本号会重抽（否则改配置像是没生效）")
         void versionBumpRedraw() {
             ActivityCandidate v1 = randomCandidate("{\"min\":1,\"max\":100}");
-            ActivityCandidate v2 = randomCandidate("{\"min\":1,\"max\":100}");
-            v2.setVersion(2);
+            ActivityCandidate v2 = new ActivityCandidate(
+                    randomSpec("{\"min\":1,\"max\":100}").version(2).build());
             assertThat(compute(v1, ctx(1001L, new BigDecimal("200"))))
                     .isNotEqualByComparingTo(compute(v2, ctx(1001L, new BigDecimal("200"))));
         }
@@ -190,9 +193,10 @@ class RandomAmountTest {
         @DisplayName("takeType 为 null / 1 / 未知 code 一律走固定金额（旧行为不漂移）")
         void nonRandomUnaffected() {
             for (Integer code : new Integer[]{null, 1, 99}) {
-                ActivityCandidate c = randomCandidate("{\"min\":5,\"max\":20}");
-                c.setRedPackageTakeType(code);
-                c.setRedPackageAmount(new BigDecimal("12.00"));
+                ActivityCandidate c = new ActivityCandidate(randomSpec("{\"min\":5,\"max\":20}")
+                        .redPackageTakeType(code)
+                        .redPackageAmount(new BigDecimal("12.00"))
+                        .build());
                 assertThat(compute(c, ctx(1001L, new BigDecimal("200"))))
                         .as("takeType=%s 应按固定金额发", code)
                         .isEqualByComparingTo(new BigDecimal("12.00"));
@@ -209,10 +213,11 @@ class RandomAmountTest {
         @Test
         @DisplayName("BenefitForm 优先于 takeType：折 + takeType=2 仍按折扣算，不被随机分支抢走")
         void benefitFormWinsOverDirtyTakeType() {
-            ActivityCandidate c = randomCandidate("{\"min\":5,\"max\":20}");
-            c.setRedPackageAmountUnit(BenefitForm.UNIT_ZHE);
-            c.setRedPackageAmount(new BigDecimal("8"));
-            c.setRedPackageMaxDiscount(new BigDecimal("50"));
+            ActivityCandidate c = new ActivityCandidate(randomSpec("{\"min\":5,\"max\":20}")
+                    .redPackageAmountUnit(BenefitForm.UNIT_ZHE)
+                    .redPackageAmount(new BigDecimal("8"))
+                    .redPackageMaxDiscount(new BigDecimal("50"))
+                    .build());
 
             assertThat(compute(c, ctx(1001L, new BigDecimal("200"))))
                     .isEqualByComparingTo(new BigDecimal("40.00"));

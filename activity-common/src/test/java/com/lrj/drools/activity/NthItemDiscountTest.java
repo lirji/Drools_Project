@@ -4,6 +4,7 @@ import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
 import com.lrj.drools.activity.engine.BenefitMath;
@@ -123,14 +124,13 @@ class NthItemDiscountTest {
     class Wiring {
 
         private ActivityCandidate nthCandidate() {
-            ActivityCandidate c = new ActivityCandidate();
-            c.setActivityId("ACT-NTH-1");
-            c.setVersion(1);
-            c.setEligible(true);
-            c.setRedPackageAmountUnit(BenefitForm.UNIT_NTH_ZHE);
-            c.setRedPackageAmount(new BigDecimal("5"));       // 半价
-            c.setRedPackageRangeAmount("{\"nth\":2}");
-            return c;
+            return new ActivityCandidate(OfferSpec.builder()
+                    .activityId("ACT-NTH-1")
+                    .version(1)
+                    .redPackageAmountUnit(BenefitForm.UNIT_NTH_ZHE)
+                    .redPackageAmount(new BigDecimal("5"))    // 半价
+                    .redPackageRangeAmount("{\"nth\":2}")
+                    .build());
         }
 
         private BigDecimal compute(ActivityRuleContext ctx) {

@@ -3,9 +3,10 @@ package com.lrj.drools.activity.snapshot;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
-import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
+import com.lrj.drools.activity.service.Materials;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -47,8 +48,15 @@ public final class DecisionSnapshot {
     /** SPU → 绑定到它的活动 id（倒排索引，取代热路径上的绑定表查询）。 */
     private final Map<Long, Set<String>> activityIdsBySpu;
 
-    /** activityId → 候选模板。每次决策拷贝一份成可变的 {@link ActivityCandidate}（规则会改它的字段）。 */
-    private final Map<String, CandidateTemplate> candidates;
+    /**
+     * activityId → <b>不可变权益配置</b>。每次决策直接把它包进一个新的
+     * {@link ActivityCandidate}（规则只改候选的计算态，配置本身跨请求共享）。
+     *
+     * <p>这里此前是一个 19 分量的影子类 {@code CandidateTemplate}：候选把配置与计算态焊在一起，
+     * 快照又必须不可变，只能另造一份。R7 把配置剥成 {@link OfferSpec} 之后，影子类连同它那份
+     * 手写扇出一起消失——两条装配路径在<b>类型上</b>只能产出同一个配置对象。
+     */
+    private final Map<String, OfferSpec> candidates;
 
     /** activityId → 受控资格约束（已由 RuleConditionTranslator 翻译好，构建期完成）。 */
     private final Map<String, String> eligibilityConstraints;
@@ -60,7 +68,7 @@ public final class DecisionSnapshot {
 
     public DecisionSnapshot(String tenant, String bizLine, long generation, Instant builtAt,
                             Map<Long, Set<String>> activityIdsBySpu,
-                            Map<String, CandidateTemplate> candidates,
+                            Map<String, OfferSpec> candidates,
                             Map<String, String> eligibilityConstraints,
                             Map<String, ConditionNode> eligibilityTrees,
                             StackStrategy strategy) {
@@ -81,9 +89,11 @@ public final class DecisionSnapshot {
     public String bizLine() { return bizLine; }
     public long generation() { return generation; }
     public Instant builtAt() { return builtAt; }
-    public StackStrategy strategy() { return strategy; }
-    public Map<String, ConditionNode> eligibilityTrees() { return eligibilityTrees; }
     public int activityCount() { return candidates.size(); }
+    // 合并策略与条件树**不再单独暴露**：它们只经 materialize() 随本桶那一份 Materials 出去。
+    // 单独的 strategy() 曾是「第二次来源判定」的入口（物料走快照、策略另判一次），
+    // 单独的 eligibilityTrees() 则让调用方把整条业务线的树全量拷进每一次决策——
+    // 两个 getter 都只有那一个调用方，收敛掉即可，留着只是邀请它们长回来。
 
     /**
      * <b>这个活动在不在这份快照里。</b>
@@ -102,14 +112,19 @@ public final class DecisionSnapshot {
     public Set<String> activityIds() { return candidates.keySet(); }
 
     /**
-     * 按 SPU 列表 + 类型 + 当前时刻，产出候选事实与资格约束。
+     * 按 SPU 列表 + 类型 + 当前时刻，产出**本桶那一份**决策物料。
      *
      * <p>与 {@code DecisionDataLoader} 走库的那条路**语义逐条对齐**：已上线（构建期已过滤）、
      * 时间窗内（此处判定）、类型匹配、每活动取当前线上版本（构建期已选定）。
+     *
+     * <p>返回的就是取数层的出参类型 {@link Materials} 本身——此前这里返回一个自称「与 Materials 同形」
+     * 的影子 record，同形靠注释维持，缝合动作（拆开候选与约束、手算最小代际、手拼 provenance、
+     * 再单独判一次来源取合并策略）散在 {@code load()} 与 {@code resolveStrategy()} 两处。
+     * 多桶合并现在收敛在 {@link Materials#merge}。
      */
-    public Materialized materialize(List<Long> spuIds, ActivityType type, Instant now, boolean withGifts) {
+    public Materials materialize(List<Long> spuIds, ActivityType type, Instant now, boolean withGifts) {
         if (spuIds == null || spuIds.isEmpty()) {
-            return new Materialized(List.of(), List.of());
+            return emptyBucket();
         }
         // 保持与绑定表查询一致的顺序语义：按 spu 顺序收集、去重。
         // 同一趟遍历顺便把**作用域**倒排出来：activityId → 本次请求里它圈到的 SPU。
@@ -125,79 +140,35 @@ public final class DecisionSnapshot {
             }
         }
         if (ids.isEmpty()) {
-            return new Materialized(List.of(), List.of());
+            return emptyBucket();
         }
 
         List<ActivityCandidate> out = new ArrayList<>();
         List<EligibilityRuleDef> defs = new ArrayList<>();
+        // 条件树**只装本次命中的候选**：下游只做 trees.get(candidateId)，把整条业务线的树全量
+        // putAll 进去没有任何消费者，只是让每次决策白拷一遍（活动越多拷得越多）。
+        Map<String, ConditionNode> trees = new LinkedHashMap<>();
         for (String id : ids) {
-            CandidateTemplate t = candidates.get(id);
-            if (t == null) continue;
-            if (type.code() != t.activityType()) continue;
-            if (now.isBefore(t.startTime()) || now.isAfter(t.endTime())) continue;
+            OfferSpec spec = candidates.get(id);
+            if (spec == null) continue;
+            if (type.code() != spec.activityType()) continue;
+            if (now.isBefore(spec.startTime()) || now.isAfter(spec.endTime())) continue;
 
-            out.add(t.toCandidate(withGifts, scope.getOrDefault(id, Set.of())));
+            // scopedSpuIds 是**逐请求**的交集，所以只能在这里传入、不能冻进配置。
+            // 走库那条路给的同样是空集而不是 null——退回 null 会让 AMOUNT 以外五形态的基数变成整单。
+            out.add(new ActivityCandidate(spec, scope.getOrDefault(id, Set.of()), withGifts));
             String constraint = eligibilityConstraints.get(id);
             if (constraint != null && !constraint.isBlank()) {
                 defs.add(new EligibilityRuleDef(id, constraint));
             }
+            ConditionNode tree = eligibilityTrees.get(id);
+            if (tree != null) trees.put(id, tree);
         }
-        return new Materialized(out, defs);
+        return Materials.snapshotBucket(out, defs, trees, generation, strategy);
     }
 
-    /** 物化结果，与 {@code DecisionDataLoader.Materials} 同形。 */
-    public record Materialized(List<ActivityCandidate> candidates, List<EligibilityRuleDef> eligibilityDefs) {}
-
-    /**
-     * 单个活动的不可变候选模板。
-     *
-     * <p>不能直接复用 {@link ActivityCandidate}——规则执行期会 {@code modify} 它的
-     * {@code eligible} / {@code computedAmount} / {@code amountComputed} 字段。
-     * 快照必须是只读的，所以每次决策从模板拷一份新的可变事实出来。
-     */
-    public record CandidateTemplate(
-            String activityId, String activityName, Integer activityType, String bizLine,
-            Integer activityStatus, Integer activityAreaType, String districtIds,
-            Integer inventory, Integer userInventory, Integer version, int priority,
-            Integer redPackageTakeType, java.math.BigDecimal redPackageAmount,
-            String redPackageAmountUnit, String redPackageRangeAmount,
-            java.math.BigDecimal redPackageMaxDiscount,
-            Instant startTime, Instant endTime,
-            List<GiftResult> gifts) {
-
-        /**
-         * @param scopedSpuIds 本次请求里该活动圈到的 SPU（见 {@code ActivityCandidate.scopedSpuIds}）。
-         *                     它是**逐请求**的交集，所以只能在 materialize 时传入，不能冻进模板。
-         */
-        public ActivityCandidate toCandidate(boolean withGifts, Set<Long> scopedSpuIds) {
-            ActivityCandidate c = toCandidate(withGifts);
-            c.setScopedSpuIds(scopedSpuIds);
-            return c;
-        }
-
-        public ActivityCandidate toCandidate(boolean withGifts) {
-            ActivityCandidate c = new ActivityCandidate();
-            c.setActivityId(activityId);
-            c.setActivityName(activityName);
-            c.setActivityType(activityType);
-            c.setBizLine(bizLine);
-            c.setActivityStatus(activityStatus);
-            c.setActivityAreaType(activityAreaType);
-            c.setDistrictIds(districtIds);
-            c.setInventory(inventory);
-            c.setUserInventory(userInventory);
-            c.setVersion(version);
-            c.setPriority(priority);
-            c.setRedPackageTakeType(redPackageTakeType);
-            c.setRedPackageAmount(redPackageAmount);
-            c.setRedPackageAmountUnit(redPackageAmountUnit);
-            // 漏拷这一行的表现是「快照路径不封顶、DB 路径封顶」——同一张券在两条路上发不同的钱
-            c.setRedPackageMaxDiscount(redPackageMaxDiscount);
-            c.setRedPackageRangeAmount(redPackageRangeAmount);
-            if (withGifts) {
-                c.setGifts(new ArrayList<>(gifts));
-            }
-            return c;
-        }
+    /** 本桶对这次决策没有贡献，但它的代际与策略仍要参与合并（代际取最小、桶数计入）。 */
+    private Materials emptyBucket() {
+        return Materials.snapshotBucket(List.of(), List.of(), Map.of(), generation, strategy);
     }
 }

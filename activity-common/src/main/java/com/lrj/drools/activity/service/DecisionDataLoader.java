@@ -3,10 +3,10 @@ package com.lrj.drools.activity.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ConditionNode;
-import com.lrj.drools.activity.domain.DecisionProvenance;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
@@ -54,9 +54,9 @@ import java.util.stream.Collectors;
  *   <li>批量查这批活动的全部未删除版本（内存里挑每个活动的最高版本）</li>
  *   <li>批量查规则行</li>
  *   <li>批量查资格条件行</li>
- *   <li>查 bizLine 级合并策略</li>
+ *   <li>查 bizLine 级合并策略（<b>仅红包通道</b>，见 {@link #mergeStrategy}）</li>
  * </ol>
- * 买赠场景第 3 步换成批量查赠品行，仍是 5 次。
+ * 买赠场景第 3 步换成批量查赠品行、且不查第 5 步（不合并权益），故不超过 5 次。
  *
  * <p><b>行为等价性</b>：本类是纯搬移 + 批量化，判定逻辑逐行照搬（上线状态、时间窗、类型匹配、
  * 取最高版本、条件行取第一条）。等价性由 {@code DecisionGoldenSetTest} 的 39 例金标守住。
@@ -96,31 +96,6 @@ public class DecisionDataLoader {
     }
 
     /**
-     * 一次决策所需的全部物料。
-     *
-     * @param candidates      拍平后的候选事实（已按上线 / 时间窗 / 类型过滤）
-     * @param eligibilityDefs 有资格条件的候选对应的受控约束（无条件的活动不出现在这里 = 恒通过）
-     */
-    public record Materials(List<ActivityCandidate> candidates,
-                            List<EligibilityRuleDef> eligibilityDefs,
-                            Map<String, ConditionNode> eligibilityTrees,
-                            DecisionProvenance provenance) {
-
-        /**
-         * 三参兼容构造：provenance 缺省为「走库」。
-         *
-         * <p>这不是为了少改几行——它让所有<b>手工构造物料</b>的测试桩与旧装配路径默认落在
-         * 「db」这个**保守且真实**的取值上。缺省成 snapshot 才是危险的：那会让一条从没碰过快照的路径
-         * 在响应里自称走了快照。
-         */
-        public Materials(List<ActivityCandidate> candidates,
-                         List<EligibilityRuleDef> eligibilityDefs,
-                         Map<String, ConditionNode> eligibilityTrees) {
-            this(candidates, eligibilityDefs, eligibilityTrees, DecisionProvenance.db());
-        }
-    }
-
-    /**
      * 装齐一次决策的物料。
      *
      * <p><b>优先读代际快照（P1-1）</b>：命中时**零数据库查询**——物料已在发布侧构建、预编译完成。
@@ -129,53 +104,27 @@ public class DecisionDataLoader {
      * <p>这个回落是<b>自调节</b>的，不需要开关：只有 decision 服务带轮询器会构建快照，
      * console 的 legacy 读端点没有构建器、store 恒空，天然走库。
      * 两条路的语义由 {@code SnapshotParityTest} 对拍守住。
+     *
+     * <p><b>来源判定只有这一处</b>（{@code snaps.isEmpty()}）。此前合并策略在一个独立的
+     * {@code resolveStrategy} 里用<b>另一个判据</b>（{@code snapshots.get(tenant, bizLine) != null}）
+     * 又判了一次来源：两个判据不同步时会出现「物料走快照、策略却回去查库」的混合结论，
+     * 而这种混合在响应里是看不见的——provenance 只声明物料那一半。现在策略随物料一起从
+     * 同一个来源出来。
      */
     public Materials load(List<Long> spuIds, ActivityType type, boolean withGifts) {
         List<DecisionSnapshot> snaps = snapshots.forTenant(TenantContext.get());
         if (!snaps.isEmpty()) {
             metrics.decisionSource(type.name(), "snapshot");
             Instant now = Instant.now();
-            List<ActivityCandidate> cands = new ArrayList<>();
-            List<EligibilityRuleDef> defs = new ArrayList<>();
+            List<Materials> buckets = new ArrayList<>(snaps.size());
             for (DecisionSnapshot snap : snaps) {
-                DecisionSnapshot.Materialized m = snap.materialize(spuIds, type, now, withGifts);
-                cands.addAll(m.candidates());
-                defs.addAll(m.eligibilityDefs());
+                buckets.add(snap.materialize(spuIds, type, now, withGifts));
             }
-            Map<String, ConditionNode> trees = new LinkedHashMap<>();
-            for (DecisionSnapshot snap : snaps) trees.putAll(snap.eligibilityTrees());
-            // 代际取**最小**：一次决策会合并该租户所有业务线的桶，任何一个桶落后都意味着
-            // 「刚发布的那次还没全进去」。取最大值会把落后的那个桶藏起来。
-            Long minGen = snaps.stream().map(DecisionSnapshot::generation).min(Long::compareTo).orElse(null);
-            return ordered(new Materials(cands, defs, trees,
-                    DecisionProvenance.snapshot(minGen, snaps.size())));
+            // 代际取最小 / 桶数取份数 / 策略取 bizLine 所属那个桶——三条都收敛在 Materials.merge。
+            return Materials.merge(buckets).ordered();
         }
         metrics.decisionSource(type.name(), "db");
-        return ordered(loadFromDb(spuIds, type, withGifts));
-    }
-
-    /**
-     * <b>候选定序：合并的赢家不能由迭代顺序决定。</b>
-     *
-     * <p>{@code BenefitEvaluator} 的 {@code pickByAmount} / {@code pickByPriority} 在**打平**时是
-     * 严格 {@code >} 比较，即先到先得。而两条装配路径的天然顺序都不可靠：
-     * <ul>
-     *   <li><b>快照侧</b>：倒排索引的值是 {@code Set.copyOf}（{@code DecisionSnapshot}），
-     *       迭代序由 JDK 的 SALT 决定——<b>同一进程内稳定，每次 JVM 启动改变</b>。
-     *       表现是 decision 重启后一整片决策的赢家可能翻面，比逐请求抖动更难被认出来。</li>
-     *   <li><b>走库侧</b>：跟着 SQL 返回顺序走，没有 order by 就没有承诺。</li>
-     * </ul>
-     *
-     * <p>于是「金额并列的两张券谁赢」既不稳定、也在两条路上不一致。这里按 activityId 定序，
-     * 把它变成一个<b>确定且可解释</b>的结果。放在 loader 出口是因为这是两条路唯一的合流点
-     * （加价购也走同一个出口）。
-     */
-    private static Materials ordered(Materials m) {
-        if (m.candidates().size() < 2) return m;
-        List<ActivityCandidate> sorted = new ArrayList<>(m.candidates());
-        sorted.sort(java.util.Comparator.comparing(ActivityCandidate::getActivityId,
-                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
-        return new Materials(sorted, m.eligibilityDefs(), m.eligibilityTrees(), m.provenance());
+        return loadFromDb(spuIds, type, withGifts).ordered();
     }
 
     private Materials loadFromDb(List<Long> spuIds, ActivityType type, boolean withGifts) {
@@ -186,12 +135,12 @@ public class DecisionDataLoader {
         List<String> activityIds = bindings.stream()
                 .map(ActivitySpuBindingEntity::getActivityId).distinct().collect(Collectors.toList());
         if (activityIds.isEmpty()) {
-            return new Materials(List.of(), List.of(), Map.of());
+            return Materials.empty();
         }
 
         List<ActivityManageEntity> valid = currentEffectiveVersions(activityIds, type);
         if (valid.isEmpty()) {
-            return new Materials(List.of(), List.of(), Map.of());
+            return Materials.empty();
         }
 
         // 作用域先算，因为它同时决定「这个活动还算不算候选」——见下。
@@ -210,12 +159,13 @@ public class DecisionDataLoader {
                 .filter(m -> !scope.getOrDefault(m.getActivityId(), java.util.Set.of()).isEmpty())
                 .collect(Collectors.toList());
         if (inScope.isEmpty()) {
-            return new Materials(List.of(), List.of(), Map.of());
+            return Materials.empty();
         }
 
         List<ActivityCandidate> candidates = flatten(inScope, withGifts, scope);
         Eligibility elig = eligibility(inScope);   // 条件行只查一次，defs 与 trees 同源
-        return new Materials(candidates, elig.defs(), elig.trees());
+        Materials materials = new Materials(candidates, elig.defs(), elig.trees());
+        return materials.withStrategy(mergeStrategy(type, materials.bizLine()));
     }
 
     /**
@@ -244,13 +194,20 @@ public class DecisionDataLoader {
         return scope;
     }
 
-    /** 合并策略按 bizLine 解析；候选为空时取默认 MAX。快照命中时直接读快照里的策略，同样零查询。 */
-    public StackStrategy resolveStrategy(List<ActivityCandidate> candidates) {
-        String bizLine = candidates.isEmpty() ? null : candidates.get(0).getBizLine();
-        DecisionSnapshot snap = snapshots.get(TenantContext.get(), bizLine);
-        if (snap != null) {
-            return snap.strategy();
-        }
+    /**
+     * ⑤ 走库路径的 bizLine 级合并策略。业务线取值规则见 {@link Materials#bizLine()}。
+     *
+     * <p><b>只有红包通道会发这条查询</b>：合并策略行本身就是按 {@link RuleScene#DISCOUNT} 存的，
+     * 而买赠与加价购不合并权益、也从不读 {@code Materials.strategy()}——为它们查一次
+     * 等于给两条热路径白加一次数据库往返。
+     *
+     * <p>候选为空时压根走不到这里（{@link Materials#empty()} 已经带着默认 MAX 返回），
+     * 于是「没有活动」的请求不会为了一个没人用的策略再查一次库。
+     *
+     * <p>快照路径不经过本方法：策略随桶一起来，零查询（见 {@link Materials#merge}）。
+     */
+    private StackStrategy mergeStrategy(ActivityType type, String bizLine) {
+        if (type != ActivityType.RED_PACKAGE) return StackStrategy.MAX;
         return strategyRepo.findFirstByBizLineAndActivityTypeIsNullAndSceneAndIsDel(
                         bizLine, RuleScene.DISCOUNT.code(), NOT_DEL)
                 .map(s -> StackStrategy.fromCode(s.getStrategy()))
@@ -320,35 +277,16 @@ public class DecisionDataLoader {
 
         List<ActivityCandidate> list = new ArrayList<>();
         for (ActivityManageEntity m : manages) {
-            ActivityCandidate c = new ActivityCandidate();
-            c.setActivityId(m.getActivityId());
-            c.setActivityName(m.getActivityName());
-            c.setActivityType(m.getActivityType());
-            c.setBizLine(m.getBizLine());
-            c.setActivityStatus(m.getActivityStatus());
-            c.setActivityAreaType(m.getActivityAreaType());
-            c.setDistrictIds(m.getDistrictIds());
-            c.setInventory(m.getInventory());
-            c.setUserInventory(m.getUserInventory());
-            c.setVersion(m.getVersion());
-            c.setPriority(m.getPriority() == null ? 0 : m.getPriority());
+            String k = key(m.getActivityId(), m.getVersion());
+            // 「行 → 配置」只有 OfferSpec.from 这一个入口，快照构建走的也是它。
+            // 此前这里是 17 个手写 setter、快照那边是 18 个位置参数，两份各自演化——
+            // scopedSpuIds 与 redPackageMaxDiscount 就是这么各漏过一次的。
+            OfferSpec spec = OfferSpec.from(m, ruleByKey.get(k),
+                    giftsByKey.getOrDefault(k, List.of()));
             // 作用域：决定这个活动的钱算在哪些商品上。两条装配路径都必须填，
             // 只填一边的表现是「同一张券在走库与走快照两条路上发不同的钱」（SnapshotParityTest 守这条）。
-            c.setScopedSpuIds(scope.getOrDefault(m.getActivityId(), java.util.Set.of()));
-
-            ActivityRuleEntity r = ruleByKey.get(key(m.getActivityId(), m.getVersion()));
-            if (r != null) {
-                c.setRedPackageTakeType(r.getRedPackageTakeType());
-                c.setRedPackageAmount(r.getRedPackageAmount());
-                c.setRedPackageAmountUnit(r.getRedPackageAmountUnit());
-                c.setRedPackageMaxDiscount(r.getRedPackageMaxDiscount());
-                c.setRedPackageRangeAmount(r.getRedPackageRangeAmount());
-            }
-
-            if (withGifts) {
-                c.setGifts(giftsByKey.getOrDefault(key(m.getActivityId(), m.getVersion()), List.of()));
-            }
-            list.add(c);
+            list.add(new ActivityCandidate(spec,
+                    scope.getOrDefault(m.getActivityId(), java.util.Set.of()), withGifts));
         }
         return list;
     }

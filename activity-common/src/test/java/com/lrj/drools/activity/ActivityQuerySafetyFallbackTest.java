@@ -7,6 +7,7 @@ import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
@@ -19,6 +20,7 @@ import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.service.DecisionAuditor;
 import com.lrj.drools.activity.service.DecisionDataLoader;
 import com.lrj.drools.activity.service.DecisionEligibilityService;
+import com.lrj.drools.activity.service.Materials;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -32,7 +34,6 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -98,7 +99,7 @@ class ActivityQuerySafetyFallbackTest {
     @DisplayName("活动声明受控资格但条件树不可用时 fail-closed")
     void constrainedActivityWithoutTreeFailsClosed() {
         ActivityCandidate candidate = fixed("ACT-BROKEN-TREE", "10");
-        DecisionDataLoader.Materials broken = new DecisionDataLoader.Materials(
+        Materials broken = new Materials(
                 List.of(candidate),
                 List.of(new EligibilityRuleDef(candidate.getActivityId(),
                         "numberAttr(\"orderAmount\") >= 500")),
@@ -182,10 +183,8 @@ class ActivityQuerySafetyFallbackTest {
     @Test
     @DisplayName("安全回退保留 PRIORITY：优先级胜者不被更大金额挤掉")
     void fallbackKeepsPriorityStrategy() {
-        ActivityCandidate preferred = fixed("ACT-PRIORITY-5", "5");
-        preferred.setPriority(0);
-        ActivityCandidate larger = fixed("ACT-PRIORITY-20", "20");
-        larger.setPriority(1);
+        ActivityCandidate preferred = fixed("ACT-PRIORITY-5", "5", 0);
+        ActivityCandidate larger = fixed("ACT-PRIORITY-20", "20", 1);
         ActivityQueryService query = query(false, materials(List.of(preferred, larger)),
                 mock(ActivityRuleRuntimeService.class), StackStrategy.PRIORITY, new BenefitEvaluator(DecisionMetrics.noop()));
 
@@ -197,9 +196,9 @@ class ActivityQuerySafetyFallbackTest {
     }
 
     private static ActivityQueryService.GiftView giftDecision(boolean engineEnabled, String orderAmount) {
-        ActivityCandidate candidate = base("ACT-GIFT");
-        candidate.setGifts(new ArrayList<>(List.of(gift("门槛赠品"))));
-        DecisionDataLoader.Materials materials = thresholdMaterials(candidate, 500);
+        ActivityCandidate candidate = new ActivityCandidate(
+                base("ACT-GIFT").gifts(new ArrayList<>(List.of(gift("门槛赠品")))).build(), null, true);
+        Materials materials = thresholdMaterials(candidate, 500);
 
         ActivityRuleRuntimeService runtime = mock(ActivityRuleRuntimeService.class);
         when(runtime.evalGift(any(ActivityRuleContext.class), anyBoolean())).thenAnswer(invocation -> {
@@ -214,20 +213,21 @@ class ActivityQuerySafetyFallbackTest {
     }
 
     private static ActivityQueryService query(boolean engineEnabled,
-                                              DecisionDataLoader.Materials materials,
+                                              Materials materials,
                                               ActivityRuleRuntimeService runtime) {
         return query(engineEnabled, materials, runtime,
                 StackStrategy.MAX, new BenefitEvaluator(DecisionMetrics.noop()));
     }
 
     private static ActivityQueryService query(boolean engineEnabled,
-                                              DecisionDataLoader.Materials materials,
+                                              Materials materials,
                                               ActivityRuleRuntimeService runtime,
                                               StackStrategy strategy,
                                               BenefitEvaluator benefitEvaluator) {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
-        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(materials);
-        when(loader.resolveStrategy(anyList())).thenReturn(strategy);
+        // 合并策略随物料一起从取数层出来（不再有单独的 resolveStrategy 出口）。
+        when(loader.load(any(), any(ActivityType.class), anyBoolean()))
+                .thenReturn(materials.withStrategy(strategy));
 
         DecisionMetrics metrics = DecisionMetrics.noop();
         DecisionEligibilityService eligibility = new DecisionEligibilityService(
@@ -261,57 +261,47 @@ class ActivityQuerySafetyFallbackTest {
     private static List<BenefitCase> benefitCases() {
         return List.of(
                 new BenefitCase("固定金额", () -> fixed("ACT-FIXED", "12"), request("100"), "12"),
-                new BenefitCase("随机金额", () -> {
-                    ActivityCandidate c = base("ACT-RANDOM");
-                    c.setRedPackageTakeType(2);
-                    c.setRedPackageAmountUnit("元");
-                    c.setRedPackageRangeAmount("{\"min\":7,\"max\":7}");
-                    return c;
-                }, request("100"), "7.00"),
-                new BenefitCase("阶梯金额", () -> {
-                    ActivityCandidate c = base("ACT-LADDER");
-                    c.setRedPackageTakeType(1);
-                    c.setRedPackageAmountUnit("元");
-                    c.setRedPackageRangeAmount("[{\"min\":0,\"max\":1000,\"reward\":30}]");
-                    return c;
-                }, request("500"), "30"),
-                new BenefitCase("整单折扣", () -> {
-                    ActivityCandidate c = base("ACT-RATIO");
-                    c.setRedPackageAmountUnit("折");
-                    c.setRedPackageAmount(new BigDecimal("8"));
-                    c.setRedPackageMaxDiscount(new BigDecimal("50"));
-                    return c;
-                }, request("100"), "20.00"),
-                new BenefitCase("一口价", () -> {
-                    ActivityCandidate c = base("ACT-PRICE");
-                    c.setRedPackageAmountUnit("价");
-                    c.setRedPackageAmount(new BigDecimal("9.9"));
-                    return c;
-                }, request("100"), "90.10"),
-                new BenefitCase("第 N 件折", () -> {
-                    ActivityCandidate c = base("ACT-NTH");
-                    c.setRedPackageAmountUnit("件折");
-                    c.setRedPackageAmount(new BigDecimal("5"));
-                    c.setRedPackageRangeAmount("{\"nth\":2}");
-                    return c;
-                }, nthRequest(), "50.00")
+                new BenefitCase("随机金额", () -> candidate(base("ACT-RANDOM")
+                        .redPackageTakeType(2)
+                        .redPackageAmountUnit("元")
+                        .redPackageRangeAmount("{\"min\":7,\"max\":7}")),
+                        request("100"), "7.00"),
+                new BenefitCase("阶梯金额", () -> candidate(base("ACT-LADDER")
+                        .redPackageTakeType(1)
+                        .redPackageAmountUnit("元")
+                        .redPackageRangeAmount("[{\"min\":0,\"max\":1000,\"reward\":30}]")),
+                        request("500"), "30"),
+                new BenefitCase("整单折扣", () -> candidate(base("ACT-RATIO")
+                        .redPackageAmountUnit("折")
+                        .redPackageAmount(new BigDecimal("8"))
+                        .redPackageMaxDiscount(new BigDecimal("50"))),
+                        request("100"), "20.00"),
+                new BenefitCase("一口价", () -> candidate(base("ACT-PRICE")
+                        .redPackageAmountUnit("价")
+                        .redPackageAmount(new BigDecimal("9.9"))),
+                        request("100"), "90.10"),
+                new BenefitCase("第 N 件折", () -> candidate(base("ACT-NTH")
+                        .redPackageAmountUnit("件折")
+                        .redPackageAmount(new BigDecimal("5"))
+                        .redPackageRangeAmount("{\"nth\":2}")),
+                        nthRequest(), "50.00")
         );
     }
 
-    private static DecisionDataLoader.Materials materials(ActivityCandidate candidate) {
+    private static Materials materials(ActivityCandidate candidate) {
         return materials(List.of(candidate));
     }
 
-    private static DecisionDataLoader.Materials materials(List<ActivityCandidate> candidates) {
-        return new DecisionDataLoader.Materials(candidates, List.of(), Map.of());
+    private static Materials materials(List<ActivityCandidate> candidates) {
+        return new Materials(candidates, List.of(), Map.of());
     }
 
-    private static DecisionDataLoader.Materials thresholdMaterials(ActivityCandidate candidate, int threshold) {
+    private static Materials thresholdMaterials(ActivityCandidate candidate, int threshold) {
         ConditionNode tree = new ConditionNode();
         tree.setField("orderAmount");
         tree.setOp("ge");
         tree.setValue(threshold);
-        return new DecisionDataLoader.Materials(
+        return new Materials(
                 List.of(candidate),
                 List.of(new EligibilityRuleDef(candidate.getActivityId(),
                         "numberAttr(\"orderAmount\") >= " + threshold)),
@@ -319,20 +309,27 @@ class ActivityQuerySafetyFallbackTest {
     }
 
     private static ActivityCandidate fixed(String id, String amount) {
-        ActivityCandidate c = base(id);
-        c.setRedPackageTakeType(1);
-        c.setRedPackageAmountUnit("元");
-        c.setRedPackageAmount(new BigDecimal(amount));
-        return c;
+        return fixed(id, amount, 0);
     }
 
-    private static ActivityCandidate base(String id) {
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId(id);
-        c.setActivityName(id);
-        c.setBizLine("safety-test");
-        c.setVersion(1);
-        return c;
+    private static ActivityCandidate fixed(String id, String amount, int priority) {
+        return candidate(base(id)
+                .priority(priority)
+                .redPackageTakeType(1)
+                .redPackageAmountUnit("元")
+                .redPackageAmount(new BigDecimal(amount)));
+    }
+
+    private static OfferSpec.Builder base(String id) {
+        return OfferSpec.builder()
+                .activityId(id)
+                .activityName(id)
+                .bizLine("safety-test")
+                .version(1);
+    }
+
+    private static ActivityCandidate candidate(OfferSpec.Builder spec) {
+        return new ActivityCandidate(spec.build());
     }
 
     private static GiftResult gift(String name) {

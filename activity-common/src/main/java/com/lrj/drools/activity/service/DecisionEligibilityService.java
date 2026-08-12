@@ -95,7 +95,7 @@ public class DecisionEligibilityService {
      *              <b>档位只影响 trace，绝不影响谁被淘汰</b>——淘汰与计数在两档下逐字节一致。
      */
     public void applyJava(ActivityRuleContext ctx,
-                          DecisionDataLoader.Materials materials,
+                          Materials materials,
                           DecisionScene scene,
                           DecisionMode mode,
                           List<String> traces) {

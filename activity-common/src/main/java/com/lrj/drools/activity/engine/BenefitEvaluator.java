@@ -146,7 +146,7 @@ public class BenefitEvaluator {
             // 随机红包的金额来自区间（redPackageRangeAmount），而不是 redPackageAmount 那个字段，
             // 放在 guard ② 之后的话「只配了区间、没配固定金额」的随机活动会被静默跳过。
             if (form == BenefitForm.AMOUNT && DistributionMode.RANDOM_AMOUNT == distributionOf(c)) {
-                apply(c, random(ctx, c), scene);
+                apply(c, random(ctx, c, form), scene);
                 continue;
             }
 
@@ -170,7 +170,7 @@ public class BenefitEvaluator {
             // 加第七种形态而漏了这里 = 编译失败，而不是「被当成金额原样发出去」。
             // ⚠ 不能改成 arrow switch **语句**：语句对枚举常量不强制穷尽，写成语句等于白改。
             Computed r = switch (form) {
-                case NTH_ZHE     -> nth(ctx, c);
+                case NTH_ZHE     -> nth(ctx, c, form);
                 case FIXED_PRICE -> fixedPrice(ctx, c);
                 case RATIO_ZHE   -> ratio(ctx, c);
                 // 显式 arm，不是兜底。「未知单位回落金额型」这条 fail-safe 的权威在
@@ -211,8 +211,8 @@ public class BenefitEvaluator {
      * 随机红包。算不出来（区间缺失/非法）→ 不给优惠，而不是给 0 元。同 {@link #ratio} 的规矩：
      * 0 元会以 0 参与 MAX 竞争并可能挤掉别的活动。
      */
-    private static Computed random(ActivityRuleContext ctx, ActivityCandidate c) {
-        BigDecimal drawn = drawRandom(ctx, c);
+    private static Computed random(ActivityRuleContext ctx, ActivityCandidate c, BenefitForm form) {
+        BigDecimal drawn = drawRandom(ctx, c, form);
         return drawn == null ? Computed.reject(RejectReason.BAD_RANDOM_RANGE) : Computed.of(drawn);
     }
 
@@ -221,8 +221,8 @@ public class BenefitEvaluator {
      * 它必须有逐行单价才算得出来——缺 lines 时不适用，
      * <b>绝不退化成拿整单均价算</b>：混着贵重与便宜商品的车会静默算错钱。
      */
-    private static Computed nth(ActivityRuleContext ctx, ActivityCandidate c) {
-        BigDecimal off = nthDiscount(ctx, c);
+    private static Computed nth(ActivityRuleContext ctx, ActivityCandidate c, BenefitForm form) {
+        BigDecimal off = nthDiscount(ctx, c, form);
         return off == null ? Computed.reject(RejectReason.MISSING_LINES) : Computed.of(off);
     }
 
@@ -465,14 +465,23 @@ public class BenefitEvaluator {
      *
      * <p>缺行项 / N 非法 / 折数越界 → null（不适用）。这是 fail-closed：
      * 宁可这个活动不生效，也不拿均价算出一个"看起来对"的错金额。
+     *
+     * <p>「第几件」的解析走 {@link RangePayload#parse}（R9：{@code redPackageRangeAmount}
+     * 一列三用途，判别规则只有一份）。**解析仍留在每次决策里**，不上移到取数/建快照——
+     * 上移会把「配置解不开」的发现时机挪到快照后台构建时，
+     * 按候选 fail-closed 的淘汰与它的 reject 指标就都没了。
      */
-    private static BigDecimal nthDiscount(ActivityRuleContext ctx, ActivityCandidate c) {
+    private static BigDecimal nthDiscount(ActivityRuleContext ctx, ActivityCandidate c, BenefitForm form) {
         if (ctx == null) return null;
         List<BenefitMath.Line> lines = toLines(ctx);
         if (lines.isEmpty()) return null;
 
-        Integer nth = RandomRangeParser.parseNth(c.getRedPackageRangeAmount());
-        if (nth == null) return null;
+        // 载荷不是 {"nth":N}（配成了阶梯数组 / 解不开 / N<2）→ 本活动算不出金额，与改造前一致。
+        if (!(RangePayload.parse(form, c.getRedPackageTakeType(), c.getRedPackageRangeAmount())
+                instanceof RangePayload.Nth tier)) {
+            return null;
+        }
+        int nth = tier.n();
 
         // 作用域限定：活动只绑了 B，就不能让车里的 A 替它凑出「第二件」。
         // scope == null（作用域未知）时不限定，与改造前一致。
@@ -513,9 +522,13 @@ public class BenefitEvaluator {
      * {@code randomSeedSpu} 由 {@code DecisionEligibilityService} 专门维持成「第一件」的旧值，
      * 唯一职责就是把这条种子链钉住。改它等于改所有历史金额。
      */
-    private static BigDecimal drawRandom(ActivityRuleContext ctx, ActivityCandidate c) {
-        RandomRangeParser.Range range = RandomRangeParser.parse(c.getRedPackageRangeAmount());
-        if (range == null) return null;
+    private static BigDecimal drawRandom(ActivityRuleContext ctx, ActivityCandidate c, BenefitForm form) {
+        // 区间解析走 RangePayload（R9 单一出口）。载荷不是 {"min","max"} → 算不出金额，
+        // 由调用方淘汰候选并打 reject 指标——同改造前 `range == null` 那一支。
+        if (!(RangePayload.parse(form, c.getRedPackageTakeType(), c.getRedPackageRangeAmount())
+                instanceof RangePayload.Random range)) {
+            return null;
+        }
 
         Object userId = ctx == null ? null : ctx.textAttr(DecisionAttrs.USER_ID);
         String fingerprint = ctx == null ? "null|null|null"

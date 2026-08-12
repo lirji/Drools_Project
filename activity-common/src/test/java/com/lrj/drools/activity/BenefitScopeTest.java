@@ -3,6 +3,7 @@ package com.lrj.drools.activity;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
@@ -166,12 +167,10 @@ class BenefitScopeTest {
         @DisplayName("普通红包不受作用域影响——面额本就与订单金额无关")
         void amountFormIsUnaffectedByScope() {
             ActivityRuleContext ctx = ctx(new BigDecimal("1020"), List.of(SPU_A, SPU_B), null);
-            ActivityCandidate c = new ActivityCandidate();
-            c.setActivityId("ACT-AMOUNT");
-            c.setEligible(true);
-            c.setRedPackageAmount(new BigDecimal("30"));
-            c.setRedPackageAmountUnit("元");
-            c.setScopedSpuIds(Set.of(SPU_B));   // 真子集，且没有订单行
+            // 真子集作用域，且没有订单行
+            ActivityCandidate c = candidate(OfferSpec.builder().activityId("ACT-AMOUNT")
+                    .redPackageAmount(new BigDecimal("30"))
+                    .redPackageAmountUnit("元"), Set.of(SPU_B));
 
             evaluator.computeAmounts(ctx, List.of(c));
 
@@ -215,34 +214,28 @@ class BenefitScopeTest {
         return new SpuDiscountRequest.OrderLine(spuId, new BigDecimal(unitPrice), qty);
     }
 
-    private static ActivityCandidate base(String id, Set<Long> scope) {
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId(id);
-        c.setEligible(true);
-        c.setScopedSpuIds(scope);
-        return c;
+    /** {@code scope} 为 null 表示「作用域未知」，与空集语义不同——两条分支这里都要能造出来。 */
+    private static ActivityCandidate candidate(OfferSpec.Builder spec, Set<Long> scope) {
+        return new ActivityCandidate(spec.build(), scope, false);
     }
 
     private static ActivityCandidate ratio(String id, BigDecimal zhe, Set<Long> scope) {
-        ActivityCandidate c = base(id, scope);
-        c.setRedPackageAmount(zhe);
-        c.setRedPackageAmountUnit("折");
-        c.setRedPackageMaxDiscount(new BigDecimal("99999"));
-        return c;
+        return candidate(OfferSpec.builder().activityId(id)
+                .redPackageAmount(zhe)
+                .redPackageAmountUnit("折")
+                .redPackageMaxDiscount(new BigDecimal("99999")), scope);
     }
 
     private static ActivityCandidate fixedPrice(String id, BigDecimal price, Set<Long> scope) {
-        ActivityCandidate c = base(id, scope);
-        c.setRedPackageAmount(price);
-        c.setRedPackageAmountUnit("价");
-        return c;
+        return candidate(OfferSpec.builder().activityId(id)
+                .redPackageAmount(price)
+                .redPackageAmountUnit("价"), scope);
     }
 
     private static ActivityCandidate nth(String id, BigDecimal zhe, int n, Set<Long> scope) {
-        ActivityCandidate c = base(id, scope);
-        c.setRedPackageAmount(zhe);
-        c.setRedPackageAmountUnit("件折");
-        c.setRedPackageRangeAmount("{\"nth\":" + n + "}");
-        return c;
+        return candidate(OfferSpec.builder().activityId(id)
+                .redPackageAmount(zhe)
+                .redPackageAmountUnit("件折")
+                .redPackageRangeAmount("{\"nth\":" + n + "}"), scope);
     }
 }

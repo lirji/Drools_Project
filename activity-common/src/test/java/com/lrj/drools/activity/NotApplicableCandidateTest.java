@@ -6,6 +6,7 @@ import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.domain.DistributionMode;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder;
 import com.lrj.drools.activity.engine.BenefitEvaluator;
@@ -41,54 +42,48 @@ class NotApplicableCandidateTest {
 
     /** 第 N 件折，但上下文里没有订单行 → 算不出来。 */
     private static ActivityCandidate nthWithoutLines(String id, int priority) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageAmountUnit(BenefitForm.UNIT_NTH_ZHE);
-        c.setRedPackageAmount(new BigDecimal("5"));
-        c.setRedPackageRangeAmount("{\"nth\":2}");
-        return c;
+        return candidate(base(id, priority)
+                .redPackageAmountUnit(BenefitForm.UNIT_NTH_ZHE)
+                .redPackageAmount(new BigDecimal("5"))
+                .redPackageRangeAmount("{\"nth\":2}"));
     }
 
     /** 折扣型，但上下文里没有订单金额 → 算不出来。 */
     private static ActivityCandidate ratioWithoutOrderAmount(String id, int priority) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageAmountUnit(BenefitForm.UNIT_ZHE);
-        c.setRedPackageAmount(new BigDecimal("8"));
-        c.setRedPackageMaxDiscount(new BigDecimal("50"));
-        return c;
+        return candidate(base(id, priority)
+                .redPackageAmountUnit(BenefitForm.UNIT_ZHE)
+                .redPackageAmount(new BigDecimal("8"))
+                .redPackageMaxDiscount(new BigDecimal("50")));
     }
 
     /** 一口价 100，订单只有 50 → 秒杀价比订单还贵，算不出来。 */
     private static ActivityCandidate pricierThanOrder(String id, int priority) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageAmountUnit(BenefitForm.UNIT_PRICE);
-        c.setRedPackageAmount(new BigDecimal("100"));
-        return c;
+        return candidate(base(id, priority)
+                .redPackageAmountUnit(BenefitForm.UNIT_PRICE)
+                .redPackageAmount(new BigDecimal("100")));
     }
 
     /** 随机红包，但区间是脏的 → 抽不出来。 */
     private static ActivityCandidate randomWithBadRange(String id, int priority) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageTakeType(DistributionMode.RANDOM_AMOUNT.code());
-        c.setRedPackageRangeAmount("{\"min\":20,\"max\":5}");
-        return c;
+        return candidate(base(id, priority)
+                .redPackageTakeType(DistributionMode.RANDOM_AMOUNT.code())
+                .redPackageRangeAmount("{\"min\":20,\"max\":5}"));
     }
 
     /** 老老实实能算的固定金额红包，用来当「被挤掉的那个」。 */
     private static ActivityCandidate plain(String id, int priority, String amount) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageAmountUnit(BenefitForm.UNIT_YUAN);
-        c.setRedPackageAmount(new BigDecimal(amount));
-        return c;
+        return candidate(base(id, priority)
+                .redPackageAmountUnit(BenefitForm.UNIT_YUAN)
+                .redPackageAmount(new BigDecimal(amount)));
     }
 
-    private static ActivityCandidate base(String id, int priority) {
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId(id);
-        c.setActivityName(id);
-        c.setVersion(1);
-        c.setEligible(true);
-        c.setPriority(priority);
-        return c;
+    private static OfferSpec.Builder base(String id, int priority) {
+        return OfferSpec.builder().activityId(id).activityName(id).version(1).priority(priority);
+    }
+
+    /** {@code eligible} 默认就是 true，不必再显式置一次。 */
+    private static ActivityCandidate candidate(OfferSpec.Builder spec) {
+        return new ActivityCandidate(spec.build());
     }
 
     private ActivityRuleResult run(StackStrategy strategy, ActivityRuleContext ctx, ActivityCandidate... cs) {
@@ -165,7 +160,7 @@ class NotApplicableCandidateTest {
     @Test
     @DisplayName("阶梯档奖励为负 → 不落档（库里的脏数据也不许变成「负优惠」）")
     void negativeLadderTierIsNotApplied() {
-        ActivityCandidate c = base("ACT-LADDER", 1);
+        ActivityCandidate c = candidate(base("ACT-LADDER", 1));
         ActivityRuleContext ctx = new ActivityRuleContext();
         ctx.putAttr("orderAmount", new BigDecimal("500"));
 
@@ -189,9 +184,8 @@ class NotApplicableCandidateTest {
 
     /** 纯阶梯活动：金额只来自档位，没有底价。 */
     private static ActivityCandidate ladderOnly(String id, int priority) {
-        ActivityCandidate c = base(id, priority);
-        c.setRedPackageAmountUnit(BenefitForm.UNIT_YUAN);
-        return c;                                  // redPackageAmount 保持 null
+        // redPackageAmount 保持 null
+        return candidate(base(id, priority).redPackageAmountUnit(BenefitForm.UNIT_YUAN));
     }
 
     private static ActivityDrlBuilder.LadderActivityDef tier(String id, String min, String max, String reward) {

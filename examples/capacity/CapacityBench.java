@@ -310,9 +310,8 @@ public final class CapacityBench {
         java.util.function.IntToLongFunction decide = s -> {
             ActivityRuleContext ctx = contextFor(s);
             for (int i = 0; i < n; i++) {
-                ActivityCandidate c = new ActivityCandidate();
-                c.setActivityId("A" + i);
-                ctx.addCandidate(c);
+                ctx.addCandidate(new ActivityCandidate(
+                        com.lrj.drools.activity.domain.OfferSpec.builder().activityId("A" + i).build()));
             }
             // 资格：not ActivityRuleContext(约束) → reject；低 salience 收集 eligible
             fire(eligBase, ctx);

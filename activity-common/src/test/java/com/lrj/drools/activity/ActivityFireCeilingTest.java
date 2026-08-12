@@ -4,6 +4,7 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder;
 import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import org.junit.jupiter.api.Test;
@@ -31,9 +32,7 @@ class ActivityFireCeilingTest {
     private ActivityRuleContext ctxWithGiftCandidate() {
         ActivityRuleContext ctx = new ActivityRuleContext();
         ctx.putAttr("orderAmount", new BigDecimal("100"));
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId("actFire");
-        c.setEligible(true);
+        ActivityCandidate c = new ActivityCandidate(OfferSpec.builder().activityId("actFire").build());
         c.addGift(new GiftResult()); // gift-collect 规则的触发条件：eligible + gifts 非空
         ctx.addCandidate(c);
         return ctx;

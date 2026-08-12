@@ -3,38 +3,28 @@ package com.lrj.drools.activity.domain;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
- * 候选活动 fact —— 把"活动基础层 + 红包规则层 + 拓展配置"拍平成一个对象喂给 Drools。
- * 对齐来源 {@code engine/fact/ActivityCandidate}。
+ * 候选活动 fact —— 喂给 Drools 与纯 Java 求值层的那个对象。
  *
- * 可变 POJO：规则会 {@code setComputedAmount} / {@code reject} / {@code addGift} / {@code modify}。
- * 字段命名与 DRL 里的约束访问器一一对应（改名要同步改 DRL）。
+ * <p><b>结构（R7 之后）</b>：候选 = <b>配置</b>（{@link OfferSpec}，不可变、可跨请求共享）
+ * + <b>本轮计算态</b>（每次决策新建）。两者此前焊在同一个可变对象上，直接逼出了三份手写字段扇出
+ * 与一个 19 分量的影子类 {@code CandidateTemplate}，并已经漂移过两次（见 {@link OfferSpec} 类注释）。
+ *
+ * <p>配置的 19 个访问器<b>原名原签名保留</b>——DRL 的 LHS 按名字绑定
+ * （{@code ActivityCandidate( eligible == true, gifts != null, gifts.size() > 0 )}），
+ * 改名或去掉不会报错，只会让规则<b>静默失配</b>：买赠一个赠品都不发，日志干净。
+ *
+ * <p><b>配置没有 setter 是刻意的</b>：配置只能来自 {@link OfferSpec}，而 {@code OfferSpec} 只能来自
+ * {@link OfferSpec#from}（生产）或 {@link OfferSpec.Builder}（手工构造）。想加一个配置字段却漏了某条
+ * 装配路径，会在编译期被拦住而不是在对账时被发现。规则改的仍是计算态
+ * （{@code setComputedAmount} / {@code reject} / {@code addGift}），那些 setter 都还在。
  */
 public class ActivityCandidate {
 
-    private String activityId;
-    private String activityName;
-    private Integer activityType;
-    private String bizLine;
-    private Integer activityStatus;
-    private Integer activityAreaType;
-    private String districtIds;
-    private Integer inventory;
-    private Integer userInventory;
-    private Integer version;
-
-    // 红包规则层
-    private Integer redPackageTakeType;
-    private BigDecimal redPackageAmount;
-    private String redPackageAmountUnit;
-    /** 折扣型的封顶减免额（元）。null = 不封顶 */
-    private BigDecimal redPackageMaxDiscount;
-    /** 阶梯/区间金额配置（JSON 串），LADDER 场景解析。 */
-    private String redPackageRangeAmount;
-
-    /** 多活动碰撞优先级，越小越优先。 */
-    private int priority = 0;
+    /** 本活动某版本的权益配置。可跨请求共享（不可变），19 个 getter 委托给它。 */
+    private final OfferSpec spec;
 
     /**
      * <b>本活动在这一次请求里圈到的 SPU 集合</b>＝「请求的 spuIdList」∩「本活动当前版本的生效绑定」。
@@ -48,6 +38,8 @@ public class ActivityCandidate {
      * <p>所以绑定必须从「筛选器」升级成<b>权益作用域</b>：它回答的是
      * 「这个活动的钱该算在哪些商品上」，而不只是「这个活动要不要参与」。
      *
+     * <p><b>它不进 {@link OfferSpec}</b>：它是逐请求的交集，不是配置。
+     *
      * <p><b>null 与空集的区别是刻意的</b>：
      * <ul>
      *   <li>{@code null} = <b>作用域未知</b>（手工构造的候选、老的装配路径）→ 按整单算，与改造前逐字节一致</li>
@@ -56,7 +48,7 @@ public class ActivityCandidate {
      * 两条生产装配路径（{@code DecisionDataLoader.flatten} 与 {@code DecisionSnapshot.materialize}）
      * 都必须填它；漏填的表现是「这条路按整单算、另一条按作用域算」，同一张券在两条路上发不同的钱。
      */
-    private java.util.Set<Long> scopedSpuIds;
+    private Set<Long> scopedSpuIds;
 
     // 规则决策结果
     private boolean eligible = true;
@@ -72,9 +64,34 @@ public class ActivityCandidate {
      * 既有语义成立（见 {@code BenefitEvaluator.computeAmounts} 的说明）。
      */
     private boolean ladderApplied = false;
-    private List<GiftResult> gifts = new ArrayList<>();
 
-    public ActivityCandidate() {}
+    /**
+     * 本轮<b>物化</b>出来的赠品。
+     *
+     * <p>权威配置在 {@code spec.gifts()}；这里是可变副本，因为
+     * ① {@code withGifts=false} 的通道（红包）必须看到空表——今天两条装配路径都是这个语义；
+     * ② {@link #addGift} 还在被使用。
+     */
+    private final List<GiftResult> gifts;
+
+    /** 作用域未知 + 不带赠品。手工构造与非买赠通道的默认形态。 */
+    public ActivityCandidate(OfferSpec spec) {
+        this(spec, null, false);
+    }
+
+    /**
+     * @param scopedSpuIds 本次请求里该活动圈到的 SPU（见字段注释；{@code null} = 作用域未知）
+     * @param withGifts    是否物化赠品。{@code false} 时 {@link #getGifts()} 返回空表，
+     *                     与改造前「只有买赠/加价购通道才 setGifts」逐字节一致
+     */
+    public ActivityCandidate(OfferSpec spec, Set<Long> scopedSpuIds, boolean withGifts) {
+        this.spec = spec == null ? OfferSpec.builder().build() : spec;
+        this.scopedSpuIds = scopedSpuIds;
+        this.gifts = withGifts ? new ArrayList<>(this.spec.gifts()) : new ArrayList<>();
+    }
+
+    /** 本候选的权益配置（不可变）。 */
+    public OfferSpec spec() { return spec; }
 
     /**
      * 规则淘汰本候选（fail-closed 资格判定用）。
@@ -101,57 +118,53 @@ public class ActivityCandidate {
         if (gift != null) this.gifts.add(gift);
     }
 
-    public String getActivityId() { return activityId; }
-    public void setActivityId(String activityId) { this.activityId = activityId; }
+    // ---------------------------------------------------------------- 配置（委托 spec，只读）
+    //
+    // ⚠ 这 19 个访问器与 DRL 的 LHS 约束一一对应，改名/去掉会让规则静默失配。
 
-    public String getActivityName() { return activityName; }
-    public void setActivityName(String activityName) { this.activityName = activityName; }
+    public String getActivityId() { return spec.activityId(); }
 
-    public Integer getActivityType() { return activityType; }
-    public void setActivityType(Integer activityType) { this.activityType = activityType; }
+    public String getActivityName() { return spec.activityName(); }
 
-    public String getBizLine() { return bizLine; }
-    public void setBizLine(String bizLine) { this.bizLine = bizLine; }
+    public Integer getActivityType() { return spec.activityType(); }
 
-    public Integer getActivityStatus() { return activityStatus; }
-    public void setActivityStatus(Integer activityStatus) { this.activityStatus = activityStatus; }
+    public String getBizLine() { return spec.bizLine(); }
 
-    public Integer getActivityAreaType() { return activityAreaType; }
-    public void setActivityAreaType(Integer activityAreaType) { this.activityAreaType = activityAreaType; }
+    public Integer getActivityStatus() { return spec.activityStatus(); }
 
-    public String getDistrictIds() { return districtIds; }
-    public void setDistrictIds(String districtIds) { this.districtIds = districtIds; }
+    public Integer getActivityAreaType() { return spec.activityAreaType(); }
 
-    public Integer getInventory() { return inventory; }
-    public void setInventory(Integer inventory) { this.inventory = inventory; }
+    public String getDistrictIds() { return spec.districtIds(); }
 
-    public Integer getUserInventory() { return userInventory; }
-    public void setUserInventory(Integer userInventory) { this.userInventory = userInventory; }
+    public Integer getInventory() { return spec.inventory(); }
 
-    public Integer getVersion() { return version; }
-    public void setVersion(Integer version) { this.version = version; }
+    public Integer getUserInventory() { return spec.userInventory(); }
 
-    public Integer getRedPackageTakeType() { return redPackageTakeType; }
-    public void setRedPackageTakeType(Integer redPackageTakeType) { this.redPackageTakeType = redPackageTakeType; }
+    public Integer getVersion() { return spec.version(); }
 
-    public BigDecimal getRedPackageAmount() { return redPackageAmount; }
-    public void setRedPackageAmount(BigDecimal redPackageAmount) { this.redPackageAmount = redPackageAmount; }
+    public Integer getRedPackageTakeType() { return spec.redPackageTakeType(); }
 
-    public BigDecimal getRedPackageMaxDiscount() { return redPackageMaxDiscount; }
-    public void setRedPackageMaxDiscount(BigDecimal redPackageMaxDiscount) { this.redPackageMaxDiscount = redPackageMaxDiscount; }
+    public BigDecimal getRedPackageAmount() { return spec.redPackageAmount(); }
 
-    public String getRedPackageAmountUnit() { return redPackageAmountUnit; }
-    public void setRedPackageAmountUnit(String redPackageAmountUnit) { this.redPackageAmountUnit = redPackageAmountUnit; }
+    /** 折扣型的封顶减免额（元）。null = 不封顶。 */
+    public BigDecimal getRedPackageMaxDiscount() { return spec.redPackageMaxDiscount(); }
 
-    public String getRedPackageRangeAmount() { return redPackageRangeAmount; }
-    public void setRedPackageRangeAmount(String redPackageRangeAmount) { this.redPackageRangeAmount = redPackageRangeAmount; }
+    public String getRedPackageAmountUnit() { return spec.redPackageAmountUnit(); }
 
-    public int getPriority() { return priority; }
-    public void setPriority(int priority) { this.priority = priority; }
+    /** 阶梯/区间金额配置（JSON 串），LADDER 场景解析。 */
+    public String getRedPackageRangeAmount() { return spec.redPackageRangeAmount(); }
+
+    /** 多活动碰撞优先级，越小越优先。 */
+    public int getPriority() { return spec.priority(); }
+
+    /** 见 {@link OfferSpec}：买赠 DRL 的 LHS 读 {@code gifts}，这个委托不能去掉。 */
+    public List<GiftResult> getGifts() { return gifts; }
+
+    // ---------------------------------------------------------------- 本轮计算态（可变）
 
     /** 见字段注释。{@code null} = 作用域未知（按整单算），非 null = 已知作用域。 */
-    public java.util.Set<Long> getScopedSpuIds() { return scopedSpuIds; }
-    public void setScopedSpuIds(java.util.Set<Long> scopedSpuIds) { this.scopedSpuIds = scopedSpuIds; }
+    public Set<Long> getScopedSpuIds() { return scopedSpuIds; }
+    public void setScopedSpuIds(Set<Long> scopedSpuIds) { this.scopedSpuIds = scopedSpuIds; }
 
     public boolean isEligible() { return eligible; }
     public void setEligible(boolean eligible) { this.eligible = eligible; }
@@ -167,7 +180,4 @@ public class ActivityCandidate {
 
     public boolean isLadderApplied() { return ladderApplied; }
     public void setLadderApplied(boolean ladderApplied) { this.ladderApplied = ladderApplied; }
-
-    public List<GiftResult> getGifts() { return gifts; }
-    public void setGifts(List<GiftResult> gifts) { this.gifts = gifts; }
 }

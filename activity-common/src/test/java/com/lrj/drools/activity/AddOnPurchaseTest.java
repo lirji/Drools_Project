@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
 import com.lrj.drools.activity.engine.ConditionTreeEvaluator;
@@ -14,6 +15,7 @@ import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.DecisionAuditor;
 import com.lrj.drools.activity.service.DecisionDataLoader;
 import com.lrj.drools.activity.service.DecisionEligibilityService;
+import com.lrj.drools.activity.service.Materials;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -41,13 +43,12 @@ import static org.mockito.Mockito.when;
 class AddOnPurchaseTest {
 
     private static ActivityCandidate withGifts(String activityId, GiftResult... gifts) {
-        ActivityCandidate c = new ActivityCandidate();
-        c.setActivityId(activityId);
-        c.setActivityName("加价购-" + activityId);
-        c.setVersion(1);
-        c.setEligible(true);
-        c.setGifts(new ArrayList<>(List.of(gifts)));
-        return c;
+        return new ActivityCandidate(OfferSpec.builder()
+                .activityId(activityId)
+                .activityName("加价购-" + activityId)
+                .version(1)
+                .gifts(new ArrayList<>(List.of(gifts)))
+                .build(), null, true);
     }
 
     private static GiftResult gift(String name, String addOnPrice) {
@@ -59,10 +60,10 @@ class AddOnPurchaseTest {
 
     /** 用桩 loader 隔掉数据库：这批测试要证的是两阶段协议，不是取数。 */
     private static AddOnPurchaseService serviceReturning(List<ActivityCandidate> candidates) {
-        return serviceReturning(new DecisionDataLoader.Materials(candidates, List.of(), Map.of()));
+        return serviceReturning(new Materials(candidates, List.of(), Map.of()));
     }
 
-    private static AddOnPurchaseService serviceReturning(DecisionDataLoader.Materials materials) {
+    private static AddOnPurchaseService serviceReturning(Materials materials) {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
         when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(materials);
         return service(loader);
@@ -83,17 +84,17 @@ class AddOnPurchaseTest {
                 new BigDecimal(orderAmount), 1);
     }
 
-    private static DecisionDataLoader.Materials minimumOrderMaterials(String activityId) {
+    private static Materials minimumOrderMaterials(String activityId) {
         return minimumOrderMaterials(activityId, 500);
     }
 
-    private static DecisionDataLoader.Materials minimumOrderMaterials(String activityId, int minimum) {
+    private static Materials minimumOrderMaterials(String activityId, int minimum) {
         ActivityCandidate candidate = withGifts(activityId, gift("保温杯", "9.9"));
         ConditionNode threshold = new ConditionNode();
         threshold.setField("orderAmount");
         threshold.setOp("ge");
         threshold.setValue(minimum);
-        return new DecisionDataLoader.Materials(
+        return new Materials(
                 List.of(candidate),
                 List.of(new EligibilityRuleDef(activityId,
                         "numberAttr(\"orderAmount\") >= " + minimum)),
@@ -183,9 +184,9 @@ class AddOnPurchaseTest {
     void quoteReloadsAndRejectsWhenConfigurationChangesBetweenPhases() {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
         when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(
-                new DecisionDataLoader.Materials(
+                new Materials(
                         List.of(withGifts("ACT-A", gift("保温杯", "9.9"))), List.of(), Map.of()),
-                new DecisionDataLoader.Materials(
+                new Materials(
                         List.of(withGifts("ACT-A", gift("雨伞", "19.9"))), List.of(), Map.of()));
         AddOnPurchaseService svc = service(loader);
 

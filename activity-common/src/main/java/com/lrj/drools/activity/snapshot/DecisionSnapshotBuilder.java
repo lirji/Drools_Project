@@ -3,11 +3,11 @@ package com.lrj.drools.activity.snapshot;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.GiftResult;
+import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.persistence.*;
 import com.lrj.drools.activity.service.DecisionDataLoader;
-import com.lrj.drools.activity.snapshot.DecisionSnapshot.CandidateTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,7 +30,9 @@ import java.util.Set;
  * 否则快照路径与走库路径会算出不同的钱。对齐点：
  * <ul>
  *   <li>只收 {@code is_del=0} 且状态为 ONLINE 的版本，且取每个活动<b>最高的已上线版本</b>（P0-4 的语义）</li>
- *   <li>规则行 / 条件行按 {@code (activityId, version)} 取第一条（原实现是 {@code findFirst()}）</li>
+ *   <li>规则行 / 条件行按 {@code (activityId, version)} 取第一条（原实现是 {@code findFirst()}）。
+ *       条件行取的是<b>整行</b>——约束与条件树必须来自同一行，见下面 {@code condByKey} 处的说明</li>
+ *   <li>「行 → 配置」走 {@link com.lrj.drools.activity.domain.OfferSpec#from}，与走库路径同一个入口</li>
  *   <li>生效时间窗**不在此处过滤**——留给请求时判定，理由见 {@link DecisionSnapshot}</li>
  * </ul>
  * 等价性由 {@code SnapshotParityTest} 对拍守住。
@@ -96,43 +98,38 @@ public class DecisionSnapshotBuilder {
                             g.getBatchId(), g.getGiftName(), g.getGiftType(),
                             g.getGiftNum(), g.getAbsoluteAmount(), g.getRightType()));
         }
-        Map<String, String> constraintByKey = new LinkedHashMap<>();
-        Map<String, ConditionNode> treeByKey = new LinkedHashMap<>();
+        // 条件行按 (activityId, version) 取**整行**的第一条——与 DecisionDataLoader.eligibility 同语义。
+        // 此前这里是 drl 与 tree **各自** putIfAbsent，结构上允许两者来自不同的行：
+        // 第一行的树是脏的（parseTree 返回 null）时，快照会拿第一行的约束 + 第二行的树凑成一个候选，
+        // 而走库那条路会因为「树不可判定」把候选 fail-closed 淘汰。坏数据在快照侧静默变成
+        // 「资格通过、照常发钱」，是两条路里更贵的那个方向。
+        Map<String, ActivityConditionEntity> condByKey = new LinkedHashMap<>();
         for (ActivityConditionEntity c : conditionRepo.findByActivityIdInAndSceneAndEnabledAndIsDel(
                 ids, RuleScene.ELIGIBILITY.code(), ENABLED, NOT_DEL)) {
-            constraintByKey.putIfAbsent(key(c.getActivityId(), c.getVersion()), c.getGeneratedDrl());
-            ConditionNode t = DecisionDataLoader.parseTree(c.getConditionTreeJson());
-            if (t != null) treeByKey.putIfAbsent(key(c.getActivityId(), c.getVersion()), t);
+            condByKey.putIfAbsent(key(c.getActivityId(), c.getVersion()), c);
         }
 
         // ③ SPU 倒排：只收当前线上版本的生效绑定
         Map<Long, Set<String>> bySpu = new LinkedHashMap<>();
-        Map<String, CandidateTemplate> templates = new LinkedHashMap<>();
+        Map<String, OfferSpec> specs = new LinkedHashMap<>();
         Map<String, String> constraints = new LinkedHashMap<>();
         Map<String, ConditionNode> trees = new LinkedHashMap<>();
 
         for (ActivityManageEntity m : live.values()) {
             String k = key(m.getActivityId(), m.getVersion());
-            ActivityRuleEntity r = ruleByKey.get(k);
-            templates.put(m.getActivityId(), new CandidateTemplate(
-                    m.getActivityId(), m.getActivityName(), m.getActivityType(), m.getBizLine(),
-                    m.getActivityStatus(), m.getActivityAreaType(), m.getDistrictIds(),
-                    m.getInventory(), m.getUserInventory(), m.getVersion(),
-                    m.getPriority() == null ? 0 : m.getPriority(),
-                    r == null ? null : r.getRedPackageTakeType(),
-                    r == null ? null : r.getRedPackageAmount(),
-                    r == null ? null : r.getRedPackageAmountUnit(),
-                    r == null ? null : r.getRedPackageRangeAmount(),
-                    r == null ? null : r.getRedPackageMaxDiscount(),
-                    m.getActivityStartTime(), m.getActivityEndTime(),
-                    List.copyOf(giftsByKey.getOrDefault(k, List.of()))));
+            // 「行 → 配置」只有 OfferSpec.from 这一个入口，走库路径走的也是它。
+            specs.put(m.getActivityId(), OfferSpec.from(m, ruleByKey.get(k),
+                    giftsByKey.getOrDefault(k, List.of())));
 
-            String constraint = constraintByKey.get(k);
-            if (constraint != null && !constraint.isBlank()) {
-                constraints.put(m.getActivityId(), constraint);
+            ActivityConditionEntity cond = condByKey.get(k);
+            if (cond != null) {
+                String constraint = cond.getGeneratedDrl();
+                if (constraint != null && !constraint.isBlank()) {
+                    constraints.put(m.getActivityId(), constraint);
+                }
+                ConditionNode tree = DecisionDataLoader.parseTree(cond.getConditionTreeJson());
+                if (tree != null) trees.put(m.getActivityId(), tree);
             }
-            ConditionNode tree = treeByKey.get(k);
-            if (tree != null) trees.put(m.getActivityId(), tree);
 
             for (ActivitySpuBindingEntity b : bindingRepo.findByActivityIdAndVersionAndIsDel(
                     m.getActivityId(), m.getVersion(), NOT_DEL)) {
@@ -143,7 +140,7 @@ public class DecisionSnapshotBuilder {
         }
 
         return new DecisionSnapshot(tenant, bizLine, generation, Instant.now(),
-                bySpu, templates, constraints, trees, resolveStrategy(bizLine));
+                bySpu, specs, constraints, trees, resolveStrategy(bizLine));
     }
 
     private StackStrategy resolveStrategy(String bizLine) {
