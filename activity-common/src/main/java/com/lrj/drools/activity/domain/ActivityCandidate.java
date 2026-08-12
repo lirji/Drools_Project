@@ -33,10 +33,6 @@ public class ActivityCandidate {
     /** 阶梯/区间金额配置（JSON 串），LADDER 场景解析。 */
     private String redPackageRangeAmount;
 
-    // 拓展配置（买赠等）
-    private String extraConfigType;
-    private String extraDataJson;
-
     /** 多活动碰撞优先级，越小越优先。 */
     private int priority = 0;
 
@@ -129,20 +125,11 @@ public class ActivityCandidate {
     public BigDecimal getRedPackageMaxDiscount() { return redPackageMaxDiscount; }
     public void setRedPackageMaxDiscount(BigDecimal redPackageMaxDiscount) { this.redPackageMaxDiscount = redPackageMaxDiscount; }
 
-    /** 权益形态。DRL 的 LHS 用它做判别（{@code benefitForm == "RATIO_ZHE"}），故返回名字而不是枚举 */
-    public String getBenefitForm() { return BenefitForm.of(redPackageAmountUnit).name(); }
-
     public String getRedPackageAmountUnit() { return redPackageAmountUnit; }
     public void setRedPackageAmountUnit(String redPackageAmountUnit) { this.redPackageAmountUnit = redPackageAmountUnit; }
 
     public String getRedPackageRangeAmount() { return redPackageRangeAmount; }
     public void setRedPackageRangeAmount(String redPackageRangeAmount) { this.redPackageRangeAmount = redPackageRangeAmount; }
-
-    public String getExtraConfigType() { return extraConfigType; }
-    public void setExtraConfigType(String extraConfigType) { this.extraConfigType = extraConfigType; }
-
-    public String getExtraDataJson() { return extraDataJson; }
-    public void setExtraDataJson(String extraDataJson) { this.extraDataJson = extraDataJson; }
 
     public int getPriority() { return priority; }
     public void setPriority(int priority) { this.priority = priority; }

@@ -59,22 +59,6 @@ public class ActivityQueryService {
     @Value("${activity.marketing.rule-engine.enabled:true}")
     private boolean ruleEngineEnabled;
 
-    /**
-     * 旧灰度属性仅保留配置兼容，不再改变生产求值器。
-     * 随机/一口价/第 N 件折必须由 {@link BenefitEvaluator} 解释；旧 DRL 不能成为线上回退。
-     */
-    @Value("${activity.marketing.rule-engine.java-benefit-eval:true}")
-    @SuppressWarnings("unused")
-    private boolean javaBenefitEval;
-
-    /**
-     * 同上：生产 discount/gift/addon 资格均由 {@link DecisionEligibilityService}
-     * 的条件树求值，不允许翻回 generated DRL 这份第二权威。
-     */
-    @Value("${activity.marketing.rule-engine.java-eligibility-eval:true}")
-    @SuppressWarnings("unused")
-    private boolean javaEligibilityEval;
-
     public ActivityQueryService(DecisionDataLoader loader,
                                 ActivityRuleRuntimeService ruleRuntime,
                                 DecisionMetrics metrics,
@@ -474,11 +458,5 @@ public class ActivityQueryService {
      * 所以 provenance 必须同样带出来。
      */
     public record GiftView(List<GiftResult> gifts, List<String> traces, String mode, String decisionId,
-                           DecisionProvenance provenance) {
-
-        /** 四参兼容构造：provenance 缺省为「走库」（保守取值，见 {@link DecisionProvenance#db()}）。 */
-        public GiftView(List<GiftResult> gifts, List<String> traces, String mode, String decisionId) {
-            this(gifts, traces, mode, decisionId, DecisionProvenance.db());
-        }
-    }
+                           DecisionProvenance provenance) {}
 }

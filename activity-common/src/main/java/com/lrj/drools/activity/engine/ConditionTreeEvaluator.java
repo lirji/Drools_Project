@@ -37,7 +37,9 @@ import java.util.Objects;
  *       这是 fail-closed 的核心——宁可不发，不可超发。</li>
  *   <li>正向比较遇到 null 一律 false（DRL 里 {@code null > 100} 不成立）</li>
  * </ul>
- * 等价性由 {@code DroolsEligibilityGoldenSetTest} 用同一组金标断言在两条路上对拍。
+ * <p><b>本类是唯一的生产求值器</b>：discount / gifts / addon 三通道的资格判定都只走这里。
+ * {@link RuleConditionTranslator} 的产物仅用于写入口的编译校验，<b>不参与求值</b>——
+ * 所以两者之间没有、也不该有"两条路对拍"这回事；上面几条语义对齐是给翻译器的约束，不是对拍关系。
  */
 @Service
 public class ConditionTreeEvaluator {

@@ -64,12 +64,6 @@ public class AddOnPurchaseService {
     public record AddOnQuote(boolean ok, String activityId, String itemName,
                              BigDecimal addOnPrice, String reason, List<String> traces,
                              DecisionProvenance provenance) {
-        /** 保留旧五参构造，避免只消费报价值、不关心 trace 的 Java 调用方源码失配。 */
-        public AddOnQuote(boolean ok, String activityId, String itemName,
-                          BigDecimal addOnPrice, String reason) {
-            this(ok, activityId, itemName, addOnPrice, reason, List.of());
-        }
-
         /** 六参兼容构造：带 traces 但还没接上 provenance 的调用点落在这里，缺省为「走库」。 */
         public AddOnQuote(boolean ok, String activityId, String itemName,
                           BigDecimal addOnPrice, String reason, List<String> traces) {
