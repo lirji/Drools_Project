@@ -46,10 +46,23 @@ public class ActivityExceptionAdvice {
                 .body(ActivityErrorBody.of(ActivityErrorCode.INVALID_ARGUMENT, ex.getMessage()));
     }
 
-    /** 还没迁移到领域异常的状态冲突。状态码与改造前的 per-endpoint catch 一致（409）。 */
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<ActivityErrorBody> onIllegalState(IllegalStateException ex) {
-        return ResponseEntity.status(ActivityErrorCode.STATE_CONFLICT.httpStatus())
-                .body(ActivityErrorBody.of(ActivityErrorCode.STATE_CONFLICT, ex.getMessage()));
-    }
+    // ------------------------------------------------------------------
+    // 这里**刻意没有** @ExceptionHandler(IllegalStateException.class) → 409。
+    //
+    // 一度有过，理由是「与改造前的 per-endpoint catch 一致」。但 advice 的作用域是整个
+    // controller 包，而那些 catch 只挂在 create / status 两个方法上——把它提成兜底，
+    // 等于顺带宣布 list / preview / grants / generation / field-dict 上抛出的**任何**
+    // IllegalStateException 都是「状态冲突」。而在那些端点上，ISE 的来源是 Optional.get、
+    // 懒加载、bean 状态错——那是 bug，不是冲突。报成 409 的后果有三层，一层比一层贵：
+    //   ① 4xx 不计错误预算、不触发告警 —— 写平面的故障在监控上直接消失；
+    //   ② 409 的标准语义是「重试可能成功」，调用方会去重试一个永远不会成功的请求；
+    //   ③ 排查时先去查「谁在并发改这条活动」，而根因在另一个方向。
+    // 这正是同一批改动里 DecisionExceptionAdvice 花大段注释论证要避免的「把 bug 伪装成
+    // 客户端错误」，只是方向相反——那边怕 IAE→400 掩盖脏数据，这边怕 ISE→409 掩盖 NPE 类故障。
+    //
+    // 真正需要 409 的路径都已经有归属，不依赖这个兜底：
+    //   · 版本冲突 / 幂等重放 / 状态迁移非法 → ActivityException（VERSION_CONFLICT 等），
+    //     由上面那个 handler 按 ActivityErrorCode 给码，且能穿过旧 catch；
+    //   · create / status 两个端点保留的 per-endpoint catch 仍把 ISE 兜成 409，状态码一位不漂。
+    // 没被分类的 ISE 就该落到 500 —— 让它响亮地失败，而不是安静地变成一个 4xx。
 }

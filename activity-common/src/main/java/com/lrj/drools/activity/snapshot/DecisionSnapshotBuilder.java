@@ -99,6 +99,17 @@ public class DecisionSnapshotBuilder {
                 : manageRepo.findByBizLineAndActivityStatusAndIsDel(bizLine, ActivityStatus.ONLINE.code(), NOT_DEL);
         Map<String, ActivityManageEntity> live = new LinkedHashMap<>();
         for (ActivityManageEntity m : onlineRows) {
+            // Java 侧再精确比一次 bizLine。**看似冗余，但删不得**：SQL 下推只是省了传输量，
+            // 谓词语义并不等价——生产 MySQL 8 的默认排序规则 utf8mb4_0900_ai_ci 是大小写不敏感、
+            // 重音不敏感的（5.7 的 general_ci 还额外忽略尾随空格），于是 `biz_line = 'retail'`
+            // 会把 bizLine 为 'Retail' / 'RETAIL' 的在线活动一并收进 retail 这个桶。
+            // 而桶归属决定的是「谁在快照里 = 谁能被发钱」：这些活动改造前进不了任何桶，
+            // 改造后会命中并按其配置发钱——一次没人声明过的语义放宽。
+            //
+            // 更麻烦的是它**测不出来**：SnapshotParityTest / SnapshotBuildQueryCountTest 都跑在 H2 上，
+            // 而 H2 的字符串比较默认大小写敏感，两条谓词在测试里恒等价，只在生产 MySQL 上分叉。
+            // 这一行把判据钉回 Java 的精确相等，成本为零，也不影响 R15 想要的查询次数收敛。
+            if (bizLine != null && !bizLine.equals(m.getBizLine())) continue;
             live.merge(m.getActivityId(), m,
                     (a, b) -> Comparator.comparing(ActivityManageEntity::getVersion,
                             Comparator.nullsFirst(Comparator.naturalOrder())).compare(a, b) >= 0 ? a : b);
