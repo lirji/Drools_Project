@@ -28,9 +28,18 @@ import java.time.Instant;
         },
         // 幂等硬化(P1-o)：同租户同 requestId 唯一(request_id 可空→多空值放行)，并发重复由 DB 兜底而非仅 check-then-insert。
         uniqueConstraints = {
-                @jakarta.persistence.UniqueConstraint(name = "uk_am_tenant_request", columnNames = {"tenant_id", "request_id"})
+                @jakarta.persistence.UniqueConstraint(
+                        name = ActivityManageEntity.UK_TENANT_REQUEST,
+                        columnNames = {"tenant_id", "request_id"})
         })
 public class ActivityManageEntity extends SoftDeletableTenantEntity {
+
+    /**
+     * 幂等唯一约束名。<b>写平面要按它分辨「并发重复请求(409)」与其它完整性错误</b>
+     * （见 {@link ConstraintViolations}），所以它是被代码读取的标识，不只是 DDL 里的一个名字——
+     * 常量化后改名时约束声明与判定处一起走，不会只改一边。
+     */
+    public static final String UK_TENANT_REQUEST = "uk_am_tenant_request";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

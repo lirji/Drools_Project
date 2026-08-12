@@ -2,13 +2,16 @@ package com.lrj.drools.activity.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.Collection;
 import java.util.List;
 
+/**
+ * 写平面的绑定仓库。
+ *
+ * <p>决策取数层（{@code DecisionDataLoader} / {@code DecisionSnapshotBuilder}）用的两条批量查询
+ * 已搬到 {@link ActivitySpuBindingReadRepository}——那个接口继承 {@code Repository<T, ID>}，
+ * {@code save} / {@code delete} 在类型上不存在（R17）。
+ */
 public interface ActivitySpuBindingRepository extends JpaRepository<ActivitySpuBindingEntity, Long> {
-
-    /** 读取侧：按 SPU 批量查生效绑定（effective=1, isDel=0）。 */
-    List<ActivitySpuBindingEntity> findBySpuIdInAndEffectiveAndIsDel(Collection<Long> spuIds, Integer effective, Integer isDel);
 
     List<ActivitySpuBindingEntity> findByActivityIdAndVersionAndIsDel(String activityId, Integer version, Integer isDel);
 

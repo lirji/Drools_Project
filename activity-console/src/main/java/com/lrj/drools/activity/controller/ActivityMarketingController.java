@@ -47,7 +47,13 @@ import java.util.stream.Collectors;
  *   GET  /activity-marketing/field-dict        字段/运算符/枚举字典（前端报表下拉用）
  *   GET  /activity-marketing/generation        库里当前发布代际（决策侧回显的 generation 的参照物）
  *
- * 错误约定与 CampaignController 一致：参数非法 400，状态/并发冲突 409。
+ * 错误约定与 CampaignController 一致：参数非法 400，状态/并发冲突 409，<b>四眼拒绝 403</b>
+ * （「不该由你来做」不是「冲突，重试可能会成」）。
+ *
+ * <p>映射本身收在 {@link ActivityExceptionAdvice}，不再各方法手抄。下面几个方法里的
+ * {@code try/catch} 是<b>迁移期</b>保留物：留着它们，已有端点的状态码就一位都不会漂；
+ * advice 负责兜住它们没覆盖的那些端点，以及穿过它们的
+ * {@link com.lrj.drools.activity.error.ActivityException}。
  */
 @RestController
 @RequestMapping("/activity-marketing")

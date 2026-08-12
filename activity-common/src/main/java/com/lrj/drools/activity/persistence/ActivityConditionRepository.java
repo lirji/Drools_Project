@@ -2,17 +2,18 @@ package com.lrj.drools.activity.persistence;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.Collection;
 import java.util.List;
 
+/**
+ * 写平面的资格条件行仓库。
+ *
+ * <p>决策取数层用的批量查询已搬到 {@link ActivityConditionReadRepository}（继承 {@code Repository<T, ID>}，
+ * 类型上没有 {@code save} / {@code delete}，R17）。
+ */
 public interface ActivityConditionRepository extends JpaRepository<ActivityConditionEntity, Long> {
 
     List<ActivityConditionEntity> findByActivityIdAndVersionAndIsDel(String activityId, Integer version, Integer isDel);
 
     List<ActivityConditionEntity> findByActivityIdAndVersionAndSceneAndEnabledAndIsDel(
             String activityId, Integer version, String scene, Integer enabled, Integer isDel);
-
-    /** P0-3 批量版：一次取回多个活动某场景的条件行，调用方按 (activityId, version) 索引。 */
-    List<ActivityConditionEntity> findByActivityIdInAndSceneAndEnabledAndIsDel(
-            Collection<String> activityIds, String scene, Integer enabled, Integer isDel);
 }

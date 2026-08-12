@@ -387,37 +387,61 @@ public class BenefitEvaluator {
         List<ActivityCandidate> eligible = candidates.stream().filter(ActivityCandidate::isEligible).toList();
         if (eligible.isEmpty()) return result;
 
-        if (strategy == StackStrategy.STACK) {
-            BigDecimal total = BigDecimal.ZERO;
-            for (ActivityCandidate c : eligible) {
-                if (c.getComputedAmount() != null) total = total.add(c.getComputedAmount());
-            }
-            result.setHitAmount(total);
-            if (mode.explains()) result.trace("stack sum amount=" + total);
-            ActivityCandidate main = pickByPriority(eligible);
-            if (main != null) {
-                result.setHitActivityId(main.getActivityId());
-                result.setHitActivityName(main.getActivityName());
-                if (mode.explains()) result.trace("stack main activityId=" + main.getActivityId());
-            }
-            capToOrderAmount(ctx, result, mode);
-            return result;
-        }
+        // 两个分支各自算出 (hitId, hitName, amount)，写回与封顶只有下面这一段。
+        Merged merged = strategy == StackStrategy.STACK
+                ? stack(eligible, mode)
+                : single(eligible, strategy, mode);
 
+        result.setHitActivityId(merged.hitId());
+        result.setHitActivityName(merged.hitName());
+        result.setHitAmount(merged.amount());
+        for (String t : merged.traces()) result.trace(t);
+        capToOrderAmount(ctx, result, mode);
+        return result;
+    }
+
+    /**
+     * {@code merge} 的中间结果：命中活动 + 最终减免额 + 该策略要写的 trace。
+     *
+     * <p><b>刻意不带封顶</b>——封顶是 {@code merge} 出口<b>唯一</b>做的事。让分支各自返回
+     * 「还没封顶的三元组」，是为了让「封顶只有一处」在结构上成立，而不是靠每个分支记得调一次。
+     * {@code amount} 恒非 null（无命中时是 {@link BigDecimal#ZERO}），与 {@code ActivityRuleResult}
+     * 的字段默认值一致。
+     */
+    private record Merged(String hitId, String hitName, BigDecimal amount, List<String> traces) {}
+
+    /**
+     * STACK：全部 eligible 候选金额累加（原 DRL 的 {@code accumulate sum}），
+     * 主活动 id 用与 PRIORITY 相同的选择规则（原 DRL 的 {@code discount-stack-main}）。
+     */
+    private static Merged stack(List<ActivityCandidate> eligible, DecisionMode mode) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (ActivityCandidate c : eligible) {
+            if (c.getComputedAmount() != null) total = total.add(c.getComputedAmount());
+        }
+        List<String> traces = mode.explains() ? new java.util.ArrayList<>() : List.of();
+        if (mode.explains()) traces.add("stack sum amount=" + total);
+
+        ActivityCandidate main = pickByPriority(eligible);
+        if (main == null) return new Merged(null, null, total, traces);
+        if (mode.explains()) traces.add("stack main activityId=" + main.getActivityId());
+        return new Merged(main.getActivityId(), main.getActivityName(), total, traces);
+    }
+
+    /** MAX / MUTEX / PRIORITY：单选一个候选，减免额就是它自己的算额。 */
+    private static Merged single(List<ActivityCandidate> eligible, StackStrategy strategy, DecisionMode mode) {
         ActivityCandidate winner = (strategy == StackStrategy.MAX)
                 ? pickByAmount(eligible)
                 : pickByPriority(eligible);
-        if (winner != null) {
-            result.hit(winner);
-            if (mode.explains()) {
-                result.trace(strategy == StackStrategy.MAX
+        if (winner == null) return new Merged(null, null, BigDecimal.ZERO, List.of());
+
+        List<String> traces = mode.explains()
+                ? List.of(strategy == StackStrategy.MAX
                         ? "hit by MAX: " + winner.getActivityId() + " amount=" + amount(winner)
                         : "hit by " + strategy.name() + ": " + winner.getActivityId()
-                          + " priority=" + winner.getPriority() + " amount=" + amount(winner));
-            }
-        }
-        capToOrderAmount(ctx, result, mode);
-        return result;
+                          + " priority=" + winner.getPriority() + " amount=" + amount(winner))
+                : List.of();
+        return new Merged(winner.getActivityId(), winner.getActivityName(), amount(winner), traces);
     }
 
     /**

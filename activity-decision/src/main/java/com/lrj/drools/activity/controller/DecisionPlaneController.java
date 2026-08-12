@@ -205,4 +205,51 @@ public class DecisionPlaneController {
         }
         return ResponseEntity.ok(out);
     }
+
+    /**
+     * <b>快照回滚</b>：把本租户某条业务线的决策指针切回上一个发布代际，立刻生效。
+     *
+     * <p><b>为什么必须有这个端点</b>（R16）：{@code DecisionSnapshotStore.rollback} 在此之前
+     * <b>没有任何生产调用方</b>——全仓只有两个测试在调它。也就是说「回滚是求值出 bug 时的止损手段」
+     * 一直是一张空头支票：previous 槽位修得再对，运维也按不下去。止损手段只有能从生产按下去才算数。
+     *
+     * <p><b>它是写动作，不是诊断</b>：切指针会立刻改变这条业务线上每一次决策实际发出去的钱。
+     * 所以它挂在与 {@code GET /snapshot} 同级的 {@code /decision/v1/**} 下——同一道
+     * {@code RoleGateFilter} 角色门（console 角色下 404，只有 decision 角色的实例提供它）、
+     * 同一条需 JWT 验签的安全链；并且额外要求 {@code activity.tenant.auth.console-write-authority}
+     * （配了才生效，与写平面的 create/status/claim/release 用同一个权限，见 {@code ActivityResourceServerConfig}）。
+     *
+     * <p><b>它不写数据库</b>：只动本进程内存里的指针，因此不违反「decision 连只读账号」的边界。
+     * 推论有两条，运维必须知道：<b>① 只影响被打到的那个实例</b>（多实例部署要逐实例调用，或经网关
+     * 逐个 pod 调）；<b>② 下一次代际推进会把它盖掉</b>——回滚是止血，真正的修复仍是在 console 侧
+     * 下线/改配置再发布一代。
+     *
+     * <p>没有上一代可回时返回 409（而不是假装成功）：常见于「刚重启、只发布过一代」，
+     * 以及「上一次推进是兜底重建（{@code refresh}，按设计不占回滚槽位）」。
+     */
+    @PostMapping("/snapshot/rollback")
+    public ResponseEntity<?> rollbackSnapshot(@RequestParam("bizLine") String bizLine) {
+        String tenant = TenantContext.get();
+        DecisionSnapshot from = store.get(tenant, bizLine);
+
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("tenant", tenant);
+        out.put("bizLine", bizLine);
+        if (!store.rollback(tenant, bizLine)) {
+            out.put("rolledBack", false);
+            out.put("fromGeneration", from == null ? null : from.generation());
+            out.put("hint", from == null
+                    ? "本租户这条业务线当前没有快照（决策正走库），没有可回滚的代际"
+                    : "没有可回滚的上一代：要么这是重启后的第一代，要么上一次推进是兜底重建（按设计不占回滚槽位）");
+            return ResponseEntity.status(409).body(out);
+        }
+        // 回滚成功后的 current 就是刚切回来的那一代（读它而不是回滚前的 previous，避免报出一个已被并发覆盖的代际号）
+        DecisionSnapshot target = store.get(tenant, bizLine);
+        out.put("rolledBack", true);
+        out.put("fromGeneration", from == null ? null : from.generation());
+        out.put("toGeneration", target == null ? null : target.generation());
+        out.put("activityCount", target == null ? null : target.activityCount());
+        out.put("hint", "已切回上一代，立刻生效；仅影响本实例，且下一次代际推进会覆盖它");
+        return ResponseEntity.ok(out);
+    }
 }

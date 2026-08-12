@@ -11,16 +11,16 @@ import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder.EligibilityRuleDef;
 import com.lrj.drools.activity.persistence.ActivityConditionEntity;
-import com.lrj.drools.activity.persistence.ActivityConditionRepository;
+import com.lrj.drools.activity.persistence.ActivityConditionReadRepository;
 import com.lrj.drools.activity.persistence.ActivityGiftEntity;
-import com.lrj.drools.activity.persistence.ActivityGiftRepository;
+import com.lrj.drools.activity.persistence.ActivityGiftReadRepository;
 import com.lrj.drools.activity.persistence.ActivityManageEntity;
-import com.lrj.drools.activity.persistence.ActivityManageRepository;
+import com.lrj.drools.activity.persistence.ActivityManageReadRepository;
 import com.lrj.drools.activity.persistence.ActivityRuleEntity;
-import com.lrj.drools.activity.persistence.ActivityRuleRepository;
+import com.lrj.drools.activity.persistence.ActivityRuleReadRepository;
 import com.lrj.drools.activity.persistence.ActivitySpuBindingEntity;
-import com.lrj.drools.activity.persistence.ActivitySpuBindingRepository;
-import com.lrj.drools.activity.persistence.ActivityStrategyRepository;
+import com.lrj.drools.activity.persistence.ActivitySpuBindingReadRepository;
+import com.lrj.drools.activity.persistence.ActivityStrategyReadRepository;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.snapshot.DecisionSnapshot;
 import com.lrj.drools.activity.snapshot.DecisionSnapshotStore;
@@ -60,29 +60,37 @@ import java.util.stream.Collectors;
  *
  * <p><b>行为等价性</b>：本类是纯搬移 + 批量化，判定逻辑逐行照搬（上线状态、时间窗、类型匹配、
  * 取最高版本、条件行取第一条）。等价性由 {@code DecisionGoldenSetTest} 的 39 例金标守住。
+ *
+ * <p><b>注入的是只读仓库</b>（R17）：六个 {@code *ReadRepository} 都继承
+ * {@code Repository<T, ID>} 而非 {@code JpaRepository}，于是 {@code save} / {@code delete}
+ * <b>在类型上不存在</b>。此前「取数层不写库」只靠 decision 的只读数据库账号在运行期兜住——
+ * 读路径上一次手滑的 {@code save(...)} 能编译、能过全部单测（测试库可写），只在生产炸。
  */
 @Service
 public class DecisionDataLoader {
+
+    private static final org.slf4j.Logger LOG =
+            org.slf4j.LoggerFactory.getLogger(DecisionDataLoader.class);
 
     private static final int NOT_DEL = 0;
     private static final int EFFECTIVE = 1;
     private static final int ENABLED = 1;
 
-    private final ActivitySpuBindingRepository bindingRepo;
-    private final ActivityManageRepository manageRepo;
-    private final ActivityRuleRepository ruleRepo;
-    private final ActivityConditionRepository conditionRepo;
-    private final ActivityGiftRepository giftRepo;
-    private final ActivityStrategyRepository strategyRepo;
+    private final ActivitySpuBindingReadRepository bindingRepo;
+    private final ActivityManageReadRepository manageRepo;
+    private final ActivityRuleReadRepository ruleRepo;
+    private final ActivityConditionReadRepository conditionRepo;
+    private final ActivityGiftReadRepository giftRepo;
+    private final ActivityStrategyReadRepository strategyRepo;
     private final DecisionSnapshotStore snapshots;
     private final DecisionMetrics metrics;
 
-    public DecisionDataLoader(ActivitySpuBindingRepository bindingRepo,
-                              ActivityManageRepository manageRepo,
-                              ActivityRuleRepository ruleRepo,
-                              ActivityConditionRepository conditionRepo,
-                              ActivityGiftRepository giftRepo,
-                              ActivityStrategyRepository strategyRepo,
+    public DecisionDataLoader(ActivitySpuBindingReadRepository bindingRepo,
+                              ActivityManageReadRepository manageRepo,
+                              ActivityRuleReadRepository ruleRepo,
+                              ActivityConditionReadRepository conditionRepo,
+                              ActivityGiftReadRepository giftRepo,
+                              ActivityStrategyReadRepository strategyRepo,
                               DecisionSnapshotStore snapshots,
                               DecisionMetrics metrics) {
         this.bindingRepo = bindingRepo;
@@ -210,8 +218,25 @@ public class DecisionDataLoader {
         if (type != ActivityType.RED_PACKAGE) return StackStrategy.MAX;
         return strategyRepo.findFirstByBizLineAndActivityTypeIsNullAndSceneAndIsDel(
                         bizLine, RuleScene.DISCOUNT.code(), NOT_DEL)
-                .map(s -> StackStrategy.fromCode(s.getStrategy()))
+                .map(s -> strategyOrMax(s.getStrategy(), bizLine))
                 .orElse(StackStrategy.MAX);
+    }
+
+    /**
+     * 脏策略行 fail-safe 回落 MAX——与快照构建侧 {@code DecisionSnapshotBuilder.resolveStrategy}
+     * 同口径。两条路对同一条脏数据必须得出同一个合并策略，否则快照与走库会发不同的钱。
+     *
+     * <p>「查不到策略行」本来就是 {@code orElse(MAX)}，而脏策略行给决策的可用信息量与查不到完全相同，
+     * 却会让整次请求 500——这条不对称没有任何道理。
+     */
+    private static StackStrategy strategyOrMax(String code, String bizLine) {
+        StackStrategy parsed = StackStrategy.tryFromCode(code);
+        if (parsed == null) {
+            LOG.warn("[decision] bizLine={} 的合并策略读不懂（strategy={}），本次决策按 MAX 合并；请修数据",
+                    bizLine, code);
+            return StackStrategy.MAX;
+        }
+        return parsed;
     }
 
     // ------------------------------------------------------------------ 内部

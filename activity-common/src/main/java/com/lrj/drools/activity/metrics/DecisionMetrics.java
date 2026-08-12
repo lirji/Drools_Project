@@ -61,6 +61,8 @@ public class DecisionMetrics {
     public static final String SNAPSHOT_COUNT = "activity.decision.snapshot.count";
     /** 最旧快照的年龄（秒）。**止损可观测性的核心读数**，见 {@link #bindSnapshotStore}。 */
     public static final String SNAPSHOT_AGE = "activity.decision.snapshot.age.seconds";
+    /** 因 bizLine 为空而进不了任何快照桶的在线活动数，见 {@link #snapshotOrphans}。 */
+    public static final String SNAPSHOT_ORPHAN = "activity.decision.snapshot.orphan";
 
     /**
      * activityId 标签的基数上限。
@@ -336,6 +338,29 @@ public class DecisionMetrics {
     public void bindSnapshotStore(com.lrj.drools.activity.snapshot.DecisionSnapshotStore store) {
         registry.gauge(SNAPSHOT_COUNT, store, s -> s.size());
         registry.gauge(SNAPSHOT_AGE, store, s -> s.oldestAgeSeconds(java.time.Instant.now()));
+    }
+
+    /**
+     * 记一次「本次快照构建看见了 N 个没有 bizLine 的在线活动」。
+     *
+     * <p><b>它抓的是本仓库唯一一种「三个 provenance 值全绿、活动就是不在快照里」的故障。</b>
+     * 快照按 bizLine 精确匹配收活动，bizLine 为空的活动进不了任何桶；
+     * 而决策照常命中别的活动、代际是别条业务线的正常数、快照也很新——
+     * 回退率、耗时、命中数<b>全部看不出来</b>。在此之前只有诊断端点
+     * {@code GET /decision/v1/snapshot?activityId=} 照得出来，而那要求你先怀疑到某个具体活动头上。
+     *
+     * <p>每次构建按当时的库存量 {@code increment(n)}，所以绝对值没有意义——
+     * 能用的是 {@code rate(...) > 0}：只要还有这种活动，它就一直在涨；数据修干净后立刻停。
+     *
+     * <p><b>刻意不打 tenant / bizLine 标签</b>：与 {@link #bindSnapshotStore} 同一笔基数账，
+     * 租户 × 业务线不是工程可控量。要定位到具体活动看构建期那条 WARN 日志。
+     */
+    public void snapshotOrphans(long n) {
+        if (n <= 0) return;
+        Counter.builder(SNAPSHOT_ORPHAN)
+                .description("bizLine 为空、进不了任何决策快照桶的在线活动数（rate>0 即有活动永远不会被命中）")
+                .register(registry)
+                .increment(n);
     }
 
     private static String safe(String s) {

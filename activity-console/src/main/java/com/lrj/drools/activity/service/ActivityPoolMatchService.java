@@ -27,6 +27,11 @@ import java.util.stream.Collectors;
  * 来源用 SQL 打真实商品/车辆表；demo 用内存过滤 {@code demo_product}（数据集小）。
  * 成员资格 = 价格区间 + 类目 + 标签（稳定维度）；{@code effective} 随 {@code on_shelf} 翻转。
  * 绑定刷新按"目标态 diff"（幂等，可重复执行）。
+ *
+ * <p><b>为什么在 activity-console 而不是 activity-common</b>（R17）：本类有三处
+ * {@code bindingRepo.save(...)}，是不折不扣的<b>写</b>路径，而 common 是 console 与 decision 共享的库——
+ * 放在那里意味着这个 {@code @Service} 也会在只读的 decision 进程里被实例化。
+ * 唯一调用方 {@code ActivityMarketingService} 本来就在 console，搬上来是零风险的物理归位。
  */
 @Service
 public class ActivityPoolMatchService {

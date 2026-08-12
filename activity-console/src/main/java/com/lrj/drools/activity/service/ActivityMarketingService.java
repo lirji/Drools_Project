@@ -13,6 +13,7 @@ import com.lrj.drools.activity.engine.ActivityRuleRuntimeService;
 import com.lrj.drools.activity.engine.RangePayload;
 import com.lrj.drools.activity.engine.RuleConditionTranslator;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
+import com.lrj.drools.activity.error.ActivityException;
 import com.lrj.drools.activity.persistence.*;
 import com.lrj.drools.activity.tenant.ActorContext;
 import com.lrj.drools.activity.tenant.TenantContext;
@@ -169,12 +170,12 @@ public class ActivityMarketingService {
                 // 比软删弱（非原子），但同 activityId 的并发编辑在本 demo 不是真实场景；
                 // 真要收紧应给 (tenant_id, activity_id, version) 加唯一约束，由 DB 兜底。
                 if (manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, version, NOT_DEL).isPresent()) {
-                    throw new IllegalStateException("活动版本冲突（并发编辑），请重试: " + activityId);
+                    throw ActivityException.versionConflict("活动版本冲突（并发编辑），请重试: " + activityId);
                 }
             } else {
                 int affected = manageRepo.softDeleteVersion(activityId, current.getVersion(), now);
                 if (affected == 0) {
-                    throw new IllegalStateException("活动版本冲突（并发编辑），请重试: " + activityId);
+                    throw ActivityException.versionConflict("活动版本冲突（并发编辑），请重试: " + activityId);
                 }
             }
         } else {
@@ -222,7 +223,8 @@ public class ActivityMarketingService {
             idempotencyRepo.saveAndFlush(new ActivityIdempotencyEntity(reqId, activityId, version, status, now));
         } catch (DataIntegrityViolationException e) {
             // 并发相同 requestId：唯一约束在此同步暴露 → 转 409（整事务由 rollbackFor 回滚，刚建的业务行不残留）。
-            throw new IllegalStateException("并发重复请求(requestId)，请重试: " + reqId);
+            // 这张幂等表只有 requestId 一个唯一约束，故无需分辨是哪一条约束炸的。
+            throw ActivityException.duplicateRequest("并发重复请求(requestId)，请重试: " + reqId, e);
         }
     }
 
@@ -429,14 +431,22 @@ public class ActivityMarketingService {
     /**
      * P1-8 四眼：发布(上线)必须由**非提交人**的审批人执行。
      * 审批人身份缺失 → 拒（无从校验分离，fail-closed）；审批人 == 该版本提交人 → 拒（不能自审自发）。
+     *
+     * <p><b>抛 {@link ActivityException}（→ 403）而不是 {@code IllegalStateException}（→ 409）</b>：
+     * 这是一次有意的状态码修正。四眼拒绝说的是「不该由你来做」，不是「状态冲突、重试可能会成」——
+     * 而 409 恰恰会诱导调用方重试，重试再多次也永远不会成功，必须换一个人来点。
+     * 它是 {@link RuntimeException} 的直接子类，因此会穿过 controller 里迁移期保留的
+     * {@code catch (IllegalStateException)}，落到 {@code ActivityExceptionAdvice} 上。
      */
     private void enforceFourEyes(ActivityManageEntity row) {
         String actor = ActorContext.get();
         if (actor == null || actor.isBlank()) {
-            throw new IllegalStateException("四眼：发布需带审批人身份（auth 档=JWT sub / dev 档=X-Actor header），缺失拒绝");
+            throw ActivityException.fourEyesRequired(
+                    "四眼：发布需带审批人身份（auth 档=JWT sub / dev 档=X-Actor header），缺失拒绝");
         }
         if (actor.equals(row.getSubmittedBy())) {
-            throw new IllegalStateException("四眼：提交人不能审批/发布自己提交的活动（提交人=" + row.getSubmittedBy() + "）");
+            throw ActivityException.fourEyesRequired(
+                    "四眼：提交人不能审批/发布自己提交的活动（提交人=" + row.getSubmittedBy() + "）");
         }
     }
 
@@ -763,9 +773,10 @@ public class ActivityMarketingService {
             manageRepo.saveAndFlush(m);
         } catch (DataIntegrityViolationException e) {
             // 只把 (tenant_id,request_id) 唯一冲突当并发重复→409；其它完整性错误透传真实原因（ISSUE-06）。
-            String msg = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
-            if (msg.contains("uk_am_tenant_request")) {
-                throw new IllegalStateException("并发重复请求(requestId)，请重试: " + req.requestId());
+            // 判据是**具名约束**而不是异常文案：文案由方言+驱动+DB 版本拼出来，把它当控制流 key
+            // 意味着换个驱动小版本就可能把「并发重复」错判成 500（详见 ConstraintViolations）。
+            if (ConstraintViolations.isViolationOf(e, ActivityManageEntity.UK_TENANT_REQUEST)) {
+                throw ActivityException.duplicateRequest("并发重复请求(requestId)，请重试: " + req.requestId(), e);
             }
             throw e;
         }

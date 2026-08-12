@@ -2,6 +2,8 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.error.ActivityErrorCode;
+import com.lrj.drools.activity.error.ActivityException;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
 import com.lrj.drools.activity.tenant.ActorContext;
@@ -59,10 +61,11 @@ class ActivityFourEyesTest {
     void submitterCannotSelfPublish() {
         CreateResult a = ActorContext.callWith("alice", () -> marketing.create(req("四眼-自审", 96601L)));
         // alice 自己发布 → 拒
-        assertThrows(IllegalStateException.class,
+        ActivityException e = assertThrows(ActivityException.class,
                 () -> ActorContext.runWith("alice",
                         () -> marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code())),
                 "提交人 alice 不能发布自己提交的活动");
+        assertEquals(ActivityErrorCode.FOUR_EYES_REQUIRED, e.code(), "四眼拒绝要能被机器识别，不能只活在文案里");
     }
 
     @Test
@@ -77,9 +80,23 @@ class ActivityFourEyesTest {
     void missingApproverIdentityRejected() {
         CreateResult a = ActorContext.callWith("alice", () -> marketing.create(req("四眼-缺审批人", 96603L)));
         // 无 actor 上下文发布 → 拒（fail-closed）
-        assertThrows(IllegalStateException.class,
+        ActivityException e = assertThrows(ActivityException.class,
                 () -> marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code()),
                 "缺审批人身份应拒绝（fail-closed）");
+        assertEquals(ActivityErrorCode.FOUR_EYES_REQUIRED, e.code());
+    }
+
+    /**
+     * 四眼拒绝的状态码是 <b>403</b>，不是 409。
+     *
+     * <p>这条不是形式主义：409 的标准语义是「资源状态与你的预期冲突」，客户端拿到它的常规反应是<b>重试</b>——
+     * 而四眼拒绝再重试一万次也不会成功，必须换一个人来点。状态码选错，客户端的正确行为也就跟着写错了。
+     * 这也是本次异常分类改造里<b>唯一</b>有意的状态码变更，所以单独钉一条。
+     */
+    @Test
+    void fourEyesRejectionMapsTo403NotConflict() {
+        assertEquals(403, ActivityErrorCode.FOUR_EYES_REQUIRED.httpStatus(),
+                "四眼拒绝 = 「不该由你来做」→ 403；409 会诱导调用方重试，而重试永远不会成功");
     }
 
     @Test

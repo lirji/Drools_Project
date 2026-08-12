@@ -136,26 +136,29 @@ public class GenerationWarmService {
     }
 
     /**
-     * 该 {@code (tenant, bizLine)} 代际推进后的两件事：
+     * 该 {@code (tenant, bizLine)} 代际推进后的三步，<b>切指针在最后</b>：
      * <ol>
-     *   <li><b>构建并发布决策快照</b>（P1-1）——把整条业务线的决策物料在<b>本后台线程</b>捞齐、
-     *       组织成不可变快照，就绪后原子切指针。此后该租户的决策请求零数据库查询。</li>
+     *   <li><b>构建</b>决策快照（P1-1）——把整条业务线的决策物料在<b>本后台线程</b>捞齐、
+     *       组织成不可变快照。此后该租户的决策请求零数据库查询。</li>
      *   <li>预热 ACTIVE artifact 的资格 DRL（M1.4 既有行为，保留）。</li>
+     *   <li><b>发布</b>：前两步都成功了才 {@code publish} 切指针。</li>
      * </ol>
-     * 顺序不能反：先建好快照再切指针，请求线程永远读到自洽的物料。
+     * <p><b>为什么 publish 必须排在最后</b>（R16）：此前是「先 publish、再查 ACTIVE artifact、再预热」，
+     * 中间任何一步抛异常都会被 {@code warmDueGenerations} 吞掉并<b>不更新 lastSeen</b>——于是一次
+     * 半完成的推进已经被记成一次发布（占了回滚槽位），下一轮还会对同一代际再来一遍。
+     * 把 publish 挪到最后，这三步共享同一个失败边界：要么整体推进，要么整体留在上一代等下轮重试。
+     * 「先建好快照再切指针」这条更早的约束当然仍成立——请求线程永远读到自洽的物料。
      *
      * @param generation 数据库里那一行的**真实代际号**。此前这里传的是 {@code lastSeen+1}，
      *                   两次发布挤在一次轮询间隔内时（大促前批量上线很常见）快照会记下一个
      *                   比实际小的代际号，让 rollback 与代际指标都对不上账。
      */
     private int warmTenantBizLine(String tenant, String bizLine, long generation, List<Future<?>> sink) {
-        // ① 快照：构建 → 就绪 → 切换（构建期的异常不能让指针指向半成品，故构建成功才 publish）
-        TenantContext.callWith(tenant, () -> {
-            DecisionSnapshot snap = snapshotBuilder.build(tenant, bizLine, generation);
-            snapshotStore.publish(snap);
-            return null;
-        });
+        // ① 构建快照（还没切指针；构建期的异常不能让指针指向半成品）
+        DecisionSnapshot snap = TenantContext.callWith(tenant,
+                () -> snapshotBuilder.build(tenant, bizLine, generation));
 
+        // ② 预热 ACTIVE artifact 的资格 DRL
         List<ActivityArtifactEntity> active = TenantContext.callWith(tenant,
                 () -> artifactRepo.findByBizLineAndStatus(bizLine, ActivityArtifactEntity.ACTIVE));
         int warmed = 0;
@@ -165,6 +168,9 @@ public class GenerationWarmService {
                 warmed++;
             }
         }
+
+        // ③ 全部前置步骤成功 → 原子切指针（此处之后本轮才算一次真正的发布）
+        snapshotStore.publish(snap);
         return warmed;
     }
 }

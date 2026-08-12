@@ -118,13 +118,23 @@ public class ConditionTreeEvaluator {
         return evalLeaf(node, ctx, schema);
     }
 
-    private boolean evalLeaf(ConditionNode leaf, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
+    /**
+     * 叶子求值：{@code TRUE}/{@code FALSE} = 判定结论，{@code null} = 这个叶子读不懂。
+     *
+     * <p>字段不在白名单与算子读不懂都会淘汰候选，但<b>不是一回事</b>，所以出口不同：
+     * 前者返回 {@code false}（保持改造前逐字节一致的 FAIL），后者返回 {@code null}（UNDECIDABLE，
+     * 与分组 logic 读不懂同一档）。此前算子这一步直调 {@code fromCode}：未知 op 抛 IAE、
+     * <b>null op 直接在下面的 switch 上 NPE</b>，而决策链路一路无 catch——
+     * 一条脏 op 就能让整次请求 500，连累同请求里其它完全正常的活动。
+     */
+    private Boolean evalLeaf(ConditionNode leaf, ActivityRuleContext ctx, Map<String, SchemaField> schema) {
         SchemaField field = schema == null ? null : schema.get(leaf.getField());
         if (field == null) {
             // 字段不在白名单里：创建期就该被拒。运行时遇到只可能是 schema 漂移 → fail-closed
             return false;
         }
-        RuleOperator op = RuleOperator.fromCode(leaf.getOp());
+        RuleOperator op = RuleOperator.tryFromCode(leaf.getOp());
+        if (op == null) return null;
         FieldValueType type = field.valueType();
         Object raw = leaf.getValue();
 

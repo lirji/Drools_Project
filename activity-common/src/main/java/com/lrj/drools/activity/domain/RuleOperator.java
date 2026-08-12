@@ -39,11 +39,31 @@ public enum RuleOperator {
     public String label() { return label; }
     public Operand operand() { return operand; }
 
+    /**
+     * 写平面用的严格解析：脏 code 直接抛，<b>创建期就该拒</b>（{@code RuleConditionTranslator} 依赖这条）。
+     *
+     * <p>{@code null} 仍返回 {@code null}（与改造前逐字节一致），由调用方决定"没写算子"怎么办。
+     */
     public static RuleOperator fromCode(String code) {
+        if (code == null) return null;
+        RuleOperator parsed = tryFromCode(code);
+        if (parsed == null) throw new IllegalArgumentException("未知运算符: " + code);
+        return parsed;
+    }
+
+    /**
+     * 读路径（资格求值）用的宽容解析：<b>解析不出来返回 {@code null}，不抛</b>。
+     * 口径与 {@link RuleLogic#tryFromCode} 一致：读路径拿不到可判定的结论就 fail-closed 淘汰
+     * <b>这一个候选</b>，而不是让一条脏 op 把整次请求（连同同请求里其它正常活动）打成 500。
+     *
+     * <p>注意 {@code null} code 在这里也返回 {@code null}——对求值器而言"没写算子"与
+     * "算子读不懂"是同一件事：都判不出这个叶子。
+     */
+    public static RuleOperator tryFromCode(String code) {
         if (code == null) return null;
         for (RuleOperator op : values()) {
             if (op.code.equalsIgnoreCase(code.trim())) return op;
         }
-        throw new IllegalArgumentException("未知运算符: " + code);
+        return null;
     }
 }
