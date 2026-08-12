@@ -114,7 +114,14 @@ export interface BulkStatusItem {
   version: number
 }
 
-/** bulk-status 回执。部分失败是正常结果（HTTP 恒 200），由前端渲染。 */
+/**
+ * bulk-status 回执。**部分失败是正常结果**——逐条独立事务，一条失败不回滚已成功的，
+ * 由前端渲染 `failed[]`，此时 HTTP 仍是 200。
+ *
+ * 唯一的例外是 `targetStatus` **本身**非法（不在 0/1/2 内）：那不是「某几条没成功」，
+ * 而是整个请求没意义，服务端在进循环之前就返回 400（否则几十条会各自失败一次、
+ * 回执里全是同一句话）。前端当前不可触发——`askBulk` 只传 1|2。
+ */
 export interface BulkStatusResult {
   succeeded: string[]
   failed: Array<{ activityId: string; reason: string }>

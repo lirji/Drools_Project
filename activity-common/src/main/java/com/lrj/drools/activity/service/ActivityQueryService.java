@@ -110,7 +110,7 @@ public class ActivityQueryService {
         String decisionId = newDecisionId();
 
         // 取数固定 5 次查询（此前 3N+2 次，评估报告 D1）
-        Materials materials = loader.load(req.spuIdList(), ActivityType.RED_PACKAGE, false);
+        Materials materials = loader.load(req.spuIdList(), ActivityType.RED_PACKAGE, SCENE_DISCOUNT, false);
         List<ActivityCandidate> candidates = materials.candidates();
         metrics.candidates(SCENE_DISCOUNT, candidates.size());
 
@@ -294,7 +294,7 @@ public class ActivityQueryService {
 
     private GiftView buyAndGetGiftsInternal(SpuDiscountRequest req, DecisionMode mode) {
         String decisionId = newDecisionId();
-        Materials materials = loader.load(req.spuIdList(), ActivityType.BUY_AND_GET, true);
+        Materials materials = loader.load(req.spuIdList(), ActivityType.BUY_AND_GET, SCENE_GIFT, true);
         List<ActivityCandidate> candidates = materials.candidates();
         metrics.candidates(SCENE_GIFT, candidates.size());
         if (candidates.isEmpty()) {

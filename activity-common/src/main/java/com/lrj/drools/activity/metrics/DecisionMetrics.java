@@ -183,15 +183,25 @@ public class DecisionMetrics {
      * 掉下来就说明发布传播断了（代际没 bump、或轮询挂了），而症状是"变慢"而非"报错"——
      * 没有这个指标就只能等到 P99 告警才发现。
      */
-    // TODO(R4·契约变更，独立提交)：这里的 scene 仍是调用方传进来的 ActivityType.name()
-    //  （RED_PACKAGE / BUY_AND_GET / ADD_ON_PURCHASE），与 DecisionScene 的通道词汇表对不上，
-    //  于是 activity_decision_source_total{scene="gifts"} 查出来是空的。换成 DecisionScene.code()
-    //  会**改变已有 Prometheus 序列**，Grafana 面板与告警必须同批改（deploy/ 下有编排），
-    //  所以刻意不在本批次里动——那是有意的契约变更，不该混进「行为等价」的重构里。
-    public void decisionSource(String scene, String source) {
+    /**
+     * <p><b>标签值已修正（一次有意的契约变更）</b>：这里的 scene 一度是调用方传进来的
+     * {@code ActivityType.name()}（{@code RED_PACKAGE} / {@code BUY_AND_GET} / {@code ADD_ON_PURCHASE}），
+     * 与本类其它九个指标用的 {@link DecisionScene} 词汇表对不上——后果是
+     * {@code activity_decision_source_total{scene="gifts"}} 查出来<b>恒为空</b>，
+     * 而「按 scene 把回退率与来源占比 join 起来看」正是这条指标存在的理由。
+     * 也就是说它此前只能单独看，一 join 就空，且空得毫无提示。
+     *
+     * <p>现在统一成 {@code DecisionScene.code()}。这会让旧的三条时间序列停止增长、
+     * 三条新序列（{@code spu-discount} / {@code gifts} / {@code addon}）开始增长——
+     * 已核对 {@code deploy/} 下**没有任何消费者**需要同步改：
+     * Grafana 面板（{@code deploy/grafana/dashboards/activity-services.json}）只查 JVM 与
+     * HTTP 指标，不碰 {@code activity_decision_*}；{@code deploy/prometheus/prometheus.yml}
+     * 没有 {@code rule_files}，因此也没有告警规则引用它。留存的历史数据仍在旧标签下可查。
+     */
+    public void decisionSource(DecisionScene scene, String source) {
         Counter.builder(SOURCE)
                 .description("决策物料来源：snapshot=代际快照（零查询）/ db=逐请求查库")
-                .tag("scene", safe(scene))
+                .tag("scene", code(scene))
                 .tag("source", safe(source))
                 .register(registry)
                 .increment();

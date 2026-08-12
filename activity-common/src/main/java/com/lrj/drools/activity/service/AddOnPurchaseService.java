@@ -140,7 +140,7 @@ public class AddOnPurchaseService {
      */
     private AddOnOptions optionsInternal(SpuDiscountRequest req, DecisionMode mode, String decisionId) {
         List<String> traces = new ArrayList<>();
-        Materials materials = loader.load(req.spuIdList(), ActivityType.ADD_ON_PURCHASE, true);
+        Materials materials = loader.load(req.spuIdList(), ActivityType.ADD_ON_PURCHASE, SCENE_ADDON, true);
         List<ActivityCandidate> candidates = materials.candidates();
         // 候选数分布：加价购与另外两条通道共用取数层，N 同样是成本自变量，此前这条通道一个点都没埋。
         metrics.candidates(SCENE_ADDON, candidates.size());

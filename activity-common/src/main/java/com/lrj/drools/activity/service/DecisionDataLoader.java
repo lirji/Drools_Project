@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.OfferSpec;
 import com.lrj.drools.activity.domain.RuleScene;
@@ -118,11 +119,18 @@ public class DecisionDataLoader {
      * 又判了一次来源：两个判据不同步时会出现「物料走快照、策略却回去查库」的混合结论，
      * 而这种混合在响应里是看不见的——provenance 只声明物料那一半。现在策略随物料一起从
      * 同一个来源出来。
+     *
+     * @param type  候选过滤用的活动类型（决定捞哪一类活动）
+     * @param scene 指标 scene 标签用的<b>通道</b>。刻意由调用方显式传入，而不是从 {@code type} 推导：
+     *              推导需要一张覆盖 {@link ActivityType} 全部六个常量的映射表，而其中三种
+     *              （优惠券 / CPS / 权益券）写平面根本不放行，给它们编一个决策场景是凭空立法；
+     *              硬推导又只能靠 {@code default} 兜底，那正好废掉 {@link DecisionScene} 想要的穷尽性。
+     *              三个调用方本来就各自持有自己的 scene 常量，直接传下来最诚实。
      */
-    public Materials load(List<Long> spuIds, ActivityType type, boolean withGifts) {
+    public Materials load(List<Long> spuIds, ActivityType type, DecisionScene scene, boolean withGifts) {
         List<DecisionSnapshot> snaps = snapshots.forTenant(TenantContext.get());
         if (!snaps.isEmpty()) {
-            metrics.decisionSource(type.name(), "snapshot");
+            metrics.decisionSource(scene, "snapshot");
             Instant now = Instant.now();
             List<Materials> buckets = new ArrayList<>(snaps.size());
             for (DecisionSnapshot snap : snaps) {
@@ -131,7 +139,7 @@ public class DecisionDataLoader {
             // 代际取最小 / 桶数取份数 / 策略取 bizLine 所属那个桶——三条都收敛在 Materials.merge。
             return Materials.merge(buckets).ordered();
         }
-        metrics.decisionSource(type.name(), "db");
+        metrics.decisionSource(scene, "db");
         return loadFromDb(spuIds, type, withGifts).ordered();
     }
 

@@ -155,7 +155,11 @@ async function createAndPublish(spec) {
       AUTHOR,
       { version: record.version, targetStatus: 1 },
     )
-    const rejected = await responseJson(selfPublishResponse, '四眼：提交人自审发布', 409)
+    // 403 而不是 409：四眼拒绝是「你没有这个权限」，不是「资源状态冲突」。
+    // 它此前是 409 纯属实现细节泄漏——写平面用 IllegalStateException 表达它，
+    // 而 controller 把所有 ISE 一律映射成 409。现在它由 ActivityErrorCode.FOUR_EYES_REQUIRED
+    // 决定状态码，与「抛的是哪个 JDK 异常」脱钩。响应体形状未变（仍有 error 字段，另加了 code）。
+    const rejected = await responseJson(selfPublishResponse, '四眼：提交人自审发布', 403)
     must(typeof rejected.error === 'string' && rejected.error.length > 0,
       '四眼：提交人不能自审发布', JSON.stringify(rejected))
     fourEyesVerified = true

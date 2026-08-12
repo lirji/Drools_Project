@@ -2,6 +2,7 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
@@ -65,7 +66,7 @@ class AddOnPurchaseTest {
 
     private static AddOnPurchaseService serviceReturning(Materials materials) {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
-        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(materials);
+        when(loader.load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean())).thenReturn(materials);
         return service(loader);
     }
 
@@ -164,7 +165,7 @@ class AddOnPurchaseTest {
     @DisplayName("同一服务的两阶段间门槛变更：quote 必须重新 load/requalify 并拒绝旧选项")
     void quoteReloadsAndRejectsWhenEligibilityChangesBetweenPhases() {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
-        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(
+        when(loader.load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean())).thenReturn(
                 minimumOrderMaterials("ACT-LIMIT", 100),
                 minimumOrderMaterials("ACT-LIMIT", 500));
         AddOnPurchaseService svc = service(loader);
@@ -176,14 +177,14 @@ class AddOnPurchaseTest {
         assertThat(quote.ok()).isFalse();
         assertThat(quote.addOnPrice()).isNull();
         assertThat(quote.traces()).anyMatch(t -> t.contains("eligibility reject: ACT-LIMIT"));
-        verify(loader, times(2)).load(any(), any(ActivityType.class), anyBoolean());
+        verify(loader, times(2)).load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean());
     }
 
     @Test
     @DisplayName("同一服务的两阶段间换购品删除：quote 不得沿用第一阶段价格")
     void quoteReloadsAndRejectsWhenConfigurationChangesBetweenPhases() {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
-        when(loader.load(any(), any(ActivityType.class), anyBoolean())).thenReturn(
+        when(loader.load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean())).thenReturn(
                 new Materials(
                         List.of(withGifts("ACT-A", gift("保温杯", "9.9"))), List.of(), Map.of()),
                 new Materials(
@@ -198,7 +199,7 @@ class AddOnPurchaseTest {
         assertThat(quote.ok()).isFalse();
         assertThat(quote.addOnPrice()).isNull();
         assertThat(quote.reason()).contains("失效");
-        verify(loader, times(2)).load(any(), any(ActivityType.class), anyBoolean());
+        verify(loader, times(2)).load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean());
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.ActivityType;
+import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.GiftResult;
@@ -226,7 +227,7 @@ class ActivityQuerySafetyFallbackTest {
                                               BenefitEvaluator benefitEvaluator) {
         DecisionDataLoader loader = mock(DecisionDataLoader.class);
         // 合并策略随物料一起从取数层出来（不再有单独的 resolveStrategy 出口）。
-        when(loader.load(any(), any(ActivityType.class), anyBoolean()))
+        when(loader.load(any(), any(ActivityType.class), any(DecisionScene.class), anyBoolean()))
                 .thenReturn(materials.withStrategy(strategy));
 
         DecisionMetrics metrics = DecisionMetrics.noop();

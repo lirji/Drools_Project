@@ -97,10 +97,10 @@
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | POST | `/create` | 创建/编辑（带 `activityId` 即编辑，version+1；`requestId` 幂等）。入参含 `userInventory`（每人限领份数，null/≤0 = 不限）。返回体新增 `warnings[]` |
-| POST | `/{id}/status` | 上下线 `{version,targetStatus}`（0 待上线/1 上线/2 下线） |
-| POST | `/bulk-status` | **批量**上下线 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}` |
-| POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=&userId=&orderId=`）：抢到 200，没抢到 **409**；`orderId` 是幂等键的一半（**不传就退化成不幂等**），配了每人限领却不传 `userId` 直接拒绝；auth 档受已配置的 `console-write-authority` 保护 |
-| POST | `/{id}/release?orderId=` | **冲正**：把发放记录置 RELEASED 并归还库存与限领额度。幂等（重复释放不重复加库存）；没有对应发放记录返回 **404**。同受 `console-write-authority` 保护——不设防的话反复调它就能把限量活动的库存刷到任意大 |
+| POST | `/{id}/status` | 上下线 `{version,targetStatus}`（0 待上线/1 上线/2 下线）。**非法流转直接拒**（迁移表 from×to）；`targetStatus=3`（待生效）写入口封死——它无生产者也无消费者，置成该状态的活动进不了任何读路径。四眼开启时提交人自审返回 **403**（不是 409，见下） |
+| POST | `/bulk-status` | **批量**上下线 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}`。部分失败仍是 200；但 `targetStatus` 本身非法时**进循环前**就返回 400（否则几十条各失败一次） |
+| POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=&userId=&orderId=`）：抢到 200；没抢到按失败种类分流——**400**（缺 activityId / 数量非正 / 限领活动没带 `userId`）、**404**（活动或版本不存在）、**409**（余量不足、不在可用窗口、超出每人限领）。`orderId` 是幂等键的一半（**不传就退化成不幂等**）；auth 档受已配置的 `console-write-authority` 保护 |
+| POST | `/{id}/release?orderId=` | **冲正**：把发放记录置 RELEASED 并归还库存与限领额度。幂等（重复释放不重复加库存）。缺参/空 `orderId` 返回 **400**，确实没有对应发放记录才 **404**。同受 `console-write-authority` 保护——不设防的话反复调它就能把限量活动的库存刷到任意大 |
 | GET | `/grants?orderId=` | 按单查发放记录（客服「这一单用了哪些优惠」的数据源） |
 | GET | `/generation?bizLine=` | 库里当前发布代际——决策响应里 `provenance.generation` 的**参照物**（行不存在返回 0）。只看决策侧那个数判断不了「我刚发布的那次进去了没有」 |
 | GET | `/list` | 活动列表（当前版本） |

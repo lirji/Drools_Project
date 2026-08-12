@@ -1,5 +1,6 @@
 package com.lrj.drools.activity.persistence;
 
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import jakarta.persistence.Column;
 import jakarta.persistence.MappedSuperclass;
 import org.hibernate.annotations.TenantId;
@@ -26,6 +27,17 @@ import java.time.Instant;
  * <p>不含 {@code @Id}：各表主键并不同形（{@code demo_product} 用业务键 {@code spu_id}，
  * 其余是自增代理键），把它收上来只会逼出一堆例外。
  */
+// 序列化时把身份字段提回队首。**这不是洁癖，是在修一个副作用**：
+// Jackson 默认把超类属性排在子类之前，所以把 tenantId / 双时间戳 / isDel 收进
+// @MappedSuperclass 的那一刻，/activity-marketing/{list,detail,grants} 里每个实体对象
+// 的键序就从 {"id":…,"activityId":…} 变成了 {"tenantId":…,"createdStime":…,…}——
+// 字段名与取值一个字节没变，但响应体确实改了，而且没有任何信号。
+// 前端按键取值不受影响，可对响应做 hash / ETag / 快照比对的下游会静默飘。
+//
+// 这里列的名字是**子类**的属性，超类自己并没有它们；Jackson 对列表里不存在的属性名
+// 直接忽略，所以这一个注解能同时服务十个子类（有 activityId 的按 id→activityId→version 排，
+// 没有的自然跳过），不必逐个实体贴。顺序由 EntityJsonOrderTest 钉住。
+@JsonPropertyOrder({"id", "activityId", "version"})
 @MappedSuperclass
 public abstract class TenantScopedEntity {
 
