@@ -16,6 +16,7 @@ import com.lrj.drools.activity.engine.ConditionTreeEvaluator;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.service.ActivityQueryService;
+import com.lrj.drools.activity.service.DecisionAuditor;
 import com.lrj.drools.activity.service.DecisionDataLoader;
 import com.lrj.drools.activity.service.DecisionEligibilityService;
 import org.junit.jupiter.api.DisplayName;
@@ -232,7 +233,7 @@ class ActivityQuerySafetyFallbackTest {
         DecisionEligibilityService eligibility = new DecisionEligibilityService(
                 new ConditionTreeEvaluator(), new RuleSchemaRegistry(), metrics);
         ActivityQueryService query = new ActivityQueryService(
-                loader, runtime, metrics, benefitEvaluator, eligibility);
+                loader, runtime, metrics, benefitEvaluator, eligibility, new DecisionAuditor());
         ReflectionTestUtils.setField(query, "ruleEngineEnabled", engineEnabled);
         return query;
     }

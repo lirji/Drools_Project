@@ -91,7 +91,7 @@ public class ActivityRuleContext {
     // ---------------------------------------------------------------- Java 侧便捷读取（委托给属性袋，非 DRL 用）
 
     /** 便捷读订单金额（{@code ActivityQueryService} 的阶梯闸门用）。 */
-    public BigDecimal getOrderAmount() { return numberAttr("orderAmount"); }
+    public BigDecimal getOrderAmount() { return numberAttr(DecisionAttrs.ORDER_AMOUNT); }
 
     /**
      * 本次请求涉及的全部 SPU。用于判断「活动的作用域是否覆盖整单」——
@@ -101,7 +101,7 @@ public class ActivityRuleContext {
      */
     @SuppressWarnings("unchecked")
     public java.util.Set<Long> requestedSpuIds() {
-        Object v = attrs.get("spuId");
+        Object v = attrs.get(DecisionAttrs.SPU_ID);
         if (!(v instanceof Collection<?> col) || col.isEmpty()) return java.util.Set.of();
         java.util.Set<Long> out = new java.util.LinkedHashSet<>();
         for (Object o : col) {
@@ -117,7 +117,7 @@ public class ActivityRuleContext {
     /** 订单行。为空 = 调用方没有逐行信息（此时作用域是真子集的活动一律不适用，绝不拿整单顶替）。 */
     @SuppressWarnings("unchecked")
     public List<SpuDiscountRequest.OrderLine> orderLines() {
-        Object v = attrs.get("orderLines");
+        Object v = attrs.get(DecisionAttrs.ORDER_LINES);
         if (!(v instanceof List<?> list) || list.isEmpty()) return List.of();
         List<SpuDiscountRequest.OrderLine> out = new ArrayList<>(list.size());
         for (Object o : list) {

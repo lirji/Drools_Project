@@ -4,6 +4,7 @@ import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.DecisionAttrs;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.DistributionMode;
@@ -516,11 +517,11 @@ public class BenefitEvaluator {
         RandomRangeParser.Range range = RandomRangeParser.parse(c.getRedPackageRangeAmount());
         if (range == null) return null;
 
-        Object userId = ctx == null ? null : ctx.textAttr("userId");
+        Object userId = ctx == null ? null : ctx.textAttr(DecisionAttrs.USER_ID);
         String fingerprint = ctx == null ? "null|null|null"
-                : canonical(ctx.numberAttr("orderAmount")) + "|"
+                : canonical(ctx.numberAttr(DecisionAttrs.ORDER_AMOUNT)) + "|"
                   + canonical(ctx.numberAttr("quantity")) + "|"
-                  + ctx.textAttr("randomSeedSpu");
+                  + ctx.textAttr(DecisionAttrs.RANDOM_SEED_SPU);
 
         String seed = BenefitMath.randomSeedKey(c.getActivityId(), c.getVersion(), userId, fingerprint);
         return BenefitMath.randomAmount(range.min(), range.max(), seed);

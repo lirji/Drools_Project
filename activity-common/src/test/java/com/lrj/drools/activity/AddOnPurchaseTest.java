@@ -11,6 +11,7 @@ import com.lrj.drools.activity.engine.ConditionTreeEvaluator;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.metrics.DecisionMetrics;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
+import com.lrj.drools.activity.service.DecisionAuditor;
 import com.lrj.drools.activity.service.DecisionDataLoader;
 import com.lrj.drools.activity.service.DecisionEligibilityService;
 import org.junit.jupiter.api.DisplayName;
@@ -70,7 +71,7 @@ class AddOnPurchaseTest {
     private static AddOnPurchaseService service(DecisionDataLoader loader) {
         DecisionEligibilityService eligibility = new DecisionEligibilityService(
                 new ConditionTreeEvaluator(), new RuleSchemaRegistry(), DecisionMetrics.noop());
-        return new AddOnPurchaseService(loader, eligibility);
+        return new AddOnPurchaseService(loader, eligibility, DecisionMetrics.noop(), new DecisionAuditor());
     }
 
     private static SpuDiscountRequest req() {

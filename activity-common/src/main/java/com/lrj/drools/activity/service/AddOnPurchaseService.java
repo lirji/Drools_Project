@@ -7,6 +7,7 @@ import com.lrj.drools.activity.domain.DecisionProvenance;
 import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.GiftResult;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
+import com.lrj.drools.activity.metrics.DecisionMetrics;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -35,24 +36,53 @@ public class AddOnPurchaseService {
 
     private static final DecisionScene SCENE_ADDON = DecisionScene.ADDON;
 
+    /**
+     * {@code activity.decision.duration} 的 {@code mode} 标签取值——加价购这里是<b>阶段名</b>。
+     *
+     * <p>另外两条通道那里 {@code mode} 取 {@code rule-engine}/{@code legacy}，与响应体的 mode
+     * 字段同源。加价购<b>没有</b>那个字段：它压根不进规则引擎，也就无所谓「回退」，
+     * 硬填一个 {@code legacy} 会让面板读成「加价购一直在回退」。
+     *
+     * <p>改用两个阶段名更有信息量：{@code quote} 自己会重跑一遍装载与资格，它的耗时天然高于
+     * {@code options}，混在一个序列里看分位数只会互相污染。这两个取值都是<b>新序列</b>
+     * （此前加价购一个点都没埋），不改动任何既有面板。
+     */
+    static final String PHASE_OPTIONS = "options";
+    static final String PHASE_QUOTE = "quote";
+
     private final DecisionDataLoader loader;
     private final DecisionEligibilityService eligibility;
+    private final DecisionMetrics metrics;
+    private final DecisionAuditor auditor;
 
-    public AddOnPurchaseService(DecisionDataLoader loader, DecisionEligibilityService eligibility) {
+    public AddOnPurchaseService(DecisionDataLoader loader, DecisionEligibilityService eligibility,
+                                DecisionMetrics metrics, DecisionAuditor auditor) {
         this.loader = loader;
         this.eligibility = eligibility;
+        this.metrics = metrics;
+        this.auditor = auditor;
     }
 
     /** 一个可换购选项。{@code addOnPrice} 是<b>加多少钱</b>，不是换购品原价。 */
     public record AddOnOption(String activityId, String activityName, Integer version,
                               String itemName, BigDecimal addOnPrice) {}
 
-    /** 第一阶段结果。{@code options} 为空表示这一单没有可换购的东西。 */
+    /**
+     * 第一阶段结果。{@code options} 为空表示这一单没有可换购的东西。
+     *
+     * <p>{@code decisionId} 是<b>纯增量</b>分量：另外两条通道早就有它，加价购此前没有——
+     * 于是客服拿着加价购的工单在审计日志里什么也查不到，因为这条通道既没有 id、也从不落日志。
+     */
     public record AddOnOptions(List<AddOnOption> options, List<String> traces,
-                               DecisionProvenance provenance) {
-        /** 两参兼容构造：provenance 缺省为「走库」。 */
+                               DecisionProvenance provenance, String decisionId) {
+        /** 两参兼容构造：provenance 缺省为「走库」，无对账锚点。 */
         public AddOnOptions(List<AddOnOption> options, List<String> traces) {
-            this(options, traces, DecisionProvenance.db());
+            this(options, traces, DecisionProvenance.db(), null);
+        }
+
+        /** 三参兼容构造：带 provenance 但还没接上对账锚点的调用点落在这里。 */
+        public AddOnOptions(List<AddOnOption> options, List<String> traces, DecisionProvenance provenance) {
+            this(options, traces, provenance, null);
         }
     }
 
@@ -65,11 +95,18 @@ public class AddOnPurchaseService {
      */
     public record AddOnQuote(boolean ok, String activityId, String itemName,
                              BigDecimal addOnPrice, String reason, List<String> traces,
-                             DecisionProvenance provenance) {
+                             DecisionProvenance provenance, String decisionId) {
         /** 六参兼容构造：带 traces 但还没接上 provenance 的调用点落在这里，缺省为「走库」。 */
         public AddOnQuote(boolean ok, String activityId, String itemName,
                           BigDecimal addOnPrice, String reason, List<String> traces) {
-            this(ok, activityId, itemName, addOnPrice, reason, traces, DecisionProvenance.db());
+            this(ok, activityId, itemName, addOnPrice, reason, traces, DecisionProvenance.db(), null);
+        }
+
+        /** 七参兼容构造：带 provenance 但还没接上对账锚点的调用点落在这里。 */
+        public AddOnQuote(boolean ok, String activityId, String itemName,
+                          BigDecimal addOnPrice, String reason, List<String> traces,
+                          DecisionProvenance provenance) {
+            this(ok, activityId, itemName, addOnPrice, reason, traces, provenance, null);
         }
     }
 
@@ -88,13 +125,29 @@ public class AddOnPurchaseService {
      * 而调用点上看不出来。今天没出事只是因为 console 恰好调这一侧、decision 恰好调那一侧。
      */
     public AddOnOptions options(SpuDiscountRequest req, DecisionMode mode) {
+        AddOnOptions o = metrics.timeDecision(SCENE_ADDON,
+                () -> optionsInternal(req, mode, newDecisionId()), r -> PHASE_OPTIONS);
+        auditor.addOnOptions(SCENE_ADDON, req, o);
+        return o;
+    }
+
+    /**
+     * 不计时的第一阶段本体。
+     *
+     * <p><b>{@link #quote} 必须走这一个、不能走公开的 {@link #options}</b>：那会让一次 quote
+     * 产生两层 Timer 计时（外层 quote 的耗时把内层 options 整个包在里面，两条序列各记一次，
+     * 分位数与 QPS 全被重复计入）。计时只挂在两个公开入口上，内部复用一律走这里。
+     */
+    private AddOnOptions optionsInternal(SpuDiscountRequest req, DecisionMode mode, String decisionId) {
         List<String> traces = new ArrayList<>();
         DecisionDataLoader.Materials materials =
                 loader.load(req.spuIdList(), ActivityType.ADD_ON_PURCHASE, true);
         List<ActivityCandidate> candidates = materials.candidates();
+        // 候选数分布：加价购与另外两条通道共用取数层，N 同样是成本自变量，此前这条通道一个点都没埋。
+        metrics.candidates(SCENE_ADDON, candidates.size());
         if (candidates.isEmpty()) {
             traces.add("无生效加价购活动");
-            return new AddOnOptions(List.of(), traces, materials.provenance());
+            return new AddOnOptions(List.of(), traces, materials.provenance(), decisionId);
         }
 
         var ctx = eligibility.buildContext(req, candidates);
@@ -112,7 +165,7 @@ public class AddOnPurchaseService {
             }
         }
         traces.add("加价购选项 " + out.size() + " 个");
-        return new AddOnOptions(out, traces, materials.provenance());
+        return new AddOnOptions(out, traces, materials.provenance(), decisionId);
     }
 
     /**
@@ -125,26 +178,47 @@ public class AddOnPurchaseService {
      * 此时返回 {@code ok=false} 而不是沿用第一阶段的价格——那等于按已经作废的配置卖货。
      */
     public AddOnQuote quote(SpuDiscountRequest req, String activityId, String itemName, DecisionMode mode) {
+        AddOnQuote q = metrics.timeDecision(SCENE_ADDON,
+                () -> quoteInternal(req, activityId, itemName, mode), r -> PHASE_QUOTE);
+        // 命中计数打在**唯一出口**上，且只打 quote：options 只是列清单，没有替用户选定任何东西，
+        // 把它也算成「命中」会让加价购的命中量恒等于曝光量，指标随即失去意义。
+        if (q.ok()) {
+            metrics.hit(SCENE_ADDON, q.activityId());
+        }
+        auditor.addOnQuote(SCENE_ADDON, req, q);
+        return q;
+    }
+
+    private AddOnQuote quoteInternal(SpuDiscountRequest req, String activityId, String itemName,
+                                     DecisionMode mode) {
+        // 两阶段共用**同一个** decisionId：一次 quote 就是一次决策，内部那次重新装载是它的一部分，
+        // 不是另一次决策。分成两个 id 会让「按 decisionId 检索」在这条通道上查出半截。
+        String decisionId = newDecisionId();
         if (activityId == null || activityId.isBlank() || itemName == null || itemName.isBlank()) {
             // provenance 显式为 null：这条路径**根本没装载过物料**。
             // 填 db() 会声称查过库，而「没查过」与「查了库」是两件不同的事。
             return new AddOnQuote(false, activityId, itemName, null,
-                    "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"), null);
+                    "缺 activityId 或换购品", List.of("加价购报价拒绝：缺 activityId 或换购品"), null, decisionId);
         }
         // 第二阶段必须重新装载并重跑资格：不能沿用第一阶段的候选或价格。
-        AddOnOptions fresh = options(req, mode);
+        AddOnOptions fresh = optionsInternal(req, mode, decisionId);
         for (AddOnOption o : fresh.options()) {
             if (activityId.equals(o.activityId()) && itemName.equals(o.itemName())) {
                 List<String> traces = new ArrayList<>(fresh.traces());
                 traces.add("加价购权威报价：" + o.activityId() + "/" + o.itemName());
                 return new AddOnQuote(true, o.activityId(), o.itemName(), o.addOnPrice(), null, traces,
-                        fresh.provenance());
+                        fresh.provenance(), decisionId);
             }
         }
         // 走到这里说明第一阶段给过的选项现在拿不到了。**不能回退到客户端给的价**。
         List<String> traces = new ArrayList<>(fresh.traces());
         traces.add("加价购报价拒绝：选项已失效或资格不满足");
         return new AddOnQuote(false, activityId, itemName, null,
-                "选项已失效或不适用于当前订单", traces, fresh.provenance());
+                "选项已失效或不适用于当前订单", traces, fresh.provenance(), decisionId);
+    }
+
+    /** 每次决策一个 id：不落库，只是让「响应 / 审计日志 / 下游账」三者能对上同一次决策。 */
+    private static String newDecisionId() {
+        return java.util.UUID.randomUUID().toString();
     }
 }

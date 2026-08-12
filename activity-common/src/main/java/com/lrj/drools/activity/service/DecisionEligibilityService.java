@@ -3,6 +3,7 @@ package com.lrj.drools.activity.service;
 import com.lrj.drools.activity.domain.ActivityCandidate;
 import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.DecisionAttrs;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DecisionScene;
 import com.lrj.drools.activity.domain.RejectReason;
@@ -56,7 +57,7 @@ public class DecisionEligibilityService {
     public static Map<String, Object> requestAttributes(SpuDiscountRequest req) {
         boolean noSpu = req.spuIdList() == null || req.spuIdList().isEmpty();
         Map<String, Object> attrs = new LinkedHashMap<>();
-        attrs.put("orderAmount", req.orderAmount());
+        attrs.put(DecisionAttrs.ORDER_AMOUNT, req.orderAmount());
         attrs.put("quantity", req.quantity());
         attrs.put("userDistrictId", req.userDistrictId());
         attrs.put("userTags", req.userTags() == null ? null : new ArrayList<>(req.userTags()));
@@ -66,15 +67,15 @@ public class DecisionEligibilityService {
         // 同样两件商品换个加购顺序，同一个活动的资格结论就不一样，而运营配这个条件时想说的
         // 从来都是「买了 X」。它同时也是作用域改造的兜底路：连「用条件树 spuId == A 兜一下」都不成立。
         // 配套地 RuleSchemaRegistry 把 spuId 声明为 ARRAY，存量的 eq/in 由求值器映射成集合语义（见 ConditionTreeEvaluator）。
-        attrs.put("spuId", noSpu ? null : new ArrayList<>(req.spuIdList()));
+        attrs.put(DecisionAttrs.SPU_ID, noSpu ? null : new ArrayList<>(req.spuIdList()));
         attrs.put("storeId", req.storeId());
         // userId 不在条件白名单里，但随机红包的确定性种子依赖它，保留历史映射。
-        attrs.put("userId", req.userId());
+        attrs.put(DecisionAttrs.USER_ID, req.userId());
         // 随机红包种子专用：**必须继续是「第一件」的那个标量**。
         // 它不在条件白名单里、也不该被任何条件引用，唯一职责是让确定性随机的指纹在
         // spuId 改成列表之后保持不变——否则全量随机红包会一次性重抽（见 BenefitEvaluator.drawRandom）。
-        attrs.put("randomSeedSpu", noSpu ? null : req.spuIdList().get(0));
-        attrs.put("orderLines", req.lines() == null || req.lines().isEmpty() ? null : new ArrayList<>(req.lines()));
+        attrs.put(DecisionAttrs.RANDOM_SEED_SPU, noSpu ? null : req.spuIdList().get(0));
+        attrs.put(DecisionAttrs.ORDER_LINES, req.lines() == null || req.lines().isEmpty() ? null : new ArrayList<>(req.lines()));
         return attrs;
     }
 

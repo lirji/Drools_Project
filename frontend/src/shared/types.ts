@@ -228,6 +228,8 @@ export interface AddOnOptionsResponse {
   options: AddOnOption[]
   traces: string[]
   provenance?: DecisionProvenance
+  /** 对账锚点，与审计日志同值。加价购此前没有它，工单拿着 id 什么也查不到 */
+  decisionId?: string
 }
 
 export interface AddOnQuoteResponse {
@@ -239,6 +241,8 @@ export interface AddOnQuoteResponse {
   traces: string[]
   /** 第二阶段的 provenance 来自 quote **自己那次**重新装载，不是第一阶段的 */
   provenance?: DecisionProvenance
+  /** 两阶段共用同一个 id：一次 quote 就是一次决策，内部那次重新装载是它的一部分 */
+  decisionId?: string
 }
 
 export interface ApiResult<T = unknown> {

@@ -5,6 +5,7 @@ import com.lrj.drools.activity.domain.ActivityRuleContext;
 import com.lrj.drools.activity.domain.ActivityRuleResult;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.BenefitForm;
+import com.lrj.drools.activity.domain.DecisionAttrs;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.DecisionProvenance;
 import com.lrj.drools.activity.domain.DecisionScene;
@@ -41,11 +42,6 @@ import java.util.stream.Collectors;
 public class ActivityQueryService {
 
     private static final Logger log = LoggerFactory.getLogger(ActivityQueryService.class);
-    /**
-     * 决策审计日志。**独立 logger 名**，好让日志采集按名字单独路由到长保留期的索引——
-     * 与本类的运行日志混在一起时，要么审计跟着 DEBUG 一起被丢掉，要么运行日志跟着审计一起长期留存。
-     */
-    private static final Logger audit = LoggerFactory.getLogger("activity.decision.audit");
     /** 候选数保护告警（P2-22，不静默截断）：过大候选集仍会拉高取数、trace 与算额成本。 */
     private static final int MAX_CANDIDATES = 200;
     /** 指标 scene 标签（有限集合，防标签基数膨胀）——词汇表收敛在 {@link DecisionScene}。 */
@@ -57,6 +53,7 @@ public class ActivityQueryService {
     private final DecisionMetrics metrics;
     private final BenefitEvaluator benefits;
     private final DecisionEligibilityService eligibility;
+    private final DecisionAuditor auditor;
 
     @Value("${activity.marketing.rule-engine.enabled:true}")
     private boolean ruleEngineEnabled;
@@ -65,12 +62,14 @@ public class ActivityQueryService {
                                 ActivityRuleRuntimeService ruleRuntime,
                                 DecisionMetrics metrics,
                                 BenefitEvaluator benefits,
-                                DecisionEligibilityService eligibility) {
+                                DecisionEligibilityService eligibility,
+                                DecisionAuditor auditor) {
         this.loader = loader;
         this.ruleRuntime = ruleRuntime;
         this.metrics = metrics;
         this.benefits = benefits;
         this.eligibility = eligibility;
+        this.auditor = auditor;
     }
 
     // ------------------------------------------------------------------ SPU 优惠
@@ -100,54 +99,10 @@ public class ActivityQueryService {
             // 回退率 0、耗时正常、命中数只是稍高，没有任何一条指标会动。
             metrics.amount(SCENE_DISCOUNT, v.hitActivityId(), v.hitAmount());
         }
-        auditLog(SCENE_DISCOUNT, req, v);
+        // 留痕拼装收敛在 DecisionAuditor：引号与转义此前散在模板与实参两处，
+        // 而买赠 / 加价购各自照抄一份的成本正是「另外两条通道干脆没有审计」。
+        auditor.discount(SCENE_DISCOUNT, req, v);
         return v;
-    }
-
-    /**
-     * <b>决策留痕</b>——一条结构化日志，让客服查得到单、财务归得了因。
-     *
-     * <p>此前决策路径<b>零 repository 写入、零业务日志</b>（类内唯一的 log 是候选数超限 warn）：
-     * 用户投诉「该减 50 只减了 20」，系统里能查到的只有「活动配置<em>现在</em>长什么样」——
-     * 查不到当时问了什么、返回了什么、命中哪个活动、按哪一版算的。
-     *
-     * <p><b>为什么是日志而不是表</b>：decision 服务连的是只读账号，物理上写不了库
-     * （{@code DecisionDdlGuardTest} 钉死这条边界）。让热路径去写库会同时毁掉
-     * 「只读副本可扩」与「写面独占 DDL」两条边界。落库版本（{@code activity_decision_log}）
-     * 需要给 decision 配一个只对流水表有 INSERT 权限的第二数据源，属于独立决策；
-     * 在那之前，结构化日志 + 集中采集是零架构变更就能拿到的那 80%。
-     *
-     * <p>格式刻意是**单行 JSON**：日志系统能直接按 {@code decisionId} 检索，
-     * 而人也能在终端里一眼读完。热路径开销是一次字符串拼接，不做序列化框架调用。
-     */
-    private void auditLog(DecisionScene scene, SpuDiscountRequest req, DiscountView v) {
-        if (v == null || !audit.isInfoEnabled()) return;
-        StringBuilder items = new StringBuilder("[");
-        for (int i = 0; i < v.items().size(); i++) {
-            DiscountItem it = v.items().get(i);
-            if (i > 0) items.append(',');
-            items.append("{\"activityId\":\"").append(it.activityId())
-                 .append("\",\"version\":").append(it.version())
-                 .append(",\"form\":\"").append(it.benefitForm())
-                 .append("\",\"amount\":").append(it.amount())
-                 .append(",\"applied\":").append(it.applied())
-                 .append(",\"reject\":").append(it.rejectReason() == null
-                         ? "null" : "\"" + it.rejectReason().replace("\"", "'") + "\"")
-                 .append('}');
-        }
-        items.append(']');
-        // source/generation 必须一起落：只有 hitVersion（活动版本）而没有代际时，
-        // 「活动版本对、但快照是旧代」这类事故在日志里查不出来——而它恰恰是客服最难缠的那类工单。
-        DecisionProvenance p = v.provenance() == null ? DecisionProvenance.db() : v.provenance();
-        audit.info("{\"decisionId\":\"{}\",\"scene\":\"{}\",\"userId\":{},\"spuIds\":{},"
-                        + "\"orderAmount\":{},\"hit\":{},\"hitActivityId\":{},\"hitVersion\":{},"
-                        + "\"amount\":{},\"strategy\":\"{}\",\"clamped\":{},\"mode\":\"{}\","
-                        + "\"source\":\"{}\",\"generation\":{},\"items\":{}}",
-                v.decisionId(), scene.code(), req.userId(), req.spuIdList(),
-                req.orderAmount(), v.hit(),
-                v.hitActivityId() == null ? null : "\"" + v.hitActivityId() + "\"",
-                v.hitVersion(), v.hitAmount(), v.strategy(), v.clamped(), v.mode(),
-                p.source(), p.generation(), items);
     }
 
     private DiscountView spuDiscountInternal(SpuDiscountRequest req, DecisionMode mode) {
@@ -312,7 +267,29 @@ public class ActivityQueryService {
 
     /** 买赠决策。档位同 {@link #spuDiscount} —— 便捷重载已删，调用点必须显式表态。 */
     public GiftView buyAndGetGifts(SpuDiscountRequest req, DecisionMode mode) {
-        return metrics.timeDecision(SCENE_GIFT, () -> buyAndGetGiftsInternal(req, mode), GiftView::mode);
+        GiftView v = metrics.timeDecision(SCENE_GIFT, () -> buyAndGetGiftsInternal(req, mode), GiftView::mode);
+        if (v != null) {
+            // 命中计数收在**唯一出口**（同 spuDiscount）：此前它散在引擎分支与回退分支各一处，
+            // 于是每加一条出路就要记得补一次埋点，而漏掉的那次表现为「这个活动的命中量凭空少一截」。
+            //
+            // **口径不能照抄红包**：买赠没有单一赢家，没有 hitActivityId 可用。这里按实际发出的
+            // 赠品的**来源活动**去重计数——「命中」对买赠的定义就是「这个活动出了赠品」。
+            // 一个活动出三件赠品仍只算一次命中，否则命中量会被赠品配置条数放大。
+            for (String activityId : giftSourceActivityIds(v.gifts())) {
+                metrics.hit(SCENE_GIFT, activityId);
+            }
+            auditor.gifts(SCENE_GIFT, req, v);
+        }
+        return v;
+    }
+
+    /** 赠品的来源活动（去重、保序）。{@code GiftResult.activityId} 由两条装配路径统一填。 */
+    private static java.util.Set<String> giftSourceActivityIds(List<GiftResult> gifts) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        for (GiftResult g : gifts) {
+            if (g.getActivityId() != null) ids.add(g.getActivityId());
+        }
+        return ids;
     }
 
     private GiftView buyAndGetGiftsInternal(SpuDiscountRequest req, DecisionMode mode) {
@@ -336,11 +313,7 @@ public class ActivityQueryService {
             ActivityRuleResult r = ruleRuntime.evalGift(ctx, mode.explains());
             if (r != null) {
                 traces.addAll(r.getTraces());
-                // 命中的买赠活动也要计数：此前 metrics.hit 的唯一调用点在红包出口，
-                // 于是「按活动看命中量」在买赠通道上恒为 0——不是没人用，是根本没埋。
-                for (ActivityCandidate c : r.getEligibleCandidates()) {
-                    metrics.hit(SCENE_GIFT, c.getActivityId());
-                }
+                // 命中计数不在这里打——见 buyAndGetGifts 出口那一处。
                 return new GiftView(new ArrayList<>(r.getGifts()), traces, engineMode(true), decisionId,
                         materials.provenance());
             }
@@ -353,8 +326,6 @@ public class ActivityQueryService {
         }
         List<GiftResult> all = candidates.stream().filter(ActivityCandidate::isEligible)
                 .flatMap(c -> c.getGifts().stream()).collect(Collectors.toList());
-        candidates.stream().filter(ActivityCandidate::isEligible)
-                .forEach(c -> metrics.hit(SCENE_GIFT, c.getActivityId()));
         traces.add("买赠规则回退：汇总资格通过候选的奖品");
         return new GiftView(all, traces, engineMode(false), decisionId, materials.provenance());
     }
@@ -387,7 +358,7 @@ public class ActivityQueryService {
             if (c.getRedPackageRangeAmount() == null || c.getRedPackageRangeAmount().isBlank()) continue;
             List<LadderTier> tiers = LadderRangeParser.parse(c.getRedPackageRangeAmount());
             // 电商阶梯落档比订单金额；出行等其它 bizLine 由 schema 决定字段（Track A 固定 orderAmount）
-            if (!tiers.isEmpty()) defs.add(new LadderActivityDef(c.getActivityId(), tiers, "orderAmount"));
+            if (!tiers.isEmpty()) defs.add(new LadderActivityDef(c.getActivityId(), tiers, DecisionAttrs.ORDER_AMOUNT));
         }
         return defs;
     }

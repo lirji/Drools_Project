@@ -54,6 +54,41 @@ class DecisionContextFieldsTest {
                         + "要么把字段从 RuleSchemaRegistry 的白名单里删掉——不允许两边不一致。");
     }
 
+    /**
+     * 属性袋的键集合是**闭集**：不多不少就是这 9 个。
+     *
+     * <p><b>它补的是上一条守不住的那个洞</b>：上一条只断言「白名单 ⊆ 写侧键」，
+     * 而 {@code userId} / {@code randomSeedSpu} / {@code orderLines} 三个键**不在白名单里**
+     * （它们不是运营可配置的条件字段，是代码自己读的）。于是把写侧的 {@code randomSeedSpu}
+     * 改个名，全仓测试照样全绿——而随机红包的 SHA-256 指纹会读到 null，
+     * <b>全量随机红包一次性重抽</b>：用户刷新页面金额就变、历史对账全部对不上（CLAUDE.md 坑 15）。
+     *
+     * <p><b>这里刻意写死字面量，绝不引用 {@code DecisionAttrs} 常量。</b>
+     * 引用常量的话，改名时常量与断言会一起改、测试跟着变绿，守卫就白建了——
+     * 断言的对象必须是「线上今天在用的那 9 个字符串」，而不是「代码当前认为的那 9 个」。
+     * 真要新增/改名一个键，就必须**手工改这里的字面量**，那一刻正是该停下来问
+     * 「这会不会让历史金额重算」的时刻。
+     */
+    @Test
+    @DisplayName("属性袋键集合恰好是这 9 个（含三个不在白名单里的内部键）")
+    void attributeKeySetIsExactlyPinned() {
+        Set<String> expected = Set.of(
+                "orderAmount",
+                "quantity",
+                "userDistrictId",
+                "userTags",
+                "spuId",
+                "storeId",
+                // 以下三个不在 RuleSchemaRegistry 白名单里，上一条断言覆盖不到
+                "userId",
+                "randomSeedSpu",
+                "orderLines");
+
+        assertEquals(expected, ActivityQueryService.requestAttributes(sample()).keySet(),
+                "决策属性袋的键集合变了。少键 = 读侧访问器静默取到 null（随机红包重抽 / 作用域基数失准 / 第 N 件折不适用），"
+                        + "多键 = 有人新增了没人读的字段。确认影响后再手工同步这里的字面量。");
+    }
+
     @Test
     void storeIdIsActuallyPopulated() {
         Map<String, Object> attrs = ActivityQueryService.requestAttributes(sample());
