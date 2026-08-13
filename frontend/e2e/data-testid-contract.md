@@ -43,6 +43,16 @@
 | `idempotent-hit` | EditorView | 幂等命中 tag（新增断言） |
 | `conflict-hint` | EditorView | 409 版本冲突提示（新增断言） |
 | `detail-view` | DetailView | 详情容器 |
+| `binding-view` | BindingStores | 「商品绑定」卡（店铺聚合 + 点击下钻）容器 |
+| `binding-store-<storeId>` | BindingStores | 店铺聚合一行（`storeId` 为 `__null__` 时是「未指定门店」桶） |
+| `binding-spu-<spuId>` | BindingSpuList | 某店铺下钻明细的商品行 |
+| `binding-spu-prev` / `binding-spu-next` | BindingSpuList | 下钻明细分页上一页/下一页 |
+| `store-picker-toggle` | StoreProductPicker | 「从店铺勾选商品」展开/收起入口（EditorView manual 模式） |
+| `store-picker-panel` | StoreProductPicker | 内联展开的选择面板容器 |
+| `store-picker-store-<storeId>` | StoreProductPicker | 店铺列表一行（单选） |
+| `store-picker-product-<spuId>` | StoreProductPicker | 某店商品勾选行（内含 checkbox） |
+| `store-picker-prev` / `store-picker-next` | StoreProductPicker | 商品分页上一页/下一页 |
+| `store-picker-confirm` | StoreProductPicker | 「加入绑定」——把勾选结果 append 进 dr.spu |
 | `validate-view` | ValidateView | 验证容器 |
 
 ## 旧基线断言 → 新 testid 映射（迁移对照）

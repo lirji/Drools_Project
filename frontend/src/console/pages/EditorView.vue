@@ -18,6 +18,8 @@ import ConditionGroup from '../condition-tree/ConditionGroup.vue'
 import DistrictPicker from '../district/DistrictPicker.vue'
 import { parseCodes, toCsv, MAX_DISTRICTS } from '../district/districtLogic'
 import DynRowTable from '../DynRowTable.vue'
+import StoreProductPicker from '../binding/StoreProductPicker.vue'
+import { newPairs } from '../binding/storeProductPickerLogic'
 import { normalizeTiers, plainLanguage } from '../benefit/tierLogic'
 import FixedForm from '../benefit/forms/FixedForm.vue'
 import RandomForm from '../benefit/forms/RandomForm.vue'
@@ -361,6 +363,41 @@ function onFormClick(event: MouseEvent): void {
   if (button && button.dataset.testid !== 'preview-btn') markDirty()
 }
 
+/**
+ * StoreProductPicker「加入绑定」→ 并入 dr.spu。**只 push / 原地占用空行，绝不重建数组**——
+ * 保留手填/回填的目录外 SPU（如 990011）与 DynRowTable 的行对象身份（WeakMap key）。
+ * 按 (storeId,spuId) 对既有行去重后追加，并显式 markDirty（picker 根截停了冒泡，脏值只在这里置）。
+ */
+function onPickerAppend(pairs: Array<{ storeId: number; spuId: number }>): void {
+  const existing = dr.spu
+    .filter((s) => s.spuId !== '' && s.spuId != null)
+    .map((s) => ({ storeId: Number(s.storeId), spuId: Number(s.spuId) }))
+  const fresh = newPairs(existing, pairs)
+  if (!fresh.length) return
+  for (const p of fresh) {
+    const emptyIdx = dr.spu.findIndex((s) => s.spuId === '' || s.spuId == null)
+    if (emptyIdx >= 0) { dr.spu[emptyIdx].storeId = p.storeId; dr.spu[emptyIdx].spuId = p.spuId }
+    else dr.spu.push({ storeId: p.storeId, spuId: p.spuId })
+  }
+  markDirty()
+}
+
+/** manual 绑定 → 提交形状，按 (storeId,spuId) 去重（picker append 与手填自由输入可能重复；写平面不去重）。 */
+function manualSpuBindings(): Array<{ storeId: number | null; spuId: number | null }> {
+  const seen = new Set<string>()
+  const out: Array<{ storeId: number | null; spuId: number | null }> = []
+  for (const s of dr.spu) {
+    if (s.spuId === '' || s.spuId == null) continue
+    const storeId = numOrNull(s.storeId)
+    const spuId = numOrNull(s.spuId)
+    const k = storeId + '#' + spuId
+    if (seen.has(k)) continue
+    seen.add(k)
+    out.push({ storeId, spuId })
+  }
+  return out
+}
+
 async function initialize(): Promise<void> {
   initialLoading.value = true
   initialErr.value = ''
@@ -531,9 +568,7 @@ async function submit(): Promise<void> {
     ...benefit,
     discountStrategy: dr.strategy,
     eligibilityConditionTree: pruneTree(dr.tree),
-    spuBindings: dr.bindMode === 'manual'
-      ? dr.spu.filter((s) => s.spuId !== '' && s.spuId != null).map((s) => ({ storeId: numOrNull(s.storeId), spuId: numOrNull(s.spuId) }))
-      : null,
+    spuBindings: dr.bindMode === 'manual' ? manualSpuBindings() : null,
     poolRefs: dr.bindMode === 'pool' ? dr.pool.filter((p) => p.poolId !== '' && p.poolId != null).map((p) => Number(p.poolId)) : null,
     // 买赠与加价购共用 activity_gift 承载，但 absoluteAmount 的含义不同：
     // 买赠 = 赠品价值，加价购 = **加多少钱换购**（决策侧 AddOnPurchaseService 读的就是它）
@@ -709,10 +744,15 @@ onBeforeRouteLeave(async () => {
             <button type="button" class="chip" :class="{ 'chip-active': dr.bindMode === 'manual' }" :aria-pressed="dr.bindMode === 'manual'" @click="dr.bindMode = 'manual'; markDirty()">手动 SPU</button>
             <button type="button" class="chip" :class="{ 'chip-active': dr.bindMode === 'pool' }" :aria-pressed="dr.bindMode === 'pool'" @click="dr.bindMode = 'pool'; markDirty()">商品池(自动圈选)</button>
           </div>
-          <DynRowTable v-if="dr.bindMode === 'manual'" :rows="dr.spu" :headers="['店铺ID', 'SPU ID']" :make-row="() => ({ storeId: 1, spuId: '' })" label="SPU 绑定" :min-width="280" v-slot="{ row }">
-            <input type="number" v-model="(row as any).storeId" />
-            <input type="number" v-model="(row as any).spuId" data-testid="spu-row-input" />
-          </DynRowTable>
+          <template v-if="dr.bindMode === 'manual'">
+            <!-- 从店铺勾选商品（内联展开）；勾选结果 append 进 dr.spu，与下方手填共写同一数组 -->
+            <StoreProductPicker @append="onPickerAppend" />
+            <div class="hint">或直接手动输入 店铺ID / SPU ID（可绑目录外的 SPU）。</div>
+            <DynRowTable :rows="dr.spu" :headers="['店铺ID', 'SPU ID']" :make-row="() => ({ storeId: 1, spuId: '' })" label="SPU 绑定" :min-width="280" v-slot="{ row }">
+              <input type="number" v-model="(row as any).storeId" />
+              <input type="number" v-model="(row as any).spuId" data-testid="spu-row-input" />
+            </DynRowTable>
+          </template>
           <template v-else>
             <div class="hint">填写商品池 ID（预置商品池为 1），保存时后端按池规则圈选并自动绑定。</div>
             <DynRowTable :rows="dr.pool" :headers="['Pool ID']" :make-row="() => ({ poolId: '' })" label="商品池" :min-width="160" v-slot="{ row }">

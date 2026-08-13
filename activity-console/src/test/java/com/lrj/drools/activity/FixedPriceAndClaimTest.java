@@ -33,6 +33,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @ActiveProfiles("h2")
+// 它没设过 seed-demo-data，会吃 base application.yml 的 true → 启动期真跑 ActivityDemoSeeder。
+// 本测试只压库存、不需要目录种子，显式关掉避免多租户 seeder 的启动副作用（评审 #3）。
+@org.springframework.test.context.TestPropertySource(properties = "activity.marketing.seed-demo-data=false")
 class FixedPriceAndClaimTest {
 
     @Autowired ActivityMarketingService service;

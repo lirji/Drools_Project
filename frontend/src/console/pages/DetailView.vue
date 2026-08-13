@@ -19,6 +19,7 @@ import Receipt from '@/shared/viz/Receipt.vue'
 import Seam from '@/shared/viz/Seam.vue'
 import Icon from '@/shared/ui/Icon.vue'
 import EmptyState from '@/shared/ui/EmptyState.vue'
+import BindingStores from '../binding/BindingStores.vue'
 
 const route = useRoute()
 const dict = useDictStore()
@@ -57,7 +58,6 @@ const districtTitle = computed(() =>
   districtCodes.value.map((c) => pathOf(districtIndex.value, c)).join('\n'))
 const rule = computed(() => detail.value?.rules?.[0] || null)
 const condition = computed(() => detail.value?.conditions?.[0] || null)
-const bindings = computed<Record<string, any>[]>(() => detail.value?.bindings || [])
 const conditionTree = computed(() => prettyCode(condition.value?.conditionTreeJson))
 
 function typeLabel(code: number): string {
@@ -305,16 +305,9 @@ onUnmounted(() => {
             <Kv k="合并策略" mono>{{ manage.discountStrategy || detail?.strategy || '-' }}</Kv>
           </Card>
 
-          <Card :title="`商品绑定 · ${bindings.length}`">
-            <div v-if="bindings.length" class="binding-list">
-              <div v-for="(binding, index) in bindings" :key="index" class="binding-row">
-                <span><Icon name="inbox" :size="14" /></span>
-                <div><strong>SPU {{ binding.spuId }}</strong><small>{{ binding.bindSource === 1 ? '商品池自动圈选' : '手动绑定' }}</small></div>
-                <i :class="binding.effective === 1 ? 'effective' : 'inactive'">{{ binding.effective === 1 ? '生效' : '失效' }}</i>
-              </div>
-            </div>
-            <div v-else class="muted">没有绑定商品</div>
-          </Card>
+          <!-- 店铺聚合 + 点击下钻分页明细（自取 /binding-stores、/binding-spus）。
+               自动化绑商品后绑定可达万级，不再随 getDetail 全量下发扁平列表。 -->
+          <BindingStores :activity-id="id" :version="manage.version" />
 
           <div class="next-action">
             <span><Icon name="info" :size="16" /></span>
@@ -353,9 +346,8 @@ onUnmounted(() => {
 .benefit-card { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4); border: 1px solid var(--accent-line); border-radius: var(--radius-sm); background: var(--accent-soft); }.benefit-icon { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 12px; background: var(--bg-elev); color: var(--accent); }.benefit-card div { min-width: 0; }.benefit-card small, .benefit-card strong, .benefit-card span, .benefit-card code { display: block; }.benefit-card small { color: var(--text-faint); font-size: var(--fs-2xs); }.benefit-card strong { margin-top: 2px; font-size: var(--fs-sm); }.benefit-card .amount { color: var(--accent); font-size: 24px; font-variant-numeric: tabular-nums; }.benefit-card .amount i { font-size: 11px; font-style: normal; }.benefit-card span, .benefit-card code { overflow: hidden; margin-top: 3px; color: var(--text-soft); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 /* 配置残缺的说明必须比正常说明显眼：它讲的是「这个活动上线了但不会生效」 */
 .benefit-card .warn-line { color: var(--warn); white-space: normal; }
-.gift-list, .binding-list { display: flex; flex-direction: column; }.gift-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); }.gift-row:last-child { border-bottom: 0; }.gift-index { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-soft); color: var(--text-faint); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }.gift-row strong, .gift-row small { display: block; }.gift-row strong { font-size: var(--fs-xs); }.gift-row small { color: var(--text-faint); font-size: var(--fs-2xs); }.gift-row b { color: var(--text-soft); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.gift-list { display: flex; flex-direction: column; }.gift-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); }.gift-row:last-child { border-bottom: 0; }.gift-index { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--bg-soft); color: var(--text-faint); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }.gift-row strong, .gift-row small { display: block; }.gift-row strong { font-size: var(--fs-xs); }.gift-row small { color: var(--text-faint); font-size: var(--fs-2xs); }.gift-row b { color: var(--text-soft); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 .card-note { display: flex; align-items: flex-start; gap: var(--sp-2); margin-bottom: var(--sp-3); color: var(--text-soft); font-size: var(--fs-xs); line-height: 1.6; }.code-panel { overflow: hidden; border: 1px solid color-mix(in srgb, var(--on-deep) 14%, transparent); border-radius: var(--radius-sm); background: var(--surface-deep); }.code-head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid color-mix(in srgb, var(--on-deep) 14%, transparent); background: var(--surface-deep-2); color: var(--on-deep-faint); font-family: var(--mono); font-size: var(--fs-2xs); }.code-head span { display: inline-flex; align-items: center; gap: var(--sp-2); }.code-head i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }.code-head small { font-size: var(--fs-2xs); }.code-panel pre { max-height: 360px; overflow: auto; margin: 0; padding: var(--sp-3); color: var(--on-deep); font-family: var(--mono); font-size: var(--fs-xs); line-height: 1.65; white-space: pre-wrap; word-break: break-word; }.code-panel.drl { margin-top: var(--sp-2); }.sub-label { margin-top: var(--sp-4); color: var(--text-soft); font-size: var(--fs-xs); font-weight: var(--fw-semibold); }.pass-all { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--green-soft); color: var(--green); }.pass-all strong, .pass-all small { display: block; }.pass-all strong { font-size: var(--fs-xs); }.pass-all small { font-size: var(--fs-2xs); }
-.binding-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2); padding: var(--sp-2) 0; border-bottom: 1px solid var(--border); }.binding-row:last-child { border-bottom: 0; }.binding-row > span { display: inline-flex; padding: 6px; border-radius: 7px; background: var(--bg-soft); color: var(--text-faint); }.binding-row strong, .binding-row small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.binding-row strong { font-size: var(--fs-xs); }.binding-row small { color: var(--text-faint); font-size: var(--fs-2xs); }.binding-row > i { padding: 3px 6px; border-radius: var(--radius-pill); font-size: var(--fs-2xs); font-style: normal; }.binding-row > i.effective { background: var(--green-soft); color: var(--green); }.binding-row > i.inactive { background: var(--red-soft); color: var(--red); }
 .next-action { display: grid; grid-template-columns: auto 1fr; gap: var(--sp-2); padding: var(--sp-3); border: 1px solid var(--accent-line); border-radius: var(--radius-lg); background: var(--accent-soft); color: var(--accent); }.next-action > span { display: inline-flex; }.next-action strong { color: var(--text); font-size: var(--fs-xs); }.next-action p { margin: 2px 0 0; color: var(--text-soft); font-size: var(--fs-2xs); line-height: 1.5; }.muted { color: var(--text-faint); font-size: var(--fs-xs); }
 @media (max-width: 1180px) { .activity-hero { align-items: flex-start; flex-direction: column; }.summary-grid { grid-template-columns: repeat(2, 1fr); }.detail-grid { grid-template-columns: 1fr; }.side-column { position: static; } }
 @media (max-width: 560px) { .activity-hero { padding: var(--sp-4); }.hero-timeline { width: 100%; align-items: flex-start; flex-direction: column; }.hero-timeline :deep(svg) { display: none; }.summary-grid { grid-template-columns: 1fr 1fr; }.summary-grid article { padding: var(--sp-3); }.benefit-card { align-items: flex-start; }.gift-row { grid-template-columns: auto 1fr; }.gift-row > b { grid-column: 2; } }

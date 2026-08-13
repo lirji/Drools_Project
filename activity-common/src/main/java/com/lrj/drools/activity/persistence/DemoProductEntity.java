@@ -20,7 +20,9 @@ import java.math.BigDecimal;
 @Entity
 @Table(name = "demo_product", indexes = {
         @Index(name = "idx_dp_price", columnList = "tenant_id,price"),
-        @Index(name = "idx_dp_category", columnList = "tenant_id,category")
+        @Index(name = "idx_dp_category", columnList = "tenant_id,category"),
+        // 「选店铺→勾商品」picker 按 store_id 列商品（group by / 分页）走全索引命中
+        @Index(name = "idx_dp_store", columnList = "tenant_id,store_id")
 })
 public class DemoProductEntity {
 

@@ -19,6 +19,7 @@ import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.service.DistrictQueryService;
 import com.lrj.drools.activity.service.GenerationService;
 import com.lrj.drools.activity.service.GrantService;
+import com.lrj.drools.activity.service.StorePickerQueryService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -67,16 +68,19 @@ public class ActivityMarketingController {
     private final RuleSchemaRegistry schemaRegistry;
     private final GenerationService generations;
     private final DistrictQueryService districts;
+    private final StorePickerQueryService storePicker;
 
     public ActivityMarketingController(ActivityMarketingService marketing, ActivityQueryService query,
                                        AddOnPurchaseService addOn, RuleSchemaRegistry schemaRegistry,
-                                       GenerationService generations, DistrictQueryService districts) {
+                                       GenerationService generations, DistrictQueryService districts,
+                                       StorePickerQueryService storePicker) {
         this.generations = generations;
         this.marketing = marketing;
         this.query = query;
         this.addOn = addOn;
         this.schemaRegistry = schemaRegistry;
         this.districts = districts;
+        this.storePicker = storePicker;
     }
 
     @PostMapping("/create")
@@ -202,6 +206,55 @@ public class ActivityMarketingController {
         } catch (IllegalArgumentException ex) {
             return bad(ex);
         }
+    }
+
+    /**
+     * 详情回显·店铺聚合：该活动草稿基线版下每个店铺绑了多少商品（含失效）+ 多少生效。
+     * 一次返回（O 店铺数），不下发万级明细。{@code version} 缺省 = 草稿基线（与 detail 同源）。
+     */
+    @GetMapping("/{activityId}/binding-stores")
+    public ResponseEntity<?> bindingStores(@PathVariable("activityId") String activityId,
+                                           @RequestParam(value = "version", required = false) Integer version) {
+        try {
+            return ResponseEntity.ok(marketing.bindingStores(activityId, version));
+        } catch (IllegalArgumentException ex) {
+            return bad(ex);
+        }
+    }
+
+    /**
+     * 详情回显·店铺下钻：某店铺下的绑定商品分页明细（商品名一页一次批量补，无 N+1）。
+     * {@code storeId} 省略即命中「未指定门店」桶（null）。
+     */
+    @GetMapping("/{activityId}/binding-spus")
+    public ResponseEntity<?> bindingSpus(@PathVariable("activityId") String activityId,
+                                         @RequestParam(value = "version", required = false) Integer version,
+                                         @RequestParam(value = "storeId", required = false) Integer storeId,
+                                         @RequestParam(value = "page", defaultValue = "0") int page,
+                                         @RequestParam(value = "size", defaultValue = "20") int size) {
+        try {
+            return ResponseEntity.ok(marketing.bindingSpus(activityId, version, storeId, page, size));
+        } catch (IllegalArgumentException ex) {
+            return bad(ex);
+        }
+    }
+
+    /**
+     * 「选店铺→勾商品」picker·店铺列表：当前租户下有在架商品的店（storeName + productCount）。
+     * 目录浏览端点，语义不同于 per-activity 的 {@code /binding-stores}（那是「已绑定」）。
+     */
+    @GetMapping("/store-picker/stores")
+    public ResponseEntity<?> pickerStores() {
+        return ResponseEntity.ok(storePicker.stores());
+    }
+
+    /** picker·某店铺下的在架商品分页明细（服务端 keyword+分页）。 */
+    @GetMapping("/store-picker/stores/{storeId}/products")
+    public ResponseEntity<?> pickerStoreProducts(@PathVariable("storeId") Integer storeId,
+                                                 @RequestParam(value = "keyword", required = false) String keyword,
+                                                 @RequestParam(value = "page", defaultValue = "0") int page,
+                                                 @RequestParam(value = "size", defaultValue = "20") int size) {
+        return ResponseEntity.ok(storePicker.products(storeId, keyword, page, size));
     }
 
     @PostMapping("/spu-discount")

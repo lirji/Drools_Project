@@ -148,6 +148,54 @@ export interface ActivityListRow {
   inventory?: number | null
 }
 
+/** GET /activity-marketing/{id}/binding-stores —— 详情回显·店铺聚合一行（storeId 可空 = 未指定门店桶）。 */
+export interface BindingStoreRow {
+  storeId: number | null
+  spuCount: number
+  effectiveCount: number
+}
+
+/** GET /activity-marketing/{id}/binding-spus 的明细一行；spuName/price 可空（demo_product 查不到时回退）。 */
+export interface BindingSpuRow {
+  spuId: number
+  spuName: string | null
+  price: number | null
+  bindSource: number
+  effective: number
+  poolId: number | null
+}
+
+/** 店铺下钻明细一页（服务端分页）。 */
+export interface BindingSpuPage {
+  total: number
+  page: number
+  size: number
+  items: BindingSpuRow[]
+}
+
+/** GET /activity-marketing/store-picker/stores —— 「选店铺→勾商品」picker 的店铺一行（storeName 可空 → 前端显示「店铺 #id」）。 */
+export interface PickerStore {
+  storeId: number
+  storeName: string | null
+  productCount: number
+}
+
+/** picker 商品一行。 */
+export interface PickerProduct {
+  spuId: number
+  spuName: string | null
+  price: number | null
+  onShelf: number
+}
+
+/** picker 商品分页（服务端 keyword+分页）。 */
+export interface PickerProductPage {
+  total: number
+  page: number
+  size: number
+  items: PickerProduct[]
+}
+
 /** POST /activity-marketing/bulk-status —— 一项 = 「哪个活动的哪一版」。
  *  必须带显式 version：P0-4 之后线上版与草稿并存，不传版本会打到草稿、线上继续发钱。 */
 export interface BulkStatusItem {

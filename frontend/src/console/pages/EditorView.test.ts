@@ -837,3 +837,126 @@ describe('EditorView 玩法模板预填', () => {
     })
   })
 })
+
+describe('EditorView 商品绑定 · 选店铺→勾商品 picker', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const FIELD_DICT = {
+    fields: [{ key: 'orderAmount', label: '订单金额', valueType: 'NUMBER', operators: ['ge'], enumValues: [] }],
+    operators: [{ key: 'ge', label: '≥' }], logics: [{ key: 'AND', label: '且' }],
+    activityTypes: [{ code: 1, label: '红包' }], statuses: [{ code: 1, label: '已上线' }],
+    distributionModes: [], strategies: ['MAX'],
+  }
+
+  function stubPicker(opts: {
+    stores?: Array<Record<string, unknown>>
+    productsByStore?: Record<number, Record<string, unknown>>
+    detail?: Record<string, unknown>
+  }) {
+    const bodies: Array<Record<string, any>> = []
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u.includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+      if (u.includes('/districts')) return Promise.resolve(response(200, []))
+      const m = u.match(/\/store-picker\/stores\/(\d+)\/products/)
+      if (m) {
+        const sid = Number(m[1])
+        return Promise.resolve(response(200, (opts.productsByStore ?? {})[sid] ?? { total: 0, page: 0, size: 10, items: [] }))
+      }
+      if (u.includes('/store-picker/stores')) return Promise.resolve(response(200, opts.stores ?? []))
+      if (u.endsWith('/create')) {
+        bodies.push(JSON.parse(String(init?.body)))
+        return Promise.resolve(response(200, { activityId: 'PK', version: 1, autoBoundCount: 0, idempotentHit: false }))
+      }
+      if (opts.detail) return Promise.resolve(response(200, opts.detail))
+      return Promise.resolve(response(404, { message: 'not found' }))
+    }))
+    return bodies
+  }
+
+  it('选店铺→勾商品→提交 spuBindings 含 {storeId,spuId}（多店多商品）', async () => {
+    const bodies = stubPicker({
+      stores: [{ storeId: 1, storeName: '旗舰店', productCount: 1 }, { storeId: 2, storeName: '折扣店', productCount: 1 }],
+      productsByStore: {
+        1: { total: 1, page: 0, size: 10, items: [{ spuId: 9101, spuName: '蓝牙耳机', price: 120, onShelf: 1 }] },
+        2: { total: 1, page: 0, size: 10, items: [{ spuId: 9201, spuName: '跑步鞋', price: 260, onShelf: 1 }] },
+      },
+    })
+    const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+    await wrapper.get('[data-testid="form-name"]').setValue('picker 用例')
+
+    await wrapper.get('[data-testid="store-picker-toggle"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="store-picker-store-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="store-picker-product-9101"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="store-picker-store-2"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="store-picker-product-9201"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="store-picker-confirm"]').trigger('click')
+
+    await wrapper.get('[data-testid="submit"]').trigger('click')
+    await flushPromises()
+
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].spuBindings).toEqual(
+      expect.arrayContaining([{ storeId: 1, spuId: 9101 }, { storeId: 2, spuId: 9201 }]))
+  })
+
+  it('编辑回填目录外 SPU：落手填行可见、直接保存一字不差（头号金标）', async () => {
+    const bodies = stubPicker({
+      stores: [{ storeId: 1, storeName: '旗舰店', productCount: 1 }],
+      detail: {
+        manage: {
+          activityType: 1, activityName: '回填用例', bizLine: 'mall', activityRule: '',
+          priority: 1, inventory: 100, activityAreaType: 1, districtIds: '',
+          activityStartTime: '2026-08-01T10:00:00Z', activityEndTime: '2026-08-08T10:00:00Z',
+        },
+        rules: [{ redPackageTakeType: 1, redPackageAmountUnit: '元', redPackageAmount: 10, redPackageRangeAmount: null }],
+        conditions: [], gifts: [], poolRefs: [],
+        // 990011/888888 都是目录外 SPU（不在 demo_product）——picker 里选不到，绝不能静默丢
+        bindings: [{ bindSource: 0, storeId: 77, spuId: 888888 }],
+      },
+    })
+    const { wrapper } = await setup(false, '/console/activities/OFFCAT/edit')
+    await flushPromises()
+
+    // 手填行必须回显目录外 SPU
+    const spuInput = wrapper.get('[data-testid="spu-row-input"]').element as HTMLInputElement
+    expect(spuInput.value).toBe('888888')
+
+    await wrapper.get('[data-testid="submit"]').trigger('click')
+    await flushPromises()
+
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].spuBindings).toEqual([{ storeId: 77, spuId: 888888 }])
+  })
+
+  it('picker 勾选与手填重复同一 (storeId,spuId) → 提交去重不出现两条', async () => {
+    const bodies = stubPicker({
+      stores: [{ storeId: 1, storeName: '旗舰店', productCount: 1 }],
+      productsByStore: { 1: { total: 1, page: 0, size: 10, items: [{ spuId: 9101, spuName: '蓝牙耳机', price: 120, onShelf: 1 }] } },
+    })
+    const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+    await wrapper.get('[data-testid="form-name"]').setValue('去重用例')
+
+    // picker 勾 9101（占用默认空行 → dr.spu=[{1,9101}]）
+    await wrapper.get('[data-testid="store-picker-toggle"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="store-picker-store-1"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="store-picker-product-9101"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('[data-testid="store-picker-confirm"]').trigger('click')
+
+    // 再手填一行同样的 1/9101（storeId 默认 1）
+    await wrapper.get('[data-testid="dyn-add"]').trigger('click')
+    const inputs = wrapper.findAll('[data-testid="spu-row-input"]')
+    await inputs[inputs.length - 1].setValue('9101')
+
+    await wrapper.get('[data-testid="submit"]').trigger('click')
+    await flushPromises()
+
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].spuBindings).toEqual([{ storeId: 1, spuId: 9101 }])
+  })
+})

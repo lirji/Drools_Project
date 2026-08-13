@@ -618,7 +618,8 @@ onUnmounted(() => {
             <dl class="kv panel-counts">
               <dt>资格条件</dt><dd>{{ countOf('conditions') }} 条</dd>
               <dt>优惠规则</dt><dd>{{ countOf('rules') }} 条</dd>
-              <dt>绑定 SPU</dt><dd>{{ countOf('bindings') }} 个</dd>
+              <!-- detail.bindings 已收窄为「仅手动」，计数改读后端摘要 spuTotal（含自动+失效的全量绑定数）。 -->
+              <dt>绑定 SPU</dt><dd>{{ Number(detail?.spuTotal ?? 0) }} 个</dd>
               <dt>赠品</dt><dd>{{ countOf('gifts') }} 项</dd>
               <dt>额度</dt>
               <dd>{{ panelRow.inventory ?? '未设置' }} <small class="na">（声明式，决策不扣减）</small></dd>

@@ -44,9 +44,25 @@ function detailOf(rule: Record<string, unknown> | null, extra: Record<string, un
   }
 }
 
-async function setup(rule: Record<string, unknown> | null, extra: Record<string, unknown> = {}) {
-  vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) =>
-    Promise.resolve(response(200, String(url).includes('/field-dict') ? FIELD_DICT : detailOf(rule, extra)))))
+/** 绑定视图 stub 配置：店铺聚合 + 各页明细。默认空，绝大多数用例不关心绑定。 */
+interface BindingStub {
+  stores?: Array<Record<string, unknown>>
+  spusByPage?: Record<number, Record<string, unknown>>
+}
+
+async function setup(rule: Record<string, unknown> | null, extra: Record<string, unknown> = {}, binding: BindingStub = {}) {
+  const stores = binding.stores ?? []
+  const spusByPage = binding.spusByPage ?? {}
+  vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+    const u = String(url)
+    if (u.includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+    if (u.includes('/binding-stores')) return Promise.resolve(response(200, stores))
+    if (u.includes('/binding-spus')) {
+      const page = Number(new URL(u, 'http://localhost').searchParams.get('page') ?? 0)
+      return Promise.resolve(response(200, spusByPage[page] ?? { total: 0, page, size: 10, items: [] }))
+    }
+    return Promise.resolve(response(200, detailOf(rule, extra)))
+  }))
 
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -169,5 +185,77 @@ describe('DetailView 权益形态渲染', () => {
     })
     expect(ratio.get('[data-testid="detail-ratio"]').text()).toContain('8')
     expect(ratio.get('[data-testid="detail-ratio"]').text()).toContain('最多减 50.00 元')
+  })
+})
+
+describe('DetailView 商品绑定：店铺聚合 + 点击下钻', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const spuCalls = () => (globalThis.fetch as unknown as { mock: { calls: unknown[][] } })
+    .mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/binding-spus'))
+
+  it('挂载即拉店铺聚合，渲染店铺行与每店计数（不再全量下发扁平列表）', async () => {
+    const wrapper = await setup({ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }, {}, {
+      stores: [
+        { storeId: 10, spuCount: 5, effectiveCount: 4 },
+        { storeId: 20, spuCount: 2, effectiveCount: 2 },
+        { storeId: null, spuCount: 1, effectiveCount: 1 },
+      ],
+    })
+
+    const s10 = wrapper.get('[data-testid="binding-store-10"]')
+    expect(s10.text()).toContain('店铺 #10')
+    expect(s10.text()).toContain('5 件 · 4 生效')
+    // null 店铺归「未指定门店」桶
+    expect(wrapper.get('[data-testid="binding-store-__null__"]').text()).toContain('未指定门店')
+    // 首屏不应打下钻端点
+    expect(spuCalls()).toHaveLength(0)
+  })
+
+  it('点“查看”才触发下钻 fetch，且带对 storeId', async () => {
+    const wrapper = await setup({ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }, {}, {
+      stores: [{ storeId: 10, spuCount: 2, effectiveCount: 2 }],
+      spusByPage: { 0: { total: 2, page: 0, size: 10, items: [
+        { spuId: 6001, spuName: '蓝牙耳机', price: 120, bindSource: 1, effective: 1, poolId: 1 },
+        { spuId: 6002, spuName: null, price: null, bindSource: 0, effective: 0, poolId: null },
+      ] } },
+    })
+
+    expect(spuCalls()).toHaveLength(0)
+    await wrapper.get('[data-testid="binding-store-10"] .store-row').trigger('click')
+    await flushPromises()
+
+    const calls = spuCalls()
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls[0]).toContain('storeId=10')
+    // 商品名批量补：有档的显示名，没档的回退裸 SPU 编号
+    expect(wrapper.get('[data-testid="binding-spu-6001"]').text()).toContain('蓝牙耳机')
+    expect(wrapper.get('[data-testid="binding-spu-6002"]').text()).toContain('SPU 6002')
+    // 失效行标失效
+    expect(wrapper.get('[data-testid="binding-spu-6002"]').text()).toContain('失效')
+  })
+
+  it('翻页请求下一页（page 递增）', async () => {
+    const wrapper = await setup({ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }, {}, {
+      stores: [{ storeId: 10, spuCount: 15, effectiveCount: 15 }],
+      spusByPage: {
+        0: { total: 15, page: 0, size: 10, items: [{ spuId: 7001, spuName: '第一页', price: 9, bindSource: 1, effective: 1, poolId: 1 }] },
+        1: { total: 15, page: 1, size: 10, items: [{ spuId: 7011, spuName: '第二页', price: 9, bindSource: 1, effective: 1, poolId: 1 }] },
+      },
+    })
+
+    await wrapper.get('[data-testid="binding-store-10"] .store-row').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('第一页')
+
+    await wrapper.get('[data-testid="binding-spu-next"]').trigger('click')
+    await flushPromises()
+    expect(spuCalls().some((u) => u.includes('page=1'))).toBe(true)
+    expect(wrapper.text()).toContain('第二页')
+  })
+
+  it('没有绑定商品时显示空态', async () => {
+    const wrapper = await setup({ redPackageAmountUnit: '元', redPackageAmount: 10, redPackageTakeType: 1 }, {}, { stores: [] })
+    expect(wrapper.text()).toContain('没有绑定商品')
   })
 })

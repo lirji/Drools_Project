@@ -8,6 +8,7 @@ import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.service.DistrictQueryService;
 import com.lrj.drools.activity.service.GenerationService;
+import com.lrj.drools.activity.service.StorePickerQueryService;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.AddOnPurchaseService.AddOnOption;
 import com.lrj.drools.activity.service.AddOnPurchaseService.AddOnOptions;
@@ -64,13 +65,14 @@ class ActivityMarketingAddOnAliasTest {
     @Mock RuleSchemaRegistry schemaRegistry;
     @Mock GenerationService generations;
     @Mock DistrictQueryService districts;
+    @Mock StorePickerQueryService storePicker;
 
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         ActivityMarketingController controller =
-                new ActivityMarketingController(marketing, query, addOn, schemaRegistry, generations, districts);
+                new ActivityMarketingController(marketing, query, addOn, schemaRegistry, generations, districts, storePicker);
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

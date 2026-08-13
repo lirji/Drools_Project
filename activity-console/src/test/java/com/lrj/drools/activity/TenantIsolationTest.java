@@ -5,7 +5,12 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
+import com.lrj.drools.activity.persistence.DemoProductEntity;
+import com.lrj.drools.activity.persistence.DemoProductRepository;
+import com.lrj.drools.activity.persistence.DemoStoreEntity;
+import com.lrj.drools.activity.persistence.DemoStoreRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
+import com.lrj.drools.activity.service.StorePickerQueryService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
 import com.lrj.drools.activity.service.ActivityQueryService;
 import com.lrj.drools.activity.service.ActivityQueryService.DiscountView;
@@ -55,6 +60,9 @@ class TenantIsolationTest {
     @Autowired ActivityQueryService query;
     @Autowired ActivityManageRepository manageRepo;
     @Autowired org.springframework.transaction.PlatformTransactionManager txm;
+    @Autowired StorePickerQueryService picker;
+    @Autowired DemoStoreRepository demoStoreRepo;
+    @Autowired DemoProductRepository demoProductRepo;
 
     @AfterEach
     void clearTenant() {
@@ -136,6 +144,44 @@ class TenantIsolationTest {
         TenantContext.set(TENANT_A);
         assertEquals(a.activityId(), marketing.getDetail(a.activityId()).manage().getActivityId(),
                 "A 的行不应被 B 的 bulk update 删除");
+    }
+
+    /**
+     * 详情回显的店铺聚合/下钻两条新 @Query 也必须租户隔离：B 查 A 的 activityId（显式同版本，
+     * 绕过版本解析、直接打聚合/下钻查询）应为空。若误把这两条改成 native SQL，@TenantId 不覆盖，
+     * B 就会读到 A 的绑定 —— 本用例正是那道红线。
+     */
+    @Test
+    void bindingViewIsolation() {
+        TenantContext.set(TENANT_A);
+        CreateResult a = marketing.create(redPackage("A 绑定视图", "biz-iso", new BigDecimal("40"), 7601L, null));
+        assertFalse(marketing.bindingStores(a.activityId(), a.version()).isEmpty(),
+                "A 应看到自己活动的店铺聚合");
+        assertTrue(marketing.bindingSpus(a.activityId(), a.version(), 1, 0, 20).total() > 0,
+                "A 应能下钻到 store 1 的绑定");
+
+        TenantContext.set(TENANT_B);
+        assertTrue(marketing.bindingStores(a.activityId(), a.version()).isEmpty(),
+                "B 查 A 的店铺聚合应为空（@TenantId 覆盖 @Query；若误用 native SQL 此处会漏数据）");
+        assertEquals(0, marketing.bindingSpus(a.activityId(), a.version(), 1, 0, 20).total(),
+                "B 下钻 A 的绑定应 0 条");
+    }
+
+    /**
+     * picker 目录浏览的两条新 @Query 也必须租户隔离：A 造 demo_store+demo_product 目录，切 B 列店/列商品应为空。
+     * 若误把 aggregateStores/pageStoreProducts 改成 native SQL，@TenantId 不覆盖，B 会读到 A 的目录——本用例守这条红线。
+     */
+    @Test
+    void storePickerIsolation() {
+        TenantContext.set(TENANT_A);
+        demoStoreRepo.save(new DemoStoreEntity(1, "A 的旗舰店", 1));
+        demoProductRepo.save(new DemoProductEntity(9001L, 1, "A 的耳机", "electronics", new BigDecimal("120"), null, 1));
+        assertFalse(picker.stores().isEmpty(), "A 应看到自己的店铺目录");
+        assertTrue(picker.products(1, null, 0, 20).total() > 0, "A 应能列出自己店里的商品");
+
+        TenantContext.set(TENANT_B);
+        assertTrue(picker.stores().isEmpty(), "B 不应看到 A 的店铺目录（@TenantId 覆盖 @Query）");
+        assertEquals(0, picker.products(1, null, 0, 20).total(), "B 列 A 店里的商品应为空");
     }
 
     /** 跨租户写：B 改 A 的活动上下线状态 → fail-closed。 */

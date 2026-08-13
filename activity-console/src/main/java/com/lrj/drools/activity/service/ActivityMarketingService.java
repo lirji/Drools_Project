@@ -24,6 +24,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +39,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * 活动营销核心服务：创建 / 版本化编辑 / 上下线 / 详情。
@@ -68,6 +72,8 @@ public class ActivityMarketingService {
     private final ActivityRuleRepository ruleRepo;
     private final ActivityConditionRepository conditionRepo;
     private final ActivitySpuBindingRepository bindingRepo;
+    /** 详情下钻时按 spuId 批量补商品名/价（{@code findAllById} = PK IN + @TenantId 自动，一页一查）。 */
+    private final DemoProductRepository demoProductRepo;
     private final ActivityGiftRepository giftRepo;
     private final PoolRefRepository poolRefRepo;
     private final ActivityStrategyRepository strategyRepo;
@@ -98,6 +104,7 @@ public class ActivityMarketingService {
                                     ActivityRuleRepository ruleRepo,
                                     ActivityConditionRepository conditionRepo,
                                     ActivitySpuBindingRepository bindingRepo,
+                                    DemoProductRepository demoProductRepo,
                                     ActivityGiftRepository giftRepo,
                                     PoolRefRepository poolRefRepo,
                                     ActivityStrategyRepository strategyRepo,
@@ -116,6 +123,7 @@ public class ActivityMarketingService {
         this.ruleRepo = ruleRepo;
         this.conditionRepo = conditionRepo;
         this.bindingRepo = bindingRepo;
+        this.demoProductRepo = demoProductRepo;
         this.giftRepo = giftRepo;
         this.poolRefRepo = poolRefRepo;
         this.strategyRepo = strategyRepo;
@@ -493,15 +501,80 @@ public class ActivityMarketingService {
         ActivityManageEntity manage = latestVersionRow(activityId)
                 .orElseThrow(() -> new IllegalArgumentException("活动不存在: " + activityId));
         Integer v = manage.getVersion();
+        // D1：bindings 收窄为「仅手动」（bindSource=0）。爆炸源是自动绑定（商品池×店铺物化），
+        // 而 EditorView 编辑基线本就只 filter(bindSource===0)——收窄后它拿到的正是全部手动集，免改；
+        // 自动绑定的明细改由 /binding-stores + /binding-spus 两个端点按店铺聚合+分页取。
+        // 摘要 storeCount/spuTotal 覆盖全部未删除行（含自动），供详情标题与列表页计数。
+        List<ActivitySpuBindingEntity> manualBindings =
+                bindingRepo.findByActivityIdAndVersionAndBindSourceAndIsDel(activityId, v, MANUAL_BIND, NOT_DEL);
+        List<ActivitySpuBindingRepository.StoreSpuCount> agg = bindingRepo.aggregateStoresByVersion(activityId, v);
+        long spuTotal = agg.stream().mapToLong(ActivitySpuBindingRepository.StoreSpuCount::getSpuCount).sum();
         return new ActivityDetail(
                 manage,
                 ruleRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
                 conditionRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
-                bindingRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
+                manualBindings,
                 giftRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
                 poolRefRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
-                currentOnlineVersion(activityId));
+                currentOnlineVersion(activityId),
+                agg.size(),
+                spuTotal);
     }
+
+    /** 手动绑定的 {@code bind_source} 取值（0）。自动=1。收窄详情 bindings 时用。 */
+    private static final int MANUAL_BIND = 0;
+
+    // ------------------------------------------------------------------ 详情回显·绑定商品（店铺聚合 + 下钻分页）
+
+    /**
+     * 店铺聚合（D4/D5）：一次返回该活动<b>草稿基线版</b>下每个店铺绑了多少商品（含失效）+ 多少生效。
+     * 行数 = O(店铺数)，不随 SPU 总量增长。{@code version} 缺省 = {@link #latestDraftVersion}（D6，与 getDetail 同源）。
+     */
+    public List<StoreBindingView> bindingStores(String activityId, Integer version) {
+        Integer v = version != null ? version : requireVersion(activityId);
+        return bindingRepo.aggregateStoresByVersion(activityId, v).stream()
+                .map(r -> new StoreBindingView(r.getStoreId(), r.getSpuCount(), r.getEffectiveCount()))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 店铺下钻明细分页（D4）：某店铺下的绑定商品，服务端分页；商品名/价用 {@code findAllById} 一页一次批量补
+     * （PK IN + @TenantId 自动，无 N+1，{@code BindingViewQueryCountTest} 钉死）。join 不到 → name/price 为 null，
+     * 前端回退裸 {@code SPU {id}}。{@code storeId} 传 null 命中「未指定门店」桶（D7）。
+     */
+    public SpuBindingPage bindingSpus(String activityId, Integer version, Integer storeId, int page, int size) {
+        Integer v = version != null ? version : requireVersion(activityId);
+        Pageable pageable = PageRequest.of(Math.max(0, page), size <= 0 ? 20 : size);
+        Page<ActivitySpuBindingEntity> pageResult = bindingRepo.pageStoreBindings(activityId, v, storeId, pageable);
+        List<Long> spuIds = pageResult.getContent().stream()
+                .map(ActivitySpuBindingEntity::getSpuId).collect(Collectors.toList());
+        Map<Long, DemoProductEntity> byId = spuIds.isEmpty() ? Map.of()
+                : demoProductRepo.findAllById(spuIds).stream()
+                    .collect(Collectors.toMap(DemoProductEntity::getSpuId, p -> p, (a, b) -> a));
+        List<SpuBindingRow> items = pageResult.getContent().stream().map(b -> {
+            DemoProductEntity p = byId.get(b.getSpuId());
+            return new SpuBindingRow(b.getSpuId(), p != null ? p.getSpuName() : null,
+                    p != null ? p.getPrice() : null, b.getBindSource(), b.getEffective(), b.getPoolId());
+        }).collect(Collectors.toList());
+        return new SpuBindingPage(pageResult.getTotalElements(), pageResult.getNumber(), pageResult.getSize(), items);
+    }
+
+    /** 详情/聚合的版本解析：草稿基线（最高未删除版）；活动不存在则与 getDetail 一致地抛 IAE→400。 */
+    private Integer requireVersion(String activityId) {
+        return latestVersionRow(activityId)
+                .orElseThrow(() -> new IllegalArgumentException("活动不存在: " + activityId))
+                .getVersion();
+    }
+
+    /** 店铺聚合行。{@code storeId} 可空（null = 未指定门店桶）。 */
+    public record StoreBindingView(Integer storeId, long spuCount, long effectiveCount) {}
+
+    /** 下钻明细一行。{@code spuName}/{@code price} 可空（demo_product 里查不到该 spu 时回退）。 */
+    public record SpuBindingRow(Long spuId, String spuName, BigDecimal price,
+                                Integer bindSource, Integer effective, Long poolId) {}
+
+    /** 下钻明细一页。 */
+    public record SpuBindingPage(long total, int page, int size, List<SpuBindingRow> items) {}
 
     // ------------------------------------------------------------------ 版本解析（委派给唯一出口）
 
@@ -1107,9 +1180,14 @@ public class ActivityMarketingService {
 
     /**
      * @param manage         <b>最高未删除版</b>那一行（草稿优先，见 {@link #getDetail}）
+     * @param bindings       <b>仅手动绑定</b>（bindSource=0，D1）。自动绑定（商品池物化，可达万级）不在这里，
+     *                       改由 {@code /binding-stores} + {@code /binding-spus} 按店铺聚合+分页取。
+     *                       此契约收窄见 BREAKING-CHANGES。
      * @param servingVersion 当前正在服务的 ONLINE 版本号；没有上线版本时为 null。
      *                       与 {@code manage.getVersion()} 不等就意味着「你看的这一版还没在发钱」——
      *                       此前这个落差只能由调用方各自去猜，现在写在响应里（纯增量字段）
+     * @param storeCount     该版本绑定覆盖的店铺数（含仅有失效行的店铺；末位纯增量字段）
+     * @param spuTotal       该版本全部未删除绑定行数（含自动+失效；详情标题与列表页计数用；末位纯增量字段）
      */
     public record ActivityDetail(ActivityManageEntity manage,
                                  List<ActivityRuleEntity> rules,
@@ -1117,7 +1195,9 @@ public class ActivityMarketingService {
                                  List<ActivitySpuBindingEntity> bindings,
                                  List<ActivityGiftEntity> gifts,
                                  List<PoolRefEntity> poolRefs,
-                                 Integer servingVersion) {}
+                                 Integer servingVersion,
+                                 int storeCount,
+                                 long spuTotal) {}
     // ================================================================ 秒杀库存扣减（一口价配套）
     //
     // 实现全部在 {@link GrantService}——发放台账与配置写入口零共享状态。

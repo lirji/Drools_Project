@@ -17,7 +17,10 @@ import jakarta.persistence.Table;
 @Entity
 @Table(name = "activity_spu_binding", indexes = {
         @Index(name = "idx_sb_spu_eff_del", columnList = "tenant_id,spu_id,effective,is_del"),
-        @Index(name = "idx_sb_aid_ver", columnList = "tenant_id,activity_id,version")
+        // store_id 尾随（D9）：详情回显的店铺聚合(group by store_id)与下钻(activity+version+store_id)
+        // 走全索引命中。⚠ ddl-auto:update 对「改已存在索引 columnList」不可靠——全新 demo 库定义即
+        // 生效，存量/生产库需手工 ALTER（本仓常态是可重建库）。
+        @Index(name = "idx_sb_aid_ver", columnList = "tenant_id,activity_id,version,store_id")
 })
 public class ActivitySpuBindingEntity extends SoftDeletableTenantEntity {
 

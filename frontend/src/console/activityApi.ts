@@ -8,6 +8,8 @@ import type {
   DiscountDecisionResponse, GiftDecisionResponse,
   AddOnOptionsResponse, AddOnQuoteResponse,
   SnapshotDiagnostics, GenerationRef,
+  BindingStoreRow, BindingSpuPage,
+  PickerStore, PickerProductPage,
 } from '@/shared/types'
 
 /**
@@ -29,6 +31,55 @@ export function listActivities(signal?: AbortSignal): Promise<ApiResult<Activity
 
 export function getDetail(id: string, signal?: AbortSignal): Promise<ApiResult<Record<string, unknown>>> {
   return api('marketing', 'GET', '/' + encodeURIComponent(id), undefined, { signal })
+}
+
+/**
+ * 详情回显·店铺聚合：该活动草稿基线版下每个店铺绑了多少商品（含失效）+ 多少生效。
+ * 一次返回（O 店铺数），不下发万级明细。{@link getBindingSpus} 才按店铺分页取明细。
+ */
+export function getBindingStores(id: string, version?: number, signal?: AbortSignal): Promise<ApiResult<BindingStoreRow[]>> {
+  const q = version != null ? '?version=' + version : ''
+  return api<BindingStoreRow[]>('marketing', 'GET', '/' + encodeURIComponent(id) + '/binding-stores' + q, undefined, { signal })
+}
+
+/**
+ * 详情回显·店铺下钻：某店铺下的绑定商品分页明细。
+ * `storeId === null` 时**省略 storeId 参数**（命中「未指定门店」桶）——绝不能传空串，
+ * 否则后端 `@RequestParam Integer` 空串转换会 400（见坑：null 桶传参）。
+ */
+export function getBindingSpus(
+  id: string,
+  p: { version?: number; storeId: number | null; page: number; size: number },
+  signal?: AbortSignal,
+): Promise<ApiResult<BindingSpuPage>> {
+  const qs = new URLSearchParams()
+  if (p.version != null) qs.set('version', String(p.version))
+  if (p.storeId != null) qs.set('storeId', String(p.storeId))
+  qs.set('page', String(p.page))
+  qs.set('size', String(p.size))
+  return api<BindingSpuPage>('marketing', 'GET', '/' + encodeURIComponent(id) + '/binding-spus?' + qs.toString(), undefined, { signal })
+}
+
+/**
+ * 「选店铺→勾商品」picker·店铺列表：当前租户下有在架商品的店（目录浏览，编辑态用）。
+ * 与 {@link getBindingStores}（按 activityId 查「已绑定」）语义不同——这是「有哪些可勾选」。
+ */
+export function listPickerStores(signal?: AbortSignal): Promise<ApiResult<PickerStore[]>> {
+  return api<PickerStore[]>('marketing', 'GET', '/store-picker/stores', undefined, { signal })
+}
+
+/** picker·某店铺下的在架商品分页（服务端 keyword+分页）。 */
+export function listPickerProducts(
+  storeId: number,
+  p: { keyword?: string; page: number; size: number },
+  signal?: AbortSignal,
+): Promise<ApiResult<PickerProductPage>> {
+  const qs = new URLSearchParams()
+  if (p.keyword) qs.set('keyword', p.keyword)
+  qs.set('page', String(p.page))
+  qs.set('size', String(p.size))
+  return api<PickerProductPage>('marketing', 'GET',
+    '/store-picker/stores/' + encodeURIComponent(String(storeId)) + '/products?' + qs.toString(), undefined, { signal })
 }
 
 export function createActivity(body: ActivityCreateRequest, signal?: AbortSignal): Promise<ApiResult<ActivityCreateResult>> {
