@@ -23,6 +23,8 @@
 > ⚠️ **活动引擎的决策主链路默认*不*走 Drools**——阶梯落档、六形态算额、折扣合并、资格条件树全部是纯 Java（`BenefitEvaluator` / `BenefitMath` / `ConditionTreeEvaluator`）。
 > 判据是「这条规则需不需要*其它规则的结论*」，四者都不需要。生产上真正执行 DRL 的只剩**买赠**一条通道，外加写平面的编译校验与 decision 侧的发布预热。
 > Step 1–18 是**教学层**，跟活动引擎没有代码耦合。这个决策的量化依据（实测差 ~100× 内存、~67× 决策 CPU）见 [docs/capacity-model.md](docs/capacity-model.md)，链路分层见 [docs/architecture.md](docs/architecture.md)。
+> 这条纯 Java 链路上有两条结构性保证：候选装配只有 `OfferSpec.from` **一个入口**（走库与快照两条路共用，此前是三份手写字段扇出，漏填一份的表现是「同一张券在两条路上发不同的钱」）；
+> 六形态算额的分派是对 `BenefitForm` 的**不写 `default` 的 switch 表达式**（加第七种形态而漏了分支就是编译失败，不是「被当成金额原样发出去」；必须是 switch **表达式**，写成语句就不强制穷尽了）。两道横切 guard（随机红包、`redPackageAmount` 为空）刻意留在 switch 之外，且随机那道必须排在前面——否则「只配了区间、没配固定金额」的随机活动会被静默跳过。
 
 ## 项目结构
 
@@ -30,9 +32,13 @@
 
 ```
 drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
-├── activity-common/             共享库：domain / engine（规则编译·翻译 + 权益与条件树的 Java 求值） /
-│                                snapshot（发布代际快照包） / metrics（决策指标） / persistence（JPA） /
-│                                tenant（多租户·安全） + 只读查询与选品服务。两个 app 都依赖它
+├── activity-common/             共享库：domain（含 OfferSpec —— 走库与快照两条路**唯一**的候选装配入口） /
+│                                engine（规则编译·翻译 + 权益与条件树的 Java 求值） /
+│                                snapshot（发布代际快照包） / metrics（决策指标） /
+│                                persistence（JPA；决策取数另有 6 个 `*ReadRepository`，见下） /
+│                                tenant（多租户·安全） / error（领域异常 + 错误码→HTTP 的唯一映射处） +
+│                                只读查询服务。两个 app 都依赖它
+│                                （选品服务 `ActivityPoolMatchService` 只有写平面用，已上浮到 console）
 ├── drools-lab/                  Step 1–18 教学库（重 drools 依赖：kie-ci / kie-dmn / decisiontables）
 │   └── src/main/
 │       ├── java/com/lrj/drools/  config/DroolsConfig（KieContainer Bean）+ domain / service /
@@ -40,14 +46,17 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 │       └── resources/
 │           ├── META-INF/kmodule.xml   声明各 kbase（helloKBase / discountKBase / fraudKBase …）
 │           └── rules/                 各 Step 的 .drl / .xls（决策表） / .dmn
-├── activity-console/   【可执行 app · 8081】写平面 + Step 1–18 端点 + 前端 SPA(/ui/) + 唯一 DDL 执行者
+├── activity-console/   【可执行 app · 8081】写平面（活动 CRUD·发布 / 发放流水 GrantService：claim·release·grants /
+│                                选品） + Step 1–18 端点 + 前端 SPA(/ui/) + 唯一 DDL 执行者
 │   └── src/main/                依赖 activity-common + drools-lab
 │       ├── java/com/lrj/drools/ConsoleApplication.java   启动类
 │       └── resources/
 │           ├── application.yml / -mysql.yml / -h2.yml    端口 8081；H2 落 activity-console/data/drools-demo.mv.db
 │           └── static/index.html                         落地页（指向 /ui/）+ 构建期注入的 SPA 产物
 └── activity-decision/  【可执行 app · 8082】只读决策热路径 /decision/v1/*（spu-discount / gifts /
-    └── src/main/                addon/options + addon/quote 两阶段加价购 / metrics / by-activity）+
+    └── src/main/                addon/options + addon/quote 两阶段加价购 / metrics / by-activity /
+                                 snapshot 快照诊断 / snapshot/rollback 快照回滚——回滚是该平面**唯一的写动作**，
+                                 只切本进程内存指针、不写库）+
                                  发布代际轮询预热。仅依赖 activity-common（甩掉 drools-lab 的重依赖，jar 更轻）
         ├── java/com/lrj/drools/DecisionApplication.java  启动类
         └── resources/
@@ -58,6 +67,8 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 frontend/                        Vue3 + Vite + TS 的 SPA 源码（Docker 由独立 nginx 托管；Maven profile 仍嵌入 console 作后备）
 deploy/                          docker-compose（mysql + console + decision + frontend nginx + Prometheus + Grafana）
 ```
+
+> ⚠️ **「decision 写不了库」现在多了一道类型级保证**：决策取数（`DecisionDataLoader` / `DecisionSnapshotBuilder`）用的 6 个 `*ReadRepository` 继承的是 `Repository<T,ID>` 而不是 `JpaRepository`，`save` / `delete` / `flush` **在类型上根本不存在**——读路径上手滑写一次库现在是**编译失败**，不再是「编译过、单测全绿（测试库是可写的 H2）、只在生产那条只读连接上炸」。`DecisionReadRepositoryGuardTest` 连「把字段换回可写仓库」这条绕路也一并钉住。只读账号与 `ddl-auto: validate` 仍在，三道并存。
 
 ## 运行
 
@@ -80,7 +91,13 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 
 # 一次编译/测试整个 reactor (4 模块):
 ./mvnw clean package        # 两个 app 各出可执行 jar
-./mvnw test                 # 跑全 reactor 测试
+./mvnw test                 # 跑全 reactor 测试。2026-08-12 本机实跑 476 通过:
+                            #   common 193 (含 3 skipped) / drools-lab 0 / console 256 / decision 27
+                            # drools-lab 不产出可执行用例——它唯一的 @Test 类 VipDiscountSheetGenerator
+                            # 命名不匹配 surefire 默认模式, 从不运行 (Step 7 那节有单独跑法)
+# ⚠ 别用「求和 surefire XML 文件」来数用例数, 会少 52 个: DroolsBenefitGoldenSetTest 继承
+#   DecisionGoldenSetTest, 父类 @Nested 里的 52 个金标用例被发现两遍、写进同名 XML 互相覆盖。
+#   以 `Tests run:` 汇总为准。
 ```
 
 > **decision 单跑要先有表**: 它是只读平面, `ddl-auto` 固定 `validate` (建表归 console 独占)。
@@ -129,7 +146,7 @@ cd frontend && npm install && npm run dev
 
 Docker Compose 默认启用 Casdoor auth：console 的 `/activity-marketing/**` 与 decision 的 `/decision/v1/**` 都要求有效 Bearer；`/ui/**`、`/actuator/health` 和公开的 `auth-config` 保持匿名。浏览器使用 `http://localhost:8000`，容器拉 JWKS 使用 `host.docker.internal:8000`。本地测试账号为 `acme/act-alice`（`act-alice-dev-pass-01`）与 `beta/act-bob`（`act-bob-dev-pass-02`）。
 
-受 `console-write-authority` 保护的写端点共 **5 个**：`POST /create`、`POST /{id}/status`、`POST /bulk-status`、`POST /{id}/claim`、`POST /{id}/release`（`release` 会把库存加回去并解除限领占用，不设防就能把限量活动的库存刷到任意大，所以它必须在名单里）。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置默认为空仅是为了保留 demo 兼容，不应当作生产权限策略。
+受 `console-write-authority` 保护的写端点共 **6 个**：`POST /create`、`POST /{id}/status`、`POST /bulk-status`、`POST /{id}/claim`、`POST /{id}/release`（`release` 会把库存加回去并解除限领占用，不设防就能把限量活动的库存刷到任意大，所以它必须在名单里），外加决策平面上的 `POST /decision/v1/snapshot/rollback`（它不写数据库、只切本进程的快照指针，但切一下就改变这条业务线每一次决策实际发出去的钱，是运营级操作，用同一个权限守）。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置默认为空仅是为了保留 demo 兼容，不应当作生产权限策略。
 
 如需回滚到原 header-only 开发档：
 
@@ -148,12 +165,17 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 
 演示台里"活动引擎控制台"那一半（`/ui/console`）换了一代，后端也跟着开了几个新口子（Step 1–18 的端点一个没动）：
 
-- **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
+- **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因（唯一例外是 `targetStatus` **本身**非法——那不是「某几条没成功」而是整个请求没意义，进循环之前就 400；另外 `targetStatus=3`（待生效）现在被写入口封死，它是个零生产者零消费者的状态，置成它的活动控制台显示成草稿、决策永远不命中）。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
 - **玩法模板屏**（`/ui/console/playbooks`）：12 张玩法卡（满减 / 阶梯 / 折扣券 / 人群·门店·地域定向 / 满额赠品 / 第二件半价 / 秒杀一口价 / 加价购），点"用它新建"跳编辑器并预填。
 - **优惠验证屏**（`/ui/console/validate`）：从上述 12 张卡直接派生场景，再额外补 1 个 random 形态场景；按 **discount / gifts / addon** 三通道调真实决策、分别展示命中金额、赠品明细或「选项 → 权威报价」，不再只打印原始 JSON。场景只准备输入与通道，不指定活动、不强制命中。第 N 件折切到订单行编辑，`spuIdList / orderAmount / quantity / lines` 只从行项唯一汇总，避免两份金额互相打架。
 - **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。<br>**减免基数是「本活动圈到的商品」而不是整单**：绑定关系从候选筛选器升级成**权益作用域**——作用域覆盖本次请求全部 SPU 时按订单金额算（今天绝大多数流量在这一档），是真子集时按订单行小计算，拿不到订单行就判本活动不适用。否则一张只绑了 B 的「9.9 一口价」会把「A 5000 元 + B」的整车按 9.9 成交。注意直减/满减（`元`）形态**不走这个基数**，它发的是固定金额，靠候选筛选把不该发的挡在门外。
-- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200 / 没抢到 409）。它**已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。同一张流水表还顺带解决另外三件事——每人限领（`userInventory` 按流水计数，配了限领却不传 `userId` 直接拒绝）、退款冲正 `POST /{id}/release`（幂等）、客服查单 `GET /activity-marketing/grants?orderId=`，在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
-- **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动的命中量 `hits` **与发出的减免金额 `amounts`**——命中次数回答不了「这个活动花了多少预算」；标签数有上限，超出并进 `__over_cap__`，响应自带 `scope: single-instance`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。
+- **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200；没抢到按**失败种类**分流状态码：入参非法 / 限领活动没带 `userId` = **400**，活动或版本不存在 = **404**，余量不足 / 不在可用窗口 / 超出每人限领 = **409**。此前四种一律 409，下游按「409 = 重试可能成功」写重试逻辑时，「参数写错」那一类会被无限重试到活动结束。响应体一字节没变，`FailureKind` 标了 `@JsonIgnore` 只用于服务端分流）。它**已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。同一张流水表还顺带解决另外三件事——每人限领（`userInventory` 按流水计数，配了限领却不传 `userId` 直接拒绝）、退款冲正 `POST /{id}/release`（幂等；`orderId` 缺参 / 空串现在是 **400**，只有**确实查不到发放记录**才是 404——404 会让调用方以为「这一单没领过、不用冲正」，从而永久漏掉库存与限领额度的归还）、客服查单 `GET /activity-marketing/grants?orderId=`，在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
+- **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动的命中量 `hits` **与发出的减免金额 `amounts`**——命中次数回答不了「这个活动花了多少预算」；标签数有上限，超出并进 `__over_cap__`，响应自带 `scope: single-instance`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。<br>⚠️ **Prometheus 侧有一处标签值变更**：`activity_decision_source_total` 的 `scene` 从 `ActivityType.name()`（`RED_PACKAGE` / `BUY_AND_GET` / `ADD_ON_PURCHASE`）统一成了本类其它九个指标共用的 `DecisionScene.code()`（`spu-discount` / `gifts` / `addon`）——此前 `activity_decision_source_total{scene="gifts"}` 查出来**恒为空**，而「按 scene 把回退率与来源占比 join 起来看」正是这条指标存在的理由。`deploy/` 下的 Grafana 看板与 Prometheus 配置都不消费它（已核对），只有手写的临时查询/个人看板需要改标签值；历史数据仍在旧标签下可查。
+- **快照诊断与回滚**：`GET /decision/v1/snapshot[?activityId=]` 列出本租户的快照桶（bizLine / generation / builtAt / ageSeconds / activityCount），带 `activityId` 时直接回答「它在哪个桶 / 不在任何桶」——`bizLine` 为空的活动永远进不了任何桶，这条故障下 provenance 三个值全绿（走的是快照、代际正常、快照也很新），只有这个端点照得出来；它只读、不发起决策、也不占 `activityId` 标签位。`POST /decision/v1/snapshot/rollback?bizLine=` 把该业务线的决策指针切回上一代，**立刻生效**（没有上一代可回时返回 409，而不是假装成功）。此前 `DecisionSnapshotStore.rollback` 全仓只有测试在调，「回滚是求值出 bug 时的止损手段」是张空头支票。两条推论运维必须知道：**① 只影响被打到的那个实例**（多实例要逐实例调）；**② 下一次代际推进会把它盖掉**——它是止血，真正的修复仍是在 console 侧改配置再发布一代。
+
+> 2026-08 那轮活动引擎结构性重构里**对外可见的契约变更**（4 处 HTTP 状态码、1 处指标标签值、写入口新增拒绝 `targetStatus=3`、响应体键序、两处观测口径）逐条列在
+> [`docs/plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md`](docs/plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md)（含「为什么必须改」与下游要做什么）。
+> **发钱金额零变化**——金标集 `DecisionGoldenSetTest` 52 例、`SnapshotParityTest`、`DecisionQueryCountTest`（决策热路径 5 次查询上限）全程绿。
 
 前端回归（Vitest + 浏览器 E2E）：
 
@@ -179,8 +201,13 @@ npm run e2e:oidc        # 默认 :8095，但需本机 Casdoor :8000（唯一走 
 > 除 `e2e:oidc` 外都走 `tenant-chip`（header 档），而编排**默认是 auth 档**，跑之前要切：
 > `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
 >
-> ⚠️ **`e2e:validate` 还要额外加 `DROOLS_FOUR_EYES_ENABLED=true`**：脚本第一个场景就硬断言「提交人自审发布必须被拒 409」，
+> ⚠️ **`e2e:validate` 还要额外加 `DROOLS_FOUR_EYES_ENABLED=true`**：脚本第一个场景就硬断言「提交人自审发布必须被拒 **403**」，
 > 而 compose 的四眼开关默认 false，不打开的话自审发布返回 200，脚本当场 fail。CI 的 `validation-e2e` job 就是这么配的。
+>
+> 四眼拒绝**从 409 改成了 403**（`ActivityErrorCode.FOUR_EYES_REQUIRED`）：它说的是「不该由你来做这件事」，不是「资源状态冲突、重试可能会成」——
+> 换谁重试都不会成功，只能换一个人来点。此前的 409 纯属实现细节泄漏（写平面用 `IllegalStateException` 表达它，controller 把所有 ISE 一律映射成 409）。
+> 响应体形状未变（仍有 `error` 中文说明），另**新增** `code` 字段。脚本里那条断言已同步改成 403——
+> 注意这套 e2e **不在 `./mvnw test` 与 `vitest` 的闸门里**，改状态码时它不会自动报警。
 
 > 前端产物在 **gateway 镜像**里，不在 console 的 jar 里：只 `--build console` 页面纹丝不动，要
 > `docker compose -f deploy/docker-compose.yml up -d --build gateway`（或 `./deploy.sh --frontend-only`）。

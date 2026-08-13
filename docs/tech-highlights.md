@@ -105,9 +105,16 @@ Drools / QLExpress / 纯 Java 跑**同一份**活动负载，测常驻足迹、�
 - 条件树的否定算子（`NE` / `NOT_IN` / `NOT_CONTAINS`）都带**存在性护栏**——
   字段缺失时结果为 **false**（淘汰），而不是"没有这个字段所以不等于、算通过"；
 - 字段不在 schema 白名单里 → 直接 false；
-- 第 N 件折缺 `lines`（订单行）→ 不适用，**不拿均价凑**。
+- 第 N 件折缺 `lines`（订单行）→ 不适用，**不拿均价凑**；
+- 脏 `logic` code（条件树的 AND/OR 编码非法）在读路径**不再抛异常**：求值器给的是**三态**
+  （`PASS` / `FAIL` / `UNDECIDABLE`），`UNDECIDABLE` 只淘汰**这一个**候选。
+  此前它直抛 `IllegalArgumentException`，而决策链路一路无 catch——**一条脏数据把整次请求打成 500**，
+  同一次请求里其它完全正常的活动跟着一起没了。写平面创建期**仍然抛**（脏 code 就该在入库前被拒）。
+  三态而不是 boolean 的理由是计数：`UNDECIDABLE` 是故障（要有人去修数据）、`FAIL` 是每天都在发生的正常业务，
+  合成一格就再也分不开（对应 `RejectReason.CONDITION_UNAVAILABLE` 与 `INELIGIBLE` 两个原因码）。
 
-**代码**：`BenefitEvaluator.java` / `ConditionTreeEvaluator.java` / `NotApplicableCandidateTest`（14 例）
+**代码**：`BenefitEvaluator.java` / `ConditionTreeEvaluator.java`（`Verdict` 三态）/
+`NotApplicableCandidateTest`（14 例）+ `ConditionTreeGuardTest`
 
 ### 2.3 判别顺序即语义
 
@@ -120,11 +127,23 @@ Drools / QLExpress / 纯 Java 跑**同一份**活动负载，测常驻足迹、�
 2. **随机分支排在 `redPackageAmount==null` 的 guard 之前**——随机金额来自 `redPackageRangeAmount`；
 3. **未知单位回落金额型**——脏数据表现为"按旧行为发"，而不是"按猜出来的形态发"。
 
-**非显然之处**：`redPackageRangeAmount` 是**双用途列**，靠 JSON 顶层类型互斥
-（数组→阶梯，对象→随机区间）。写成 `[{"min":5,"max":20}]` 会被阶梯路径认领。
+**让编译器守住"六种形态一种都不能漏"**：形态分派现在是一个**枚举 `switch` 表达式且不写 `default`**——
+新增一种 `BenefitForm` 而漏了分支，是**编译失败**，不是"少算一种券"。
+（⚠️ 只有 switch **表达式**有这个性质；改写成 arrow switch **语句**对枚举常量不强制穷尽，等于白改。）
+而有**两道 guard 刻意留在 switch 之外**：上面第 2 条那个随机 guard（它只对 `AMOUNT` 形态生效，
+留在外面是为了排在下面这道之前——随机金额来自 `redPackageRangeAmount`，放到后面会被 `redPackageAmount==null` 静默跳过），
+以及「既没有固定金额、也不是随机型 ⇒ 唯一的金额来源就是阶梯，没落过档就是不适用」那道（§2.2 的 `ladderApplied`，**对所有形态生效**）。
+执行顺序读起来就是「随机 guard → 阶梯未落档 guard → 形态分派」，不再靠注释维持。
 
-**代码**：`BenefitEvaluator.computeAmounts` / `LadderRangeParser` / `RandomRangeParser` /
-金标集 `DecisionGoldenSetTest`（52 例）
+**非显然之处**：`redPackageRangeAmount` 是**三用途列**（阶梯数组 / 随机区间 `{"min","max"}` /
+第 N 件 `{"nth":N}`），先靠 JSON 顶层类型把数组与非数组切成不相交两半，非数组再由单位 + 发放方式判别。
+写成 `[{"min":5,"max":20}]` 会被阶梯路径认领。
+这条判别规则此前在 Java 侧被写了**三遍**（决策取阶梯定义 / 求值器按形态解析 / 写平面校验），
+各自演化的后果是**写侧接受的配置读侧算不出金额**——活动以"不适用"的姿态上线，而运营看到的是"已上线"。
+现在三处共调 `RangePayload.parse`，"期望哪种载荷"的权威只有 `RangePayload.expectedKind` 一处。
+
+**代码**：`BenefitEvaluator.computeAmounts` / `RangePayload`（唯一解析出口，内部仍复用
+`LadderRangeParser` / `RandomRangeParser`）/ 金标集 `DecisionGoldenSetTest`（52 例）
 
 ### 2.4 确定性随机：可刷新、可重放、可对账
 
@@ -146,7 +165,12 @@ Drools / QLExpress / 纯 Java 跑**同一份**活动负载，测常驻足迹、�
   用户刷新就变价、历史对账全部对不上。`randomSeedSpu` 由 `DecisionEligibilityService` 专门维持成旧的"第一件"值，
   不进条件白名单、不许被任何条件引用，唯一职责就是把这条种子链钉住。
 
-**代码**：`BenefitEvaluator.drawRandom` + `BenefitMath.randomSeedKey`
+**这条种子链现在有两道防线**：属性袋的键名收进 `DecisionAttrs` 常量类
+（把"写侧改名、读侧不知情"从静默变成可见），而**真正的守卫**是 `DecisionContextFieldsTest`
+里那条**写死字面量**的闭集断言——它刻意不引用 `DecisionAttrs`，否则改名时常量与断言会一起改、
+测试跟着变绿。`randomSeedSpu` 不在条件白名单里，所以此前**改掉它全仓测试照样全绿**。
+
+**代码**：`BenefitEvaluator.drawRandom` + `BenefitMath.randomSeedKey` + `DecisionAttrs`
 
 ### 2.5 权益作用域：绑定表不只是"候选筛选器"
 
@@ -201,6 +225,34 @@ Drools / QLExpress / 纯 Java 跑**同一份**活动负载，测常驻足迹、�
 
 **代码**：`BenefitEvaluator.capToOrderAmount` / `DecisionMetrics.clamped` / `DecisionOutputContractTest$Cap`
 
+### 2.7 "同一张券在两条路上发不同的钱"：把装配收成一条路
+
+**问题**：走库与走快照是两条取数路径，但它们最终都要产出同一个 `ActivityCandidate`。
+这条「配置行 → 候选」的扇出此前被**手写了三份**（走库 `flatten` 的 17 个 setter、快照的
+`CandidateTemplate` 19 个位置参数、`toCandidate` 里再来一遍 setter），
+其中**只有中间那份被编译器守着**。于是同一条缝**已经裂开过两次**——
+`scopedSpuIds` 与 `redPackageMaxDiscount` 各漏填过一次。
+两次的表现完全一样：不报错、不回退、日志干净，只有对账时才发现。
+
+**做法**：加一个不可变的 `OfferSpec`（record）当**唯一装配目标**，
+两条生产路径都必须走 `OfferSpec.from(manageRow, ruleRow, gifts)` 这一个规范构造器；
+`CandidateTemplate` 随之删除，`ActivityCandidate` 改成"持有一份 `OfferSpec` + 本轮计算态"。
+加一个配置字段却漏了某条路，从此**在类型上不可表达**。
+
+**非显然之处**：
+
+- **哪些东西刻意不进 `OfferSpec`**：`scopedSpuIds` 是「请求 SPU ∩ 本活动当前版本绑定」，
+  **逐请求**算出来的，不是配置；本轮计算态（`eligible` / `computedAmount` / `ladderApplied`）同理。
+  它们留在候选上，而 `null`（作用域未知 → 按整单算）与空集（作用域已知）的语义差异必须原样保留（见 §2.5）。
+- **配置与计算态焊在同一个可变对象上，正是那条事故链的起点**：候选可变 → 快照必须不可变 →
+  只好造影子类 → 装配变成三份手写扇出。拆开之后这条链就断了。
+- 行为面由 `SnapshotParityTest` / `DecisionGoldenSetTest` 守，**结构面另有一道**
+  `OfferSpecArchGuardTest`——下一次漂移会先表现为"有人给候选加了个配置 setter"，
+  那时行为测试还是绿的。
+
+**代码**：`OfferSpec.java` / `ActivityCandidate` / `DecisionDataLoader.flatten` /
+`DecisionSnapshot.materialize` / `OfferSpecArchGuardTest`
+
 ---
 
 ## 三、并发与一致性
@@ -250,12 +302,25 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 - **拿不到 `userId` 时，配了每人限领的活动直接拒绝**。无从判断是不是同一个人时放行，等于限领形同虚设。
 - **不传 `version` 解析成当前 ONLINE 版本**（不是最高版本）。取最高版会打到草稿——
   闸门装在了另一行数据上：线上版本的库存一件没少、草稿的库存被扣干净。
+  「当前是哪一版」在写平面其实有**两套互斥定义**（最高未删除版 = 编辑基线；最高 ONLINE 版 = 正在发钱的那版），
+  从前它们各自散在五个调用点里就地解释一次，事故因此无处可读。现在收成 `ActivityVersionResolver`
+  的两个具名方法，调用点必须显式选一个。
+- **失败种类必须能分流到状态码**。claim 的七个失败点从前只有一个中文 `reason` 串，
+  controller 只能按布尔映射成**恒 409**。而 409 的标准语义是「重试可能成功」——
+  于是「少传一个参数」会被下游**无限重试到活动结束**，而「真的售罄」又被当成自己写错了。
+  现在 `ClaimResult` 带一个 `FailureKind`，按种类分流成 400 / 404 / 409
+  （`release` 的 `orderId` 传空串同理：从 404 改成 400——404 会让调用方以为"这一单没领过、不用冲正"，
+  从而**放弃冲正**，库存与限领额度就永久漏掉了）。
+  两个细节：`FailureKind` 标了 `@JsonIgnore`（**响应体一字节未变**，状态码已经把信息表达出去了），
+  映射用的是**不写 `default` 的 switch 表达式**——新增一种失败种类而漏了映射就是编译失败。
 - **不复用 `activity_idempotency`**：那张表的键是客户端生成的 `requestId`，语义是"这个请求处理过没有"；
   流水的键是业务事实，语义是"这份优惠发出去没有"。混在一起的后果是换个客户端重试实现就能把同一单领两次。
 - 冲正走 `POST /{id}/release`（同样幂等：已 `RELEASED` 的记录直接返回成功，不重复加库存），
   归还**不判活动状态与时间窗**——活动结束之后仍会有退款进来。
 
-**代码**：`ActivityMarketingService.claimInventory` / `releaseGrant` / `ActivityGrantEntity` / `GrantLedgerTest`
+**代码**：`GrantService.claimInventory` / `releaseGrant`（从 977 行的 `ActivityMarketingService` 拆出，
+后者保留同名委派方法；两者零共享状态，唯一交集是 `ActivityVersionResolver`）/
+`ActivityGrantEntity` / `GrantLedgerTest` + `ClaimResultContractTest`
 
 ### 3.3 上线是原子指针切换，不是"先下线再上线"
 
@@ -264,7 +329,17 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 **做法**：上线在**同一事务**里把该活动其它 ONLINE 版本退役 + 本行置 ONLINE。
 且**编辑不下线正在服务的版本**——线上版与草稿并存。
 
-**代码**：`ActivityMarketingService.changeStatus`
+**顺带补上的一张表**：`changeStatus` 从前只校验 `targetStatus` 本身合法，**从不看当前状态**——
+"哪些流转是合法的"在代码里没有任何一处写下来，接手人只能从各个调用点反推。
+现在有一张 from × to 的 `ALLOWED_TRANSITIONS`。**它按今天实际发生的流转成文，不趁机收紧**
+（收紧是行为变更，要单独立项），包括那条看起来不对称、实则原样保留的 `OFFLINE → ONLINE`。
+
+唯一被封死的是 `targetStatus=3`（`PENDING_EFFECT`）：它是 `fromCode` 认可的合法码，
+但全 main 源码**零生产者、零消费者**——置成该状态的活动代际照常 bump，可它永远进不了任何读路径，
+控制台显示成草稿、决策永远不命中，而这个落差没有任何一条日志或指标会说出来。
+与其给一个没实现的状态立法，不如在写入口封口（作为**源**仍可迁出，好让外部导入的脏数据有逃生口）。
+
+**代码**：`ActivityMarketingService.changeStatus` / `ALLOWED_TRANSITIONS` / `resolveTargetStatus`
 
 ### 3.4 缓存击穿：Caffeine 天然 single-flight
 
@@ -282,11 +357,14 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 
 **问题**：批量上下线里有一条失败，是整批回滚还是继续？
 
-**做法**：**逐条独立处理，失败不影响已成功项**，一律返回 **200 + 部分失败回执**
+**做法**：**逐条独立处理，失败不影响已成功项**，返回 **200 + 部分失败回执**
 （`{succeeded:[...], failed:[{activityId, reason}]}`）。
 
 **非显然之处**：返回 200 不是"忽略错误"，是"部分失败是这个接口的正常语义"——
 用 4xx/5xx 表达会让调用方无法知道**哪些成功了**。
+
+**唯一的例外是 `targetStatus` 本身非法**：那不是"某几条失败"，是这次请求根本不成立，
+现在进循环之前就 400——否则几十条各失败一次，回执里全是同一句话。
 
 ---
 
@@ -307,7 +385,23 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 后者会有一个窗口指向半成品。而 `rollback` **只保留一代**且是**一次性**的（回滚后滚不回去），
 这是显式设计而不是遗漏。
 
-**代码**：`GenerationWarmService` / `DecisionSnapshotStore` / `SnapshotParityTest`
+**关于"回滚"这个止损手段，有三条是后来才补上的**：
+
+- **一个桶就是一个不可变的 `SnapshotSlot(current, previous)`，靠 `compute` 一次原子替换**。
+  从前 current 与 previous 是两张 map，"切当前代"与"移交上一代"是两条独立语句——中间有个两表互相矛盾的窗口。
+- **只有代际前进时才占用回滚槽位**。预热失败时 `GenerationWarmService` 不更新 `lastSeen`，
+  下一轮会对**同一代际**再发一次；若同代重发也占槽位，previous 会被挤成"同一代的旧副本"，
+  于是 `rollback` 从此是空转——退到的还是出事的那一代。超龄兜底重建走 `refresh`，同样不占槽位。
+- **它此前没有任何生产调用方**：全仓只有两个测试在调 `DecisionSnapshotStore.rollback`。
+  也就是说"回滚是求值出 bug 时的止损手段"一直是**空头支票**——previous 槽位修得再对，运维也按不下去。
+  现在有 `POST /decision/v1/snapshot/rollback?bizLine=`（与 `GET /snapshot` 同一道角色门 + 同一条 JWT 安全链，
+  另需 `console-write-authority`）。**止损手段只有能从生产按下去才算数。**
+  两条推论运维必须知道：**① 它只动本进程内存里的指针**（不写库，所以不破坏"decision 连只读账号"这条边界；
+  代价是多实例要逐实例调用）；**② 下一次代际推进会把它盖掉**——回滚是止血，真正的修复仍是在 console 侧改配置再发一代。
+  没有上一代可回时返回 409 并说明原因（刚重启只发过一代 / 上一次推进是兜底重建），**不假装成功**。
+
+**代码**：`GenerationWarmService` / `DecisionSnapshotStore`（`SnapshotSlot`）/
+`DecisionPlaneController.rollbackSnapshot` / `SnapshotParityTest` + `SnapshotRollbackEndpointTest`
 
 ### 4.2 编译不落热路径：独立限速编译线程池
 
@@ -375,6 +469,12 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 上线时校验 `ActorContext ≠ submitted_by`——提交人不能自己发布（可开关）。
 `ActivityFourEyesTest` + e2e `e2e:validate` 覆盖（脚本会先验证提交人自审被拒、再由另一 actor 发布）。
 
+被拒时返回 **403**（此前是 409）。这不是措辞讲究：409 说的是"资源状态和你以为的不一样，重试可能会成"，
+而这里再怎么重试都不会成——必须换一个人来点。**状态码选错时，客户端的正确行为也就跟着写错了。**
+它此前是 409 纯属实现细节泄漏（写平面用 `IllegalStateException` 表达它，controller 把所有 ISE 一律映射成 409），
+现在由 `ActivityErrorCode.FOUR_EYES_REQUIRED` 决定，与"抛的是哪个 JDK 异常"脱钩（见 §7.7）。
+响应体形状未变（`error` 字段原样），只新增机器可读的 `code`。
+
 ---
 
 ## 六、性能与容量
@@ -389,7 +489,20 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 必须**先筛 ONLINE 再取最高版本**；反过来会取到一个更高版本的草稿然后发现它没上线，
 于是这个活动整个丢失。
 
-**代码**：`DecisionDataLoader` / 回归锁 `DecisionQueryCountTest`
+**另一条 N+1 藏在快照构建期**：热路径压到 5 次之后，`DecisionSnapshotBuilder` 仍在循环体里逐活动查绑定行
+（仓库接口里根本没有批量方法——**N+1 是接口缺口逼出来的**，不是谁写岔了），
+活动查询还捞该租户**全部**在线活动再用 Java 丢掉非本桶的。现在补了批量绑定查询、bizLine 过滤下推 SQL，
+一次构建**固定 6 次**（真实桶另加一次孤儿计数 = 7 次），与活动目录规模无关（`SnapshotBuildQueryCountTest`）。
+
+⚠️ **但 bizLine 过滤下推 SQL 之后，Java 侧那道精确相等判断不能删**——这是一条只在生产成立的差异：
+生产 MySQL 8 默认排序规则 `utf8mb4_0900_ai_ci` **大小写不敏感**，
+`biz_line = 'retail'` 会把 `Retail` / `RETAIL` 的活动一并收进 `retail` 桶；
+而全部快照测试跑在**大小写敏感**的 H2 上，这个问题**永远照不出来**。
+而桶归属决定的是「谁在快照里 = 谁能被发钱」。`SnapshotBizLineCollationTest` 用 `IGNORECASE=TRUE` 把
+H2 调成大小写不敏感来复现它——**这个测试类的 JDBC URL 本身就是断言的一部分**，改它等于关掉门禁。
+
+**代码**：`DecisionDataLoader` / `DecisionSnapshotBuilder` /
+回归锁 `DecisionQueryCountTest` + `SnapshotBuildQueryCountTest` + `SnapshotBizLineCollationTest`
 
 ### 6.2 命中快照 = 零数据库查询
 
@@ -424,8 +537,19 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 
 ### 6.5 构建期开关省掉热路径字符串累积
 
-`explain=false` 时**构建期就不 emit** `result.trace(...)`，而不是响应期过滤——
-大租户大规则集下省掉每次 fire 的字符串拼接与 GC。console 试算走 `explain=true`，decision 热路径走 false。
+不需要 trace 时**构建期就不 emit** `result.trace(...)`，而不是响应期过滤——
+大租户大规则集下省掉每次 fire 的字符串拼接与 GC。console 试算要 trace，decision 热路径不要。
+
+**运行期档位与构建期开关是两个东西，刻意没有合并**：
+
+- **运行期**是 `DecisionMode`（`HOT_PATH` / `EXPLAIN`）。它从裸 boolean 改成枚举的真正原因不是可读性，
+  而是**那四个"省掉 explain"的便捷重载被删掉了**——它们的默认值**方向相反**
+  （`spuDiscount`/`buyAndGetGifts` 默认热路径，加价购 `options`/`quote` 默认试算），
+  六个决策入口里有四个走默认值，读者在调用点上无法本地推理这次决策是哪一档。
+  今天没出事只是因为两条默认值各自撞对了自己那一侧的调用方；任何一次跨平面复用都会**静默换档**：
+  热路径开始外泄逐候选资格明细，或试算页丢掉全部链路。现在每个调用点必须显式表态，漏了编译不过。
+- **构建期**是 `ActivityDrlBuilder` 的 `explain` 布尔，它改变**生成的 DRL 文本**，
+  而编译缓存的 key 就是 `tenant + DRL 全文`。把它与运行期档位耦合，会让同一份规则被编译两遍。
 
 ---
 
@@ -460,16 +584,20 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 同一出口顺带打 `metrics.amount`：手上握着 `hitAmount` 却只计"命中了"，
 就意味着「满 300 减 50」被配成「满 3 减 50」时监控全盘绿灯——命中数只是稍高，没有任何一条指标会动。
 
-**现状要说清**（不是每条通道都做到了"唯一出口"）：
+**三条通道现在都收到唯一出口了**，但口径各不相同：
 
 | 通道 | 现状 |
 | --- | --- |
 | 红包 `spuDiscount` | 唯一出口，`hit` + `amount` 都打 |
-| 买赠 `buyAndGetGifts` | **两个**调用点（DRL 命中路径与聚合回退路径各一次），因为这条通道没有单一出口对象可挂 |
-| 加价购 `AddOnPurchaseService` | **完全没有埋点**——类里 grep 不到 `DecisionMetrics` |
+| 买赠 `buyAndGetGifts` | 唯一出口。**口径不能照抄红包**——买赠没有单一赢家、没有 `hitActivityId`，改成按实际出了赠品的**来源活动去重**计数（一个活动出三件赠品仍只算一次命中，否则命中量会被赠品配置条数放大） |
+| 加价购 `AddOnPurchaseService` | 此前**完全没有埋点**，现已补齐 `timeDecision` / `candidates` / `hit` + 审计留痕 |
+
+两个口径变化值得先说在前面：① 买赠回退分支上，「资格通过但一件赠品都没配」的活动命中量会从 1 掉到 0——
+看板上像"回退后这个活动突然不命中了"，实际是**口径修正**（它本来就没发出任何东西，引擎分支也从不计它）；
+② 加价购从此**开始占用 `ACTIVITY_TAG_CAP` 那 200 个 activityId 标签位**，与红包/买赠抢同一份预算（见 §7.2）。
 
 另有 `metrics.reject(scene, reason)` 回答「配了但不发」：淘汰原因此前只写在候选对象的 `rejectReason` 上，
-而热路径 `explain=false`，那个字段与 trace 两个出口在生产上都不打开；唯一沾边的空决策回退
+而热路径是 `DecisionMode.HOT_PATH`，那个字段与 trace 两个出口在生产上都不打开；唯一沾边的空决策回退
 只在"这张券是唯一候选"时才走到，**恰恰是多活动并存这种最容易配错的场景观测全黑**。
 
 ### 7.4 决策留痕：客服查得到单，财务归得了因
@@ -479,12 +607,13 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 
 **做法**：每次决策生成 `decisionId`（响应与日志同值），
 出参补 `hitVersion` / `clamped` / `items`（逐活动明细：activityId、version、benefitForm、amount、applied、rejectReason），
-再由独立 logger `activity.decision.audit` 打一行 JSON（另落 `source` / `generation`，见 §3.2）。
+再由独立 logger `activity.decision.audit` 打一行 JSON（另落 `source` / `generation`，见 §7.5）。
 
-> ⚠️ **落盘的只有红包（`spu-discount`）这一条通道**：`auditLog(...)` 全仓唯一调用点在
-> `ActivityQueryService.spuDiscount` 出口、写死 `SCENE_DISCOUNT`。买赠虽然也生成了 `decisionId` 并放进 `GiftView`，
-> 但从不调用它；加价购更彻底——`AddOnOptions` / `AddOnQuote` 两个 record 连 `decisionId` 字段都没有。
-> 所以客服拿着**买赠或加价购**的工单按 decisionId 去日志里检索会一无所获。这是本条技术点当前真实的覆盖边界。
+> **覆盖面（已补齐三通道）**：拼装收敛到 `DecisionAuditor`，红包 / 买赠 / 加价购（options 与 quote 两阶段各一行，
+> 带 `phase` 字段）都会落日志，`AddOnOptions` / `AddOnQuote` 也补上了 `decisionId`。
+> 此前只有红包落盘——`auditLog(...)` 全仓唯一调用点写死在 `spuDiscount` 出口，
+> 买赠生成了 `decisionId` 却从不落日志、加价购两个 record 连这个字段都没有，
+> 于是客服拿着这两条通道的工单按 decisionId 去检索会**一无所获，而客服并不知道有这个区别**。
 
 **非显然之处**：
 
@@ -497,8 +626,14 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
   「为什么我没享受到」，答案在被淘汰候选的 `rejectReason` 里。
 - 日志里 `source` / `generation` 必须与 `hitVersion` 一起落：只有活动版本而没有代际时，
   「活动版本对、但快照是旧代」这类事故在日志里查不出来。
+- **引号与转义只能有一处实现**。原先它是散的：`hitActivityId` 的引号在**实参**里、
+  而 `scene` / `strategy` / `mode` 的引号在**模板**里。那个分裂不是随手写的——
+  引号在实参里才能让 null 输出成**裸 `null`** 而不是字符串 `"null"`，这个区别对下游解析是实打实的。
+  收敛后由 `quoteOrNull`（保留裸 null）与 `quoted`（恒带引号）两个方法把这层语义显式化，输出逐字节不变。
+- **格式刻意是手拼的单行 JSON，不走 Jackson**：热路径的开销就是一次字符串拼接，
+  换 `ObjectMapper` 等于把反射与树构建搬进决策热路径，换来的只是省掉几十行拼装。
 
-**代码**：`ActivityQueryService.auditLog` / `DiscountView`（`items` / `decisionId` / `clamped` / `provenance`）/
+**代码**：`DecisionAuditor`（三通道共用）/ `DiscountView`（`items` / `decisionId` / `clamped` / `provenance`）/
 `DecisionOutputContractTest`
 
 ### 7.5 「自证的决策」：验证工具必须走线上那条路
@@ -539,7 +674,7 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 **可被追问 ①：为什么不做成"双打 diff"就够了？**
 因为**检出上界只到取数层**——两条平面共用同一份 `BenefitEvaluator`，
 求值语义错了两边会一起错，对拍照样全绿。页面上明写了这句。
-而且噪声源是真的：`decisionId` 每次新 UUID、`traces` 两侧 explain 档位不同、`mode` 与钱无关、
+而且噪声源是真的：`decisionId` 每次新 UUID、`traces` 两侧决策档位不同（`EXPLAIN` vs `HOT_PATH`）、`mode` 与钱无关、
 `items` 顺序（服务端已按 activityId 定序，但页面不依赖它）、
 `strategy` 是**合法瞬态**（策略行在 create 时就 upsert，而代际只在状态流转时推进，
 于是新建带 `discountStrategy` 的草稿会让走库侧立刻看到新策略、快照侧要等下一代）。
@@ -557,6 +692,71 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 任何一个桶落后都意味着"还没全进去"；取最大值会把落后的那个桶藏起来。
 `buckets > 1` 时 `generation` 是下确界而非某一个桶的真值——`buckets` 字段就是那个约定的诚实声明。
 
+### 7.6 标签值只能有一份定义
+
+**问题**：指标标签的取值是**契约**（面板与告警按它过滤），但它此前是靠人在每个调用点手工配对的。
+
+两处实证：
+
+- **淘汰原因**：给 Prometheus 的原因码（`metrics.reject(scene, "missing-lines")`）与给人看的中文串
+  （`candidate.reject("第 N 件折缺订单行或 N 非法")`）是**两条独立语句**。
+  漂移已经发生过——`DecisionMetrics` 的 javadoc 写着 `price-above-order`，而实际发出去的是
+  `price-above-base`，文档只好补一句"以代码为准"。**漏码** → 这类淘汰在指标里凭空消失；
+  **漏串** → 用户看到空的"未生效"原因；两者都不会让任何测试变红。
+- **场景名**：`scene` 分裂成**四套**词汇，其中 `activity_decision_source_total` 用的是
+  `ActivityType.name()`（`RED_PACKAGE` / `BUY_AND_GET` / `ADD_ON_PURCHASE`），
+  而其余九个指标用 `spu-discount` / `gifts` / `addon`。后果不是"不整齐"，是
+  **`activity_decision_source_total{scene="gifts"}` 查出来恒为空**——
+  而"按 scene 把回退率与来源占比 join 起来看"正是这条指标存在的理由。**它一 join 就空，且空得毫无提示。**
+
+**做法**：`RejectReason`（码 + 文案钉在同一行）与 `DecisionScene`（唯一场景词汇表）两个枚举。
+用枚举而不是常量类，是因为它给出**编译期封闭集合**——标签取值集合必须有限，
+这与 `ACTIVITY_TAG_CAP` 是同一套顾虑（见 §7.2）。
+
+**非显然之处**：
+
+- `RejectReason.message()` 是**前端契约**（`ValidateView.test.ts` 直接断言中文串），改文案等于改前端；
+  而「本活动不适用：」这个前缀**刻意不在枚举里**——资格阶段不加、算额阶段才加，这个不对称是既有行为。
+- 统一 `decisionSource` 的 scene 是一次**有意的契约变更**：旧的三条时间序列停止增长、三条新序列开始增长
+  （历史数据仍在旧标签下可查）。**已核对 `deploy/` 下没有消费者需要同批改**——
+  Grafana 面板只查 JVM 与 HTTP 指标，`prometheus.yml` 没有 `rule_files` 因此没有告警规则引用它。
+- **还剩两处没收敛，这里如实写出来**：① 算额阶段的淘汰仍记在 `scene="benefit"` 上（那是**阶段**不是通道）；
+  ② 规则执行失败的回退仍传 `RuleScene.name()`（`ELIGIBILITY` / `LADDER` / `GIFT`）。
+  两者都会改变已有序列，属于要与 Grafana 面板/告警同批做的变更，不是能顺手塞进重构的东西。
+
+**代码**：`RejectReason` / `DecisionScene` / `DecisionMetrics`
+
+### 7.7 错误分类：别让 bug 伪装成客户端错误
+
+**问题**：全仓 `@ControllerAdvice` 零命中，唯一的映射是 `ActivityMarketingController` 里**手抄三遍**的
+`catch (IllegalArgumentException) → 400 / catch (IllegalStateException) → 409`。两个后果：
+写平面九个端点只有四个抄到了（其余端点抛异常时落到 Spring 默认 `/error`，一个 500 带着完整 message），
+且"分类"被压缩成 JDK 两个通用异常类型——**四眼校验失败**（说的是"不该由你来做"）就是这么变成 409「冲突」的，
+而 409 的标准语义是"重试可能成功"，这里再怎么重试也永远不会成功：必须换一个人来点。
+
+**做法**：`ActivityException` + `ActivityErrorCode`（每个取值自带 `httpStatus`），
+console 与 decision **各一个** `@RestControllerAdvice`。四眼失败由此从 409 改成 **403**。
+
+**非显然之处**——两个**刻意留空的格子**，方向恰好相反：
+
+- **console 不注册 `IllegalStateException → 409` 兜底**。advice 的作用域是整个 controller 包，
+  而那些 `catch` 只挂在 `create` / `status` 两个方法上；提成兜底等于顺带宣布
+  `list` / `grants` / `preview` 上抛出的**任何** ISE 都是"状态冲突"——可那里的 ISE 来自 `Optional.get`、
+  懒加载、bean 状态错，是 **bug**。代价有三层：① 4xx 不计错误预算、不触发告警，写平面的故障在监控上直接消失；
+  ② 调用方去重试一个永远不会成功的请求；③ 排查时先去查"谁在并发改这条活动"，而根因在另一个方向。
+- **decision 不注册 `IllegalArgumentException → 400` 兜底**。只读热路径的 IAE 只可能是**脏数据或真 bug**，
+  报成 400 等于对调用方说"是你请求写错了"，于是没人来看、调用方去改自己那条本来没问题的请求、
+  脏数据继续留在库里影响发钱。这里只留两个出口：分类明确的按自己的码走，其余一律 500 且**不回显 message**
+  （toC 流量，异常文案里可能带活动 id / SQL 片段）。它继承 `ResponseEntityExceptionHandler`，
+  免得把 Spring 本来就该 400 的情况（请求体不是合法 JSON、缺必填 `@RequestParam`）一起吞成 500。
+
+另两条约束：advice 的 `basePackages` **只圈本包**（console 的 classpath 上还挂着 drools-lab 的
+Step 1–18 教学 controller，全局 advice 会把它们的错误行为一起改掉）；
+错误码表**刻意不先铺完整**——一个没人抛的错误码，与文档里写着却没人调用的回滚入口是同一类东西。
+
+**代码**：`ActivityErrorCode` / `ActivityException` / `ActivityExceptionAdvice`（console）/
+`DecisionExceptionAdvice`（decision）/ `ActivityErrorMappingTest` + `DecisionErrorMappingTest`
+
 ---
 
 ## 八、把架构约束变成会失败的测试
@@ -566,26 +766,39 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 
 | 测试 | 钉死的约束 |
 | --- | --- |
-| `TenantArchGuardTest` | 不手写 tenant 谓词、不用 `nativeQuery` |
+| `TenantArchGuardTest` | 不手写 tenant 谓词、不用 `nativeQuery`；且 `@TenantId` **沿继承链**认（租户列现在收在 `@MappedSuperclass` 里，只看 `getDeclaredFields` 会把每个子类误判成缺租户列） |
+| `OfferSpecArchGuardTest` | 候选的**配置**只能来自 `OfferSpec` 一条装配路径（防"有人给候选加了个配置 setter"——那时行为测试还是绿的） |
+| `DecisionReadRepositoryGuardTest` | 决策取数层在**类型上**写不了库：`*ReadRepository` 只继承 `Repository`（没有 `save`/`delete`），且 `DecisionDataLoader` / `DecisionSnapshotBuilder` 的仓库字段一个都不能是 `CrudRepository` 子类型 |
 | `DecisionDdlGuardTest` | decision 的 `ddl-auto` 必须是 `validate`（**读源文件**，不是读运行时配置——否则被环境变量盖住就测不出来） |
 | `DecisionTenantHeaderTest` | `/decision/v1/*` 也受租户过滤器管 |
 | `DecisionQueryCountTest` | 取数查询次数不随候选数增长 |
+| `SnapshotBuildQueryCountTest` | **快照构建期**的查询次数不随活动目录规模增长（固定 6 次，真实桶另加一次孤儿计数） |
 | `ActivityCacheWeigherTest` | 缓存按足迹加权，不退回按个数 |
-| `ActivityQuerySafetyFallbackTest` | 旧的 `java-*` 开关配 false **也不能**把生产切回 DRL |
+| `DecisionContextFieldsTest` | ① 白名单字段都必须在决策入参里有来源；② 属性袋键集合是**闭集**（恰好 9 个，含 `userId`/`randomSeedSpu`/`orderLines` 三个不在白名单里的内部键）。断言**写死字面量、刻意不引用 `DecisionAttrs`**——引用常量的话改名时两边一起改、测试跟着变绿，而 `randomSeedSpu` 改一个字节 = 全量随机红包重抽 |
+| `ActivityQuerySafetyFallbackTest` | 红包链路**零规则运行时交互**（六形态各验一遍，`verifyNoInteractions(runtime)`），且安全回退保留 STACK/PRIORITY 与资格门槛。两个旧 `java-*` 开关已从代码里删除（此前是"绑定但不读取"，现在是根本不绑定），这条约束不再依赖开关 |
 | `SnapshotParityTest` | 快照路径与走库路径结果等价（含「编辑收窄绑定后两条路都不再发钱」） |
+| `SnapshotBizLineCollationTest` | 快照桶归属按 bizLine **精确相等**判定，不把判据交给数据库排序规则（用 `IGNORECASE=TRUE` 在 H2 上复现 MySQL 的大小写不敏感） |
 | `OfflinePropagationTest` | **任意**状态流转都要推进发布代际——它是 decision 侧唯一的"配置变了"信号；且兜底重建不得占用 `rollback` 那一个槽位 |
 | `SnapshotStaleRebuildTest` | 快照超龄能自愈；且快照记录的是**库里的真实代际号**，不是 `lastSeen+1` |
 | `DecisionOutputContractTest` | 决策出参契约：`hitVersion` / `clamped` / `decisionId` / `items`（含落选者与淘汰原因） |
+| `EntityJsonOrderTest` | 实体响应的键序（身份字段在队首）——继承结构一变，Jackson 会把超类属性排到子类之前，字段名与取值一字未改却**静默**改了响应体 |
 | `BenefitScopeTest` + `DecisionScopeGoldenTest` | 权益作用域三档判定；商品级活动只对自己的商品算钱，纯求值层与端到端两条路各钉一遍 |
 | `GrantLedgerTest` | claim 幂等；不传 version 打到当前 ONLINE 版本而非草稿；失败的 claim 不留"有账无货"的流水 |
+| `ClaimResultContractTest` | claim/release 的失败种类 → 状态码分流（400/404/409）不退回成恒 409，且 `FailureKind` 不进响应体 |
 | `SpuIdConditionCompatTest` | `spuId` 从 NUMBER 放宽成 ARRAY 后，存量 `eq`/`in` 仍读成集合语义（`contains`/`containsAny`） |
 
-后五行严格说是**行为回归锁**而不是结构守卫（不读源文件、不扫包），
+从 `ActivityQuerySafetyFallbackTest` 往下严格说是**行为回归锁**而不是结构守卫（不读源文件、不扫包），
 但立意相同：把"这条不能退回去"写成会失败的测试，而不是写在文档里等人记得。
 
-**可被追问**：为什么 `DecisionDdlGuardTest` 要读源文件？
+**可被追问 ①**：为什么 `DecisionDdlGuardTest` 要读源文件？
 答：它守的是"本地按文档命令单跑 decision 时也不能带 DDL 权限"。
 读运行时配置的话，compose 里的环境变量会把它盖住，测试绿但本地单跑仍然裸奔——**这个坑真踩过**。
+
+**可被追问 ②**：已经有只读数据库账号了，为什么还要 `DecisionReadRepositoryGuardTest`？
+答：只读账号是**运行期**的最后一道，而它只在生产那条连接上生效。
+读路径上一次手滑的 `save(...)` 能编译、能过全部单测（测试库是可写的 H2），
+只有到了生产才炸——那已经是最贵的时刻。把它提前到**类型层**（`Repository` 而非 `JpaRepository`），
+写操作在编译期就不存在。两道一起看是四层叠加：init 脚本 GRANT + compose 传账号 + `ddl-auto: validate` + 类型边界。
 
 ---
 
@@ -644,7 +857,9 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
   于是 decision 的 jar 甩掉 `kie-ci`（会拉进 maven-core / aether）与 `kie-dmn`，
   且**写能力在物理上不可达**（classpath 上没有写平面 bean）。
 - **单库双账号**：console 用 root 建表，decision 用 `GRANT SELECT` 的 `decision_ro`。
-  三层叠加（init 脚本 GRANT + compose 传账号 + 应用 `ddl-auto: validate`），任一层单独失效仍有兜底。
+  **四层叠加**（init 脚本 GRANT + compose 传账号 + 应用 `ddl-auto: validate` +
+  取数层只注入 `*ReadRepository` 这种**类型上就没有 `save`/`delete`** 的仓库），任一层单独失效仍有兜底。
+  前三层都是运行期的，只有第四层能让一次手滑的写操作**编译不过**（见 §八）。
 - **CI 三 job**：`backend`（全 reactor 测试）与 `frontend`（vitest + typecheck + build）**并行**，
   二者绿后在 PR / main 上跑 `validation-e2e`（起整栈 Docker + Playwright，25–45 分钟）——
   慢 job 不挡特性分支的日常 push。
@@ -660,12 +875,15 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 | 落差 | 现状 |
 | --- | --- |
 | 库存是声明式 | 决策链路**不读** `inventory`，防超发全靠 claim |
-| 两组指标的 `scene` 标签对不上 | `decisionSource` 用 `ActivityType.name()`，其余用 `spu-discount`/`gifts`/`addon` |
-| 加价购通道缺指标 | `AddOnPurchaseService` 没注入 `DecisionMetrics`，`duration`/`candidates`/`hit` 三条都没有 |
+| `scene` 词汇表还剩两处没收敛 | `decisionSource` 已统一成 `DecisionScene.code()`（见 §7.6），但**算额阶段**的淘汰仍记在 `scene="benefit"`（阶段名不是通道），**规则执行失败的回退**仍传 `RuleScene.name()`（`ELIGIBILITY`/`LADDER`/`GIFT`）。两者都会改动已有 Prometheus 序列，要与 Grafana 同批做 |
+| 加价购开始抢标签位 | 它此前一个 activityId 标签位都不占（压根没埋点），补齐后与红包/买赠共用同一份 200 个的预算——"按活动看命中量/金额"的分辨率会在活动目录变大时提前塌掉 |
 | 验证流量污染按活动的指标 | 优惠验证页默认打决策平面，运营点一次"验证"就在 `activity.decision.{hit,amount}` 里记一笔真实命中——按活动聚合的读数含验证流量且**分不出来**（诊断端点 `/decision/v1/snapshot` 刻意不占，但真发起的决策就是会占） |
 | `activityId` 标签位不可回收 | 进了标签集就没有淘汰（见 §7.2），验证 / 压测造的活动同样占位；200 个位置用完之后新活动一律并入 `__over_cap__` |
 | 作用域两档口径可能不同 | 覆盖整单时用 `orderAmount`、真子集时用 `Σ 作用域行`，而运费 / 补贴算不算进 `orderAmount` 契约里没规定（见 §2.5） |
 | per-tenant 公平份额只有设计 | Caffeine 单缓存不原生支持 per-key 配额，机制延后 |
-| `rollback` 只能滚一次 | 只保留一代，显式设计 |
+| `rollback` 只能滚一次 | 只保留一代，显式设计；且它**只影响被调到的那个实例**、下一次代际推进会把它盖掉（见 §4.1） |
+| "活动不存在"仍报 400 | 语义上是 404，但今天它走 `IllegalArgumentException` → 400。改成 404 是面向调用方的状态码变更（前端 / 脚本 / e2e 都会看到），要单独立项，不塞进异常分类那一批 |
+| `PENDING_EFFECT`(3) 这个状态没实现 | 写入口已封死（见 §3.3），但读路径仍然完全不认它——库里如果已经躺着这种脏数据，它对决策就是不存在 |
+| `bizLine` 为空的活动进不了任何快照桶 | 写平面不强制必填，兜底重建也只遍历**已存在**的桶。现在构建期会数一遍并打 `activity.decision.snapshot.orphan` + WARN（从"完全静默"变成"有读数"），但根治要么是写入口必填、要么是给它一个默认桶 |
 
 更完整的清单见 [`activity-marketing.md`](activity-marketing.md) 的「已知落差」一节。
