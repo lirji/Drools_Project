@@ -56,6 +56,19 @@ public class GenerationWarmService {
     @Value("${activity.marketing.snapshot.max-age-ms:60000}")
     private long snapshotMaxAgeMs;
 
+    /**
+     * 空壳桶淘汰阈值（毫秒）。桶是按 {@code (tenant,bizLine)} 惰性创建、<b>只增不减</b>的，
+     * 而兜底重建每轮要把所有桶重建一遍（每桶约 7 次查询）——短生命周期的租户
+     * （按租户切分的集成测试、临时压测线、下线后不再用的业务线）会让这个集合无上界地长下去。
+     * 表现不是「决策变慢」而是「轮询一轮越来越久」，<b>而轮询变慢直接拉长发布传播的延迟</b>。
+     *
+     * <p>默认 30 分钟 = 兜底重建周期的 30 倍：一条业务线在两次发布之间的正常空窗不会被误淘汰，
+     * 而跑完就不再回来的临时租户会在半小时内被回收。设为 0 或负数关闭。
+     * 淘汰是否安全的完整论证见 {@link DecisionSnapshotStore#evictEmpty}。
+     */
+    @Value("${activity.marketing.snapshot.empty-bucket-ttl-ms:1800000}")
+    private long emptyBucketTtlMs;
+
     /** key = tenant|bizLine → 已预热到的 generation。generation 从 1 起，故基线 0L 让首见即预热。 */
     private final Map<String, Long> lastSeen = new ConcurrentHashMap<>();
 
@@ -132,6 +145,20 @@ public class GenerationWarmService {
                 log.warn("[generation-poll] 快照兜底重建失败 tenant={} bizLine={}（保留旧快照，下轮重试）: {}",
                         tenant, bizLine, e.toString());
             }
+        }
+        // 重建之后再淘汰，顺序不能反：先淘汰会把「刚重建成空、但 previous 还留着活动」的桶
+        // 误判成空壳（evictable 要看重建后的 current），而那正是回滚该用的时刻。
+        evictEmptyBuckets(now);
+    }
+
+    /** 回收连续空置超过 {@link #emptyBucketTtlMs} 的桶，止住轮询成本随历史租户数无上界增长。 */
+    private void evictEmptyBuckets(Instant now) {
+        if (emptyBucketTtlMs <= 0) return;
+        int before = snapshotStore.size();
+        int evicted = snapshotStore.evictEmpty(now, Duration.ofMillis(emptyBucketTtlMs));
+        if (evicted > 0) {
+            log.info("[generation-poll] 回收空壳桶 {} 个（{}→{}）：它们对决策的贡献恒为零，"
+                            + "再次发布时会自动重建", evicted, before, snapshotStore.size());
         }
     }
 
