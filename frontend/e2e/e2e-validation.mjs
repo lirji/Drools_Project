@@ -188,26 +188,48 @@ async function createAndPublish(spec) {
  * 因此不会把 e2e 造的一次性活动写进 activity.decision.{hit,amount}（那两个指标的
  * activityId 标签位只有 200 个且**不可回收**，反复跑 e2e 会把真实活动挤进 __over_cap__）。
  */
-async function waitForSnapshot(recordList) {
-  const target = recordList.find((r) => r.online)
-  if (!target) return
+/**
+ * 等某个活动在决策快照里达到期望状态。
+ *
+ * <p>决策侧是**轮询**代际的（默认 3 秒一轮），所以 console 侧写完之后，决策平面要过一小会儿
+ * 才看得见。任何「改完状态紧接着断言决策结果」的地方都必须先过这里，否则就是在赌轮询的相位。
+ *
+ * @param activityId 要等的活动
+ * @param present    true = 等它**进**快照（发布后）；false = 等它**离开**快照（下线后）
+ */
+async function waitForActivityInSnapshot(activityId, present, label) {
   const deadline = Date.now() + SNAPSHOT_WAIT_MS
   let last = null
   while (Date.now() < deadline) {
     // 走 apiFetch 而不是裸 api.get：诊断端点同样受租户过滤，缺 X-Tenant-Id 会落到兜底租户，
     // 于是永远查不到本轮建的活动——而那看起来跟「传播失败」一模一样。
     const response = await apiFetch('GET',
-      `/api/decision/snapshot?activityId=${encodeURIComponent(target.activityId)}`, UI_ACTOR)
+      `/api/decision/snapshot?activityId=${encodeURIComponent(activityId)}`, UI_ACTOR)
     last = await response.json().catch(() => null)
-    if (last && last.inSnapshot === true) {
-      must(true, `决策服务已收进本轮快照（bizLine=${BIZ_LINE}）`)
-      return
-    }
+    if (last && last.inSnapshot === present) return true
     await new Promise((resolve) => setTimeout(resolve, 1_000))
   }
   // 超时**不是**「慢了一点」——上界已经取到轮询间隔的数倍，到这里说明代际根本没传播过去。
-  must(false, `决策服务在 ${SNAPSHOT_WAIT_MS}ms 内收进本轮快照`,
-    `活动 ${target.activityId} 仍不在任何快照桶里：${JSON.stringify(last)}`)
+  must(false, `决策服务在 ${SNAPSHOT_WAIT_MS}ms 内${present ? '收进' : '移出'}快照：${label}`,
+    `活动 ${activityId} 的 inSnapshot 仍不是 ${present}：${JSON.stringify(last)}`)
+  return false
+}
+
+/**
+ * 等**全部**已上线的活动都进快照。
+ *
+ * <p>此前这里只等 {@code recordList.find(r => r.online)}——<b>第一个</b>上线的活动进桶就放行，
+ * 后面十几个全靠运气。表现是随机某个场景拿到 {@code traces:["无生效红包活动"]}（零候选，
+ * 不是资格淘汰），而且每次红的场景都不一样，很容易被当成产品 bug 去查。
+ * 快照是整条业务线一起重建的，所以逐个等在正常情况下只多花一轮轮询。
+ */
+async function waitForSnapshot(recordList) {
+  const online = recordList.filter((r) => r.online)
+  if (!online.length) return
+  for (const record of online) {
+    await waitForActivityInSnapshot(record.activityId, true, `${record.id} 进快照`)
+  }
+  must(true, `决策服务已收进本轮全部 ${online.length} 个上线活动（bizLine=${BIZ_LINE}）`)
 }
 
 async function setOffline(record, label = record.id) {
@@ -220,6 +242,12 @@ async function setOffline(record, label = record.id) {
   const body = await responseJson(response, `下线 ${label}`)
   must(body.status === 2, `${label} 已下线`, JSON.stringify(body))
   record.online = false
+
+  // **下线也要等传播**，理由与上线完全对称：console 写完只代表数据库变了，
+  // 决策侧要等下一轮代际轮询重建快照才看得见。此前这里不等，于是
+  //「下线 addon → 立刻 quote → 期望 409」会在轮询相位不巧时拿到 200 + 一个合法报价——
+  // 看起来像「下线在决策侧不生效」这种要命的 bug，实际只是测试跑得比轮询快。
+  await waitForActivityInSnapshot(record.activityId, false, `${label} 移出快照`)
 }
 
 function buildSpecs() {
