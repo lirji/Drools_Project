@@ -143,3 +143,104 @@ export function childrenOf(index: DistrictIndex, code: string | null): District[
   if (!code) return index.roots
   return index.childrenOf.get(code) || []
 }
+
+/** 叶子 = 没有下级的节点（区县级，或直辖市/直筒子市里直挂省下的那一级）。判叶子只能看子级数，不能看 `level===3`。 */
+export function isLeaf(index: DistrictIndex, code: string): boolean {
+  return childrenOf(index, code).length === 0
+}
+
+// ============ 树形勾选（2026-08 重设计）新增的【只读派生函数】 ============
+// 一律不改动上面 addCode/removeCode/ancestorsOf 的既有语义，只在其上派生三态 / 计数 / 展开。
+// 红线：checkStateOf 必须【先短路自身/祖先命中】再看后代——因为「勾省只存省码」(addCode)，
+// 若写成「数已选子节点 / 子节点总数」，字典日后新增一个区就会把整选的省从 checked 误翻成 indeterminate。
+
+export type CheckState = 'checked' | 'indeterminate' | 'unchecked'
+
+/**
+ * 节点三态，顺序即正确性：
+ * ① 自身或任一祖先在 `selected` → 'checked'（**不下探子树**，免疫字典漂移）；
+ * ② 否则子树内有后代在 `selected` → 'indeterminate'；
+ * ③ 否则 'unchecked'。
+ * 对未净化数组（回读时祖先+后代同存、字典外码）也给确定结果、不抛。
+ */
+export function checkStateOf(index: DistrictIndex, selected: string[], code: string): CheckState {
+  if (selected.includes(code)) return 'checked'
+  if (ancestorsOf(index, code).some((a) => selected.includes(a))) return 'checked'
+  if (selected.some((s) => ancestorsOf(index, s).includes(code))) return 'indeterminate'
+  return 'unchecked'
+}
+
+// 叶子数按 index 静态缓存：3212 行只后序遍历一次，之后 O(1)，且不随 selected 变。
+const leafCountCache = new WeakMap<DistrictIndex, Map<string, number>>()
+function leafCounts(index: DistrictIndex): Map<string, number> {
+  const hit = leafCountCache.get(index)
+  if (hit) return hit
+  const m = new Map<string, number>()
+  const visit = (code: string): number => {
+    const kids = childrenOf(index, code)
+    const n = kids.length ? kids.reduce((s, k) => s + visit(k.code), 0) : 1
+    m.set(code, n)
+    return n
+  }
+  for (const r of index.roots) visit(r.code)
+  leafCountCache.set(index, m)
+  return m
+}
+
+/** 该节点子树内的叶子（无下级者）总数；自身即叶子时为 1；字典外码为 0。「12/21」里的分母。 */
+export function leafCountOf(index: DistrictIndex, code: string): number {
+  return leafCounts(index).get(code) ?? 0
+}
+
+/**
+ * 子树内「被选中覆盖」的叶子数——「12/21」里的分子。短路同 `checkStateOf`：
+ * checked → 全部叶子；unchecked → 0；indeterminate 才递归求子级之和（故只遍历命中分支、不裸扫 3212）。
+ */
+export function selectedLeafCountOf(index: DistrictIndex, selected: string[], code: string): number {
+  const st = checkStateOf(index, selected, code)
+  if (st === 'checked') return leafCountOf(index, code)
+  if (st === 'unchecked') return 0
+  return childrenOf(index, code).reduce((s, k) => s + selectedLeafCountOf(index, selected, k.code), 0)
+}
+
+/** `selected` 里每个码的祖先链并集——编辑回读 / 搜索命中时用它自动展开到目标。 */
+export function defaultExpandedOf(index: DistrictIndex, selected: string[]): Set<string> {
+  const out = new Set<string>()
+  for (const c of selected) for (const a of ancestorsOf(index, c)) out.add(a)
+  return out
+}
+
+/**
+ * 点一个节点的勾选框。迁移原 `DistrictCascader.toggle` 的早退语义：
+ * 已选中 → `removeCode`；被祖先覆盖 或 已达上限(`full`) → **原样返回**（调用方据引用相等判「无变化」）；否则 `addCode`。
+ */
+export function toggleNode(index: DistrictIndex, selected: string[], code: string, full = false): string[] {
+  if (selected.includes(code)) return removeCode(selected, code)
+  if (ancestorsOf(index, code).some((a) => selected.includes(a))) return selected
+  if (full) return selected
+  return addCode(index, selected, code)
+}
+
+/**
+ * 树内过滤的取值范围。命中沿用 `search()` 的 `limit` 截断：
+ * - `visible` = 命中节点 ∪ 其祖先链 = 过滤态下应渲染的 code 集合（只渲命中及祖先，**不渲命中的整棵子树**，故有界不炸）；
+ * - `expand`  = 命中的祖先 = 过滤态下要自动展开的节点；
+ * - `matches` = 命中本身（用于 `<mark>` 高亮）；
+ * - `truncated` = 命中超过 `limit`（提示用）。
+ */
+export function searchScope(
+  index: DistrictIndex, list: District[] | null, q: string, limit = 50,
+): { visible: Set<string>; expand: Set<string>; matches: Set<string>; truncated: boolean } {
+  const hits = search(list, q, limit + 1)
+  const truncated = hits.length > limit
+  const capped = truncated ? hits.slice(0, limit) : hits
+  const visible = new Set<string>()
+  const expand = new Set<string>()
+  const matches = new Set<string>()
+  for (const h of capped) {
+    matches.add(h.code)
+    visible.add(h.code)
+    for (const a of ancestorsOf(index, h.code)) { visible.add(a); expand.add(a) }
+  }
+  return { visible, expand, matches, truncated }
+}

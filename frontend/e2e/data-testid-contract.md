@@ -227,27 +227,31 @@ flash 试算前后库存不变，以及 390 / 768 / 1440 零页面级横向溢�
 
 > 落点：`EditorView` 基础信息区，`areaType===2` 时才渲染（**默认「全国」不渲染** ——
 > 六条经过编辑页的 e2e 只填名称/金额/SPU，这个默认值是它们零改动的前提）。
+>
+> **2026-08-13 树形重设计变更**：miller 三栏级联 → 省市区**树形勾选**。组件 `DistrictCascader` → `DistrictTree`（+ 递归 `DistrictTreeNode`）。
+> **删**：`district-cascader`（改名 `district-tree`）、`district-into-{code}`（下钻）、`district-hit-{code}`（独立命中列表——改为树内过滤，命中仍是 `district-opt-{code}`）、`district-crumb-*`（面包屑）、`district-chips-more`（已选清单改结构化分组、不再截断）。
+> **加**：`district-tree`、`district-expand-{code}`（展开三角）、`district-selected-only`（只看已选）、`district-collapse-all`（折叠全部）。
+> **保留且语义不变**：`district-opt-{code}`（勾选框，仍是 4 个 e2e 等「字典渲染完成」的信号；折叠态顶层恰 34 个，依赖子级 `v-if` 惰性挂载）、`district-search`/`-clear`/`-trunc`、`district-chips`/`-chip-x-{code}`。
 
 | testid | 位置 | 用途 |
 |---|---|---|
 | `form-area-type` | EditorView | 地域类型下拉（1=全国 / 2=指定地域） |
 | `district-picker` | DistrictPicker | 选择器根节点 |
-| `district-toggle` | DistrictPicker | 展开/收起级联面板 |
+| `district-toggle` | DistrictPicker | 展开/收起树面板 |
 | `district-count` | DistrictPicker | 「已选 N / 146」计数 |
 | `district-clear` | DistrictPicker | 清空已选 |
-| `district-chips` | DistrictPicker | 已选 chips 容器 |
+| `district-chips` | DistrictPicker | 完整已选清单容器（按省分组 + 未知代码单列） |
 | `district-chip-x-{code}` | DistrictPicker | 移除某个已选地域 |
-| `district-chips-more` | DistrictPicker | 「+N」展开全部 chips |
 | `district-limit` | DistrictPicker | 达到 146 个上限的提示 |
 | `district-unknown` | DistrictPicker | 含已撤销/未知代码的提示 |
 | `district-warning` | DistrictPicker | 字典不可用降级条 |
 | `district-raw` | DistrictPicker | 字典不可用时的裸 CSV 逃生门输入 |
 | `district-empty-hint` | DistrictPicker | 一个都没选时的提示 |
-| `district-cascader` | DistrictCascader | 级联面板根节点 |
-| `district-search` | DistrictCascader | 搜索框（≥16px，防 iOS 聚焦缩放） |
-| `district-search-clear` | DistrictCascader | 清空搜索 |
-| `district-search-trunc` | DistrictCascader | 搜索结果截断提示 |
-| `district-opt-{code}` | DistrictCascader | 逐级列表里的勾选框 |
-| `district-into-{code}` | DistrictCascader | 下钻到该行政区的下级 |
-| `district-hit-{code}` | DistrictCascader | 搜索结果里的勾选框 |
-| `district-crumb-root` / `district-crumb-{code}` | DistrictCascader | 面包屑回退（<768 时是唯一回退路径） |
+| `district-tree` | DistrictTree | 树面板根节点 |
+| `district-search` | DistrictTree | 搜索框（≥16px，防 iOS 聚焦缩放；打字即树内就地过滤） |
+| `district-search-clear` | DistrictTree | 清空搜索 |
+| `district-search-trunc` | DistrictTree | 命中过多的截断提示 |
+| `district-selected-only` | DistrictTree | 「只看已选」过滤开关 |
+| `district-collapse-all` | DistrictTree | 「折叠全部」回到 34 省 |
+| `district-opt-{code}` | DistrictTreeNode | 树节点的勾选框（搜索态下命中也是它） |
+| `district-expand-{code}` | DistrictTreeNode | 展开/收起该节点的下级（仅省/市有） |

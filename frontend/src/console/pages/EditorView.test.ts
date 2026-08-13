@@ -661,8 +661,8 @@ describe('EditorView 玩法模板预填', () => {
 
       await wrapper.get('[data-testid="district-opt-440000"]').setValue(true)
       await flushPromises()
-      // 广东被选中后，深圳这一项应当是禁用的（它已经被包含了）
-      await wrapper.get('[data-testid="district-into-440000"]').trigger('click')
+      // 广东被选中后，展开它，深圳这一项应当是禁用的（它已经被包含了）
+      await wrapper.get('[data-testid="district-expand-440000"]').trigger('click')
       await flushPromises()
       expect(wrapper.get('[data-testid="district-opt-440300"]').attributes('disabled')).toBeDefined()
       expect(wrapper.get('[data-testid="district-count"]').text()).toContain('已选 1')
@@ -738,7 +738,7 @@ describe('EditorView 玩法模板预填', () => {
       expect(wrapper.find('[data-testid="save-success"]').exists()).toBe(true)
 
       // 真改了才算脏：移除 chip 走的是 v-model setter，EditorView 的 districtCodes 里显式 markDirty。
-      // （此处不能点 district-opt-*：搜索态下逐级列表被搜索结果替掉了，那些 testid 不在 DOM 里。）
+      // （用已选清单里的 chip 移除，不受搜索态影响；搜索态下树内过滤后命中仍是 district-opt-* 节点。）
       await wrapper.get('[data-testid="district-chip-x-440000"]').trigger('click')
       await flushPromises()
       expect(wrapper.find('[data-testid="save-success"]').exists()).toBe(false)

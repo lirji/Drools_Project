@@ -814,8 +814,8 @@ onBeforeRouteLeave(async () => {
 /* ⚠️ 这几条必须用 `>` 直接子代，不能写成后代选择器。
    `:deep()` 里的后代部分**不带 scope 属性**，所以 `.fg label` 会命中**任何子组件内部**的 label：
    `.form[data-v-x] .fg label` 特指度 (0,3,1)，压过子组件自己的 `.row[data-v-y]` (0,2,0)。
-   实测后果（DistrictCascader）：每一行的 checkbox / 地名 / 展开箭头被强制 `flex-direction: column`
-   竖成三行、行高 104px，34 个省的列表只看得见两三项；同理 `.fg input` 把级联里的
+   实测后果（旧 DistrictCascader；现 DistrictTree 同理）：每一行的 checkbox / 地名 / 展开三角被强制
+   `flex-direction: column` 竖成三行、行高 104px，34 个省的列表只看得见两三项；同理 `.fg input` 把树里的
    checkbox 撑成 38px 高的输入框、还给搜索框套了第二层边框。
    本 `.fg` 里只有表单自己的字段 label 与 Segmented / DistrictPicker 两个组件，
    直接子代选择器覆盖前者、且不再泄漏进后者。 */

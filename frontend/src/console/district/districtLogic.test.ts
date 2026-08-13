@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   parseCodes, toCsv, buildIndex, pathOf, isKnown, labelOf, search,
   addCode, removeCode, budgetOf, childrenOf, MAX_DISTRICTS, DISTRICT_IDS_MAX_LEN,
+  isLeaf, checkStateOf, leafCountOf, selectedLeafCountOf, defaultExpandedOf, toggleNode, searchScope,
 } from './districtLogic'
 import { pruneTree, stripDistrictNodes, SOURCE_DISTRICT } from '../logic'
 import type { ConditionNode, District } from '@/shared/types'
@@ -205,5 +206,123 @@ describe('地域注入节点的剥离与保真', () => {
     const submitted = pruneTree(stripDistrictNodes(stored)) as any
     expect(submitted.children).toHaveLength(1)
     expect(JSON.stringify(submitted)).not.toContain('userDistrictId')
+  })
+})
+
+// ============ 树形勾选（2026-08 重设计）新增派生函数 ============
+
+describe('叶子判定 isLeaf / leafCountOf', () => {
+  it('叶子看子级数而非 level：直辖市两层里省下直挂的区也是叶子', () => {
+    expect(isLeaf(IDX, '440305')).toBe(true) // 区县
+    expect(isLeaf(IDX, '440300')).toBe(false) // 市
+    expect(isLeaf(IDX, '440000')).toBe(false) // 省
+    expect(isLeaf(IDX, '110101')).toBe(true) // 直辖市的区（level=3 直挂 level=1）
+  })
+
+  it('leafCountOf = 子树内叶子总数；自身即叶子为 1；字典外码为 0', () => {
+    expect(leafCountOf(IDX, '440000')).toBe(2) // 南山 + 福田
+    expect(leafCountOf(IDX, '440300')).toBe(2)
+    expect(leafCountOf(IDX, '440305')).toBe(1) // 自身即叶子
+    expect(leafCountOf(IDX, '110000')).toBe(1) // 北京 → 东城
+    expect(leafCountOf(IDX, '500105')).toBe(0) // 不在字典
+  })
+})
+
+describe('三态推导 checkStateOf', () => {
+  it('自身在 selected → checked', () => {
+    expect(checkStateOf(IDX, ['440305'], '440305')).toBe('checked')
+  })
+
+  it('祖先在 selected → checked（且不下探子树）', () => {
+    expect(checkStateOf(IDX, ['440000'], '440300')).toBe('checked')
+    expect(checkStateOf(IDX, ['440000'], '440305')).toBe('checked')
+  })
+
+  it('子树有后代在 selected、自身/祖先都没有 → indeterminate', () => {
+    expect(checkStateOf(IDX, ['440305'], '440300')).toBe('indeterminate')
+    expect(checkStateOf(IDX, ['440305'], '440000')).toBe('indeterminate')
+  })
+
+  it('自身/祖先/后代都不在 → unchecked', () => {
+    expect(checkStateOf(IDX, ['440305'], '440304')).toBe('unchecked') // 同级兄弟
+    expect(checkStateOf(IDX, ['440305'], '110000')).toBe('unchecked') // 另一棵树
+  })
+
+  it('【红线】整省选中(只存省码)后字典新增一个区，省仍 checked，绝不被误翻成 indeterminate', () => {
+    // 短路写法免疫字典漂移；若误写成「数已选子/子总数」，新增未选中的区会把省翻成半选。
+    const grown = buildIndex([...FIXTURE, d('440306', '新区', 3, '440300', '新')])
+    expect(checkStateOf(grown, ['440000'], '440000')).toBe('checked')
+    expect(checkStateOf(grown, ['440000'], '440300')).toBe('checked')
+    expect(checkStateOf(grown, ['440000'], '440306')).toBe('checked')
+  })
+
+  it('未净化数组（回读时祖先+后代同存）不抛、给确定结果', () => {
+    expect(checkStateOf(IDX, ['440000', '440305'], '440000')).toBe('checked')
+    expect(checkStateOf(IDX, ['440000', '440305'], '440305')).toBe('checked')
+  })
+})
+
+describe('已选叶子计数 selectedLeafCountOf（12/21 的分子）', () => {
+  it('整省选中 → 满分（= leafCountOf）', () => {
+    expect(selectedLeafCountOf(IDX, ['440000'], '440000')).toBe(2)
+  })
+
+  it('只选了部分后代 → 按覆盖叶子数计', () => {
+    expect(selectedLeafCountOf(IDX, ['440305'], '440000')).toBe(1)
+    expect(selectedLeafCountOf(IDX, ['440305'], '440300')).toBe(1)
+    expect(selectedLeafCountOf(IDX, ['440305', '440304'], '440000')).toBe(2)
+  })
+
+  it('未选中的分支为 0', () => {
+    expect(selectedLeafCountOf(IDX, ['440305'], '110000')).toBe(0)
+  })
+
+  it('逐个勾满一省全部子级(未合并成省码) → 半选 + N/N 的已知边缘', () => {
+    // 这是「不做自动归并」(非目标)的必然表现，不是 bug：省码不在数组 → 半选，但分子=分母。
+    expect(checkStateOf(IDX, ['440305', '440304'], '440300')).toBe('indeterminate')
+    expect(selectedLeafCountOf(IDX, ['440305', '440304'], '440300')).toBe(2)
+    expect(leafCountOf(IDX, '440300')).toBe(2)
+  })
+})
+
+describe('自动展开 defaultExpandedOf', () => {
+  it('已选码的祖先链并集（省整选本身无祖先 → 空）', () => {
+    expect(defaultExpandedOf(IDX, ['440000'])).toEqual(new Set())
+    expect(defaultExpandedOf(IDX, ['440305'])).toEqual(new Set(['440300', '440000']))
+    expect(defaultExpandedOf(IDX, ['440305', '110101'])).toEqual(new Set(['440300', '440000', '110000']))
+  })
+})
+
+describe('toggleNode（迁移原 toggle 早退语义）', () => {
+  it('已选中 → 取消', () => {
+    expect(toggleNode(IDX, ['440305'], '440305')).toEqual([])
+  })
+
+  it('被祖先覆盖 → 原样返回同一数组引用（调用方据此判无变化）', () => {
+    const sel = ['440000']
+    expect(toggleNode(IDX, sel, '440300')).toBe(sel)
+  })
+
+  it('已达上限 full → 原样返回；未满 → addCode', () => {
+    const sel = ['110101']
+    expect(toggleNode(IDX, sel, '440305', true)).toBe(sel)
+    expect(toggleNode(IDX, [], '440000')).toEqual(['440000'])
+  })
+})
+
+describe('搜索范围 searchScope（树内过滤）', () => {
+  it('命中 ∪ 祖先链 = visible；祖先 = expand；命中 = matches', () => {
+    const s = searchScope(IDX, FIXTURE, '南山')
+    expect(s.matches).toEqual(new Set(['440305']))
+    expect(s.visible).toEqual(new Set(['440305', '440300', '440000']))
+    expect(s.expand).toEqual(new Set(['440300', '440000']))
+    expect(s.truncated).toBe(false)
+  })
+
+  it('命中超过 limit → truncated', () => {
+    const many = Array.from({ length: 200 }, (_, i) => d(String(500000 + i), `第${i}区`, 3, null))
+    const s = searchScope(buildIndex(many), many, '区', 50)
+    expect(s.matches.size).toBe(50)
+    expect(s.truncated).toBe(true)
   })
 })

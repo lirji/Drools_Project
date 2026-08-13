@@ -25,7 +25,7 @@ try {
   const overflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
   overflow <= 4 ? ok(`平板无横向溢出（body 溢出 ${overflow}px）`) : no(`平板横向溢出 ${overflow}px`)
 
-  // 768 正是地域级联**仍然三栏并排**的那一档（<768 才塌成单栏），也就是最容易被长地名撑破的宽度。
+  // 768 曾是地域级联三栏并排的那一档；现在改成纵向树、一套形态吃下所有断点，这里量的是树在 768 下不横向溢出。
   // 量完必须收起：展开的面板会把 submit 顶下去，Playwright 的可操作性检查会直接超时。
   await page.selectOption('[data-testid="form-area-type"]', '2')
   await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 10000 })
@@ -34,8 +34,8 @@ try {
   await page.waitForSelector('[data-testid="district-opt-440000"]', { timeout: 15000 })
   const districtOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
   districtOverflow <= 4
-    ? ok(`平板 768：地域三栏展开后无横向溢出（${districtOverflow}px）`)
-    : no(`平板 768：地域三栏横向溢出 ${districtOverflow}px —— 栏宽写了硬 min-width？`)
+    ? ok(`平板 768：地域树展开后无横向溢出（${districtOverflow}px）`)
+    : no(`平板 768：地域树横向溢出 ${districtOverflow}px —— 缩进/长地名撑破了？`)
   await page.locator('[data-testid="district-toggle"]').click()
   await page.selectOption('[data-testid="form-area-type"]', '1') // 回全国，不给提交加必填项
   await page.locator('[data-testid="submit"]').click()

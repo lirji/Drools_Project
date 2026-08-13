@@ -84,7 +84,7 @@ try {
     await page.selectOption('[data-testid="form-area-type"]', '2')
     await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 15000 })
     await page.click('[data-testid="district-toggle"]')
-    // ⚠ 等 district-cascader 是**不够**的：那是面板根节点，`open` 一置真它立刻就在，
+    // ⚠ 等 district-tree 根节点是**不够**的：`open` 一置真它立刻就在，
     // 而字典是 3212 行的独立请求，此刻多半还在飞，面板里只有一个 Skeleton。
     // 在那个状态下量，44px 扫描只会扫到寥寥几个按钮、溢出恒为 0 —— 三条断言全部**静默通过**，
     // 真退化了也照样绿。所以必须等到真实选项渲染出来再量。
