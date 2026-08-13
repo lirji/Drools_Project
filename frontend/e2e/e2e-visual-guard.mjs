@@ -71,6 +71,54 @@ try {
     await ctx.close()
   }
 
+  // ── A-13：编辑页的地域级联在 390px 下的命中区与溢出 ───────────────────
+  // 本段是**唯一**覆盖编辑页的视觉红线：A-6/A-7/A-8 都只跑 /ui/console/activities 与 /ui/home，
+  // 而地域选择器一展开就是几十上百个可点元素，正是最容易静默退化成 <44px 的地方
+  // （tokens.css:373-388：全局那条 (pointer:coarse) 兜底压不过组件 scoped 样式）。
+  // hasTouch 必须带——否则 (pointer: coarse) 根本不激活，44px 断言全灭。
+  {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    const page = await ctx.newPage()
+    await page.goto(`${BASE}/ui/console/activities/new`, { waitUntil: 'networkidle' })
+    await page.waitForSelector('[data-testid="form-area-type"]', { timeout: 15000 })
+    await page.selectOption('[data-testid="form-area-type"]', '2')
+    await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 15000 })
+    await page.click('[data-testid="district-toggle"]')
+    // ⚠ 等 district-cascader 是**不够**的：那是面板根节点，`open` 一置真它立刻就在，
+    // 而字典是 3212 行的独立请求，此刻多半还在飞，面板里只有一个 Skeleton。
+    // 在那个状态下量，44px 扫描只会扫到寥寥几个按钮、溢出恒为 0 —— 三条断言全部**静默通过**，
+    // 真退化了也照样绿。所以必须等到真实选项渲染出来再量。
+    await page.waitForSelector('[data-testid="district-opt-440000"]', { timeout: 15000 })
+
+    const dOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+    dOverflow <= 4
+      ? ok(`A-13 编辑页地域级联零横向溢出（${dOverflow}px）`)
+      : no(`A-13 编辑页地域级联横向溢出 ${dOverflow}px —— 三栏在 390px 上没塌成单栏？`)
+
+    const dSmall = await page.evaluate(() => {
+      const els = [...document.querySelectorAll('[data-testid="district-picker"] button, [data-testid="district-picker"] [role="button"]')]
+      return els
+        .filter((e) => e.getBoundingClientRect().width > 0 && e.getBoundingClientRect().height > 0)
+        .filter((e) => e.getBoundingClientRect().height < 44 - 0.5)
+        .map((e) => `${e.tagName.toLowerCase()}.${e.className}`.slice(0, 60))
+        .slice(0, 5)
+    })
+    dSmall.length === 0
+      ? ok('A-13 地域选择器触控命中区全部 ≥44px')
+      : no(`A-13 地域选择器有 ${dSmall.length} 个触控目标 <44px：${dSmall.join(' / ')}`)
+
+    // 搜索框 <16px 会让 iOS 聚焦时自动放大页面 → 横向滚动 → 撞上面那条溢出断言。
+    const fs = await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="district-search"]')
+      return el ? parseFloat(getComputedStyle(el).fontSize) : -1
+    })
+    fs >= 16
+      ? ok(`A-13 地域搜索框字号 ${fs}px（≥16，iOS 聚焦不缩放）`)
+      : no(`A-13 地域搜索框字号 ${fs}px <16 —— iOS 会自动放大页面并制造横向滚动`)
+
+    await ctx.close()
+  }
+
   // ── A-9：reduced-motion 下不得有循环动画在跑 ────────────────────────────
   // tokens.css 的全局闸是「压时长 + 强制 iteration-count:1」，不是 animation:none，
   // 所以这里查的是「还有没有 iteration-count 为 infinite 的元素」。

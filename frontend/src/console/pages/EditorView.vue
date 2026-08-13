@@ -3,17 +3,20 @@ import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { createActivity, getDetail, previewTree } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
+import { useDistrictStore } from '@/stores/useDistrictStore'
 import { useAuthStore } from '@/auth/useAuthStore'
 import { useToast } from '@/shared/useToast'
 import { useConfirm } from '@/shared/useConfirm'
 import { errText } from '@/shared/apiClient'
 import {
   uuid, numOrNull, toEpoch, toLocalInput, isoToLocal, cleanLadder,
-  pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons,
+  pruneTree, assignIds, emptyGroup, validateTree, invalidLeafReasons, stripDistrictNodes,
   benefitDraftFromRule, benefitRequestFields, type BenefitForm, type LadderRow,
 } from '../logic'
 import type { ActivityCreateRequest, FieldDict, GroupNode } from '@/shared/types'
 import ConditionGroup from '../condition-tree/ConditionGroup.vue'
+import DistrictPicker from '../district/DistrictPicker.vue'
+import { parseCodes, toCsv, MAX_DISTRICTS } from '../district/districtLogic'
 import DynRowTable from '../DynRowTable.vue'
 import { normalizeTiers, plainLanguage } from '../benefit/tierLogic'
 import FixedForm from '../benefit/forms/FixedForm.vue'
@@ -36,6 +39,7 @@ import Skeleton from '@/shared/ui/Skeleton.vue'
 const route = useRoute()
 const router = useRouter()
 const dict = useDictStore()
+const districtStore = useDistrictStore()
 const auth = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -113,6 +117,33 @@ const initialLoading = ref(true)
 const initialErr = ref('')
 const dictWarning = ref('')
 const dictRetrying = ref(false)
+const districtLoading = ref(false)
+
+/**
+ * 草稿里 `districtIds` 仍是 CSV 字符串（`Draft.districtIds` / 提交映射 / 回读三处一个字节都没动），
+ * 组件内部一律用 `string[]`——集合运算写起来才不至于满屏 split/join。转换只在这一处边界发生。
+ *
+ * setter 里**必须**显式 markDirty：DistrictPicker 把 click 截在了自己根上
+ * （否则光是点开面板就会重铸幂等 requestId、清掉刚保存的成功卡），
+ * 所以 EditorView `.form` 上那个 `@click` 冒泡收不到它。改了才算改，这是唯一的脏值来源。
+ */
+const districtCodes = computed<string[]>({
+  get: () => parseCodes(dr.districtIds),
+  set: (v: string[]) => { dr.districtIds = toCsv(v); markDirty() },
+})
+
+/**
+ * 字典**按需拉**，不在 initialize 里无条件拉。
+ *
+ * 「全国」是默认值，也是全部六条经过编辑页的 e2e 走的那条路——它们只填名称/金额/SPU。
+ * 无条件拉会给这些路径凭空加一个网络依赖，也会打穿 EditorView.test.ts 里那三个
+ * 「按 URL 分派 + 其余兜底」的 fetch mock。
+ */
+watch(() => dr.areaType, async (t) => {
+  if (t !== 2 || districtStore.items) return
+  districtLoading.value = true
+  try { await districtStore.load() } finally { districtLoading.value = false }
+}, { immediate: true })
 /** 本次表单是从哪个玩法模板起步的（PR-6）。只作提示，不影响提交内容 */
 const appliedPlaybook = ref('')
 const submitAttempted = ref(false)
@@ -145,6 +176,10 @@ const validationErrs = computed(() => {
   if (!dr.startLocal) errs.push('开始时间必填')
   if (!dr.endLocal) errs.push('结束时间必填')
   if (dr.startLocal && dr.endLocal && toEpoch(dr.startLocal)! >= toEpoch(dr.endLocal)!) errs.push('开始时间须早于结束时间')
+  // 「指定地域」却一个都没选，落库后详情页会回显成「指定地域」——看着像配好了，实际是空投放。
+  if (dr.areaType === 2 && districtCodes.value.length === 0) errs.push('指定地域时至少选择一个行政区（或切回「全国」）')
+  // 上限来自 activity_manage.district_ids 的列宽（varchar(1024)）。拦在这里，就不用等后端 400。
+  if (districtCodes.value.length > MAX_DISTRICTS) errs.push(`投放地域最多 ${MAX_DISTRICTS} 个，当前 ${districtCodes.value.length} 个`)
   if (dr.activityType === 1 && dr.redMode === 'fixed' && (dr.amount === '' || dr.amount == null)) errs.push('固定红包金额必填')
   if (dr.activityType === 1 && dr.redMode === 'random') {
     const minMissing = dr.rangeMin === '' || dr.rangeMin == null
@@ -434,7 +469,13 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
     Object.assign(dr, benefitDraft)
   }
   if (cond && cond.conditionTreeJson) {
-    try { dr.tree = assignIds(JSON.parse(cond.conditionTreeJson)) as GroupNode } catch { /* keep empty */ }
+    // 先剥掉写平面按「投放地域」注入的节点，再灌进条件树 UI。存储树是**合成后**的那棵，
+    // 直接回读会让运营看到一条自己没写过、还含上百个代码的 userDistrictId IN(...)——
+    // 而地域的权威编辑入口是上面那个 DistrictPicker，同一件事不能有两个控件。
+    try {
+      const stored = stripDistrictNodes(JSON.parse(cond.conditionTreeJson))
+      if (stored) dr.tree = assignIds(stored) as GroupNode
+    } catch { /* keep empty */ }
   }
   dr.gifts = (data.gifts || []).map((g: Record<string, unknown>) => ({ ...g }))
   const manual = (data.bindings || []).filter((b: Record<string, unknown>) => b.bindSource === 0)
@@ -602,9 +643,14 @@ onBeforeRouteLeave(async () => {
             <label>开始时间 *<input v-model="dr.startLocal" type="datetime-local" data-testid="form-start" /></label>
             <label>结束时间 *<input v-model="dr.endLocal" type="datetime-local" data-testid="form-end" /></label>
             <label>地域类型
-              <select v-model.number="dr.areaType"><option :value="1">全国</option><option :value="2">指定地域</option></select>
+              <select v-model.number="dr.areaType" data-testid="form-area-type">
+                <option :value="1">全国</option><option :value="2">指定地域</option>
+              </select>
             </label>
-            <label v-if="dr.areaType === 2">地域IDs (逗号)<input v-model="dr.districtIds" /></label>
+            <label v-if="dr.areaType === 2" class="full">投放地域 *
+              <DistrictPicker v-model="districtCodes" :districts="districtStore.items"
+                              :loading="districtLoading" :failed="districtStore.failed" />
+            </label>
             <label class="full">活动说明 (外显)<textarea v-model="dr.rule" rows="2" /></label>
           </div>
         </Section>
@@ -765,9 +811,17 @@ onBeforeRouteLeave(async () => {
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--sp-5); align-items: start; }
 .form :deep(.section) { scroll-margin-top: var(--sp-4); }
 .form :deep(.fg) { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); }
-.form :deep(.fg label) { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--text-soft); font-weight: var(--fw-medium); }
+/* ⚠️ 这几条必须用 `>` 直接子代，不能写成后代选择器。
+   `:deep()` 里的后代部分**不带 scope 属性**，所以 `.fg label` 会命中**任何子组件内部**的 label：
+   `.form[data-v-x] .fg label` 特指度 (0,3,1)，压过子组件自己的 `.row[data-v-y]` (0,2,0)。
+   实测后果（DistrictCascader）：每一行的 checkbox / 地名 / 展开箭头被强制 `flex-direction: column`
+   竖成三行、行高 104px，34 个省的列表只看得见两三项；同理 `.fg input` 把级联里的
+   checkbox 撑成 38px 高的输入框、还给搜索框套了第二层边框。
+   本 `.fg` 里只有表单自己的字段 label 与 Segmented / DistrictPicker 两个组件，
+   直接子代选择器覆盖前者、且不再泄漏进后者。 */
+.form :deep(.fg > label) { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--text-soft); font-weight: var(--fw-medium); }
 .form :deep(.fg .full) { grid-column: 1 / -1; }
-.form :deep(.fg input), .form :deep(.fg select), .form :deep(.fg textarea) { min-height: 38px; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font-family: inherit; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }.form :deep(.fg textarea) { min-height: 68px; resize: vertical; }.form :deep(.fg input:hover), .form :deep(.fg select:hover), .form :deep(.fg textarea:hover) { border-color: var(--border-strong); }.form :deep(.fg input:focus), .form :deep(.fg select:focus), .form :deep(.fg textarea:focus) { outline: 0; border-color: var(--accent); background: var(--bg-elev); box-shadow: var(--focus-ring); }
+.form :deep(.fg > label > input), .form :deep(.fg > label > select), .form :deep(.fg > label > textarea) { min-height: 38px; padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border-ctl); border-radius: var(--radius-sm); background: var(--bg-soft); color: var(--text); font-family: inherit; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }.form :deep(.fg > label > textarea) { min-height: 68px; resize: vertical; }.form :deep(.fg > label > input:hover), .form :deep(.fg > label > select:hover), .form :deep(.fg > label > textarea:hover) { border-color: var(--border-strong); }.form :deep(.fg > label > input:focus), .form :deep(.fg > label > select:focus), .form :deep(.fg > label > textarea:focus) { outline: 0; border-color: var(--accent); background: var(--bg-elev); box-shadow: var(--focus-ring); }
 .seg { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin: 0 0 var(--sp-2); }
 .chip { padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--bg-elev); color: var(--text); font-size: 12.5px; cursor: pointer; transition: background var(--dur-fast) var(--ease-out); }
 .chip:hover { background: var(--bg-hover); }

@@ -59,6 +59,15 @@ activity:
     # 种入 demo 商品 + 商品池 (仅当 demo_product 空), 让前端「商品池」自动圈选可演示。
     # 测试不开此开关, 避免污染 ActivityMarketingFlowTest 的池断言。
     seed-demo-data: true
+    # 落库中国行政区划字典 (仅当 sys_district 空)。它是 district_ids / userDistrictId 那两个
+    # 6 位代码字段的取值域, 属参考数据而非 demo 数据, 所以生产也该开着。
+    # ⚠️ 与上面 seed-demo-data 不同, **测试里它是开着的**: console 没有 src/test/resources,
+    #    测试直接吃这份 yml; 而 @SpringBootTest 会真的执行 CommandLineRunner
+    #    (DistrictSeederTest 的「启动即落库」正是靠这一点), 且没有任何测试把它置 false。
+    #    实测每个 Spring 上下文因此多花约 0.7s (ActivityIdempotencyTest 6.4s → 5.7s),
+    #    console 侧约 33 个不同的 @TestPropertySource 组合 ≈ 20s。要省掉就照 seed-demo-data 的老办法,
+    #    在各测试的 @TestPropertySource 里逐个加 seed-district-data=false。
+    seed-district-data: true
   # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
   # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
   #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地/演示, **不是 fail-closed**。

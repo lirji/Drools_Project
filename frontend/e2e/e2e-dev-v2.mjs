@@ -55,6 +55,43 @@ try {
   await page.waitForSelector(`text=${NAME}`, { timeout: 10000 })
   ok('列表搜索能看到刚建的活动')
 
+  // 5b. 投放地域全链路：选省 → 提交 → 详情页显示中文而不是裸码 → 编辑回读选中态还在。
+  // 单独建一个活动而不是改上面那个，是为了不动既有断言的形状。
+  const DNAME = `${NAME}-GD`
+  await page.locator('[data-testid="tab-new"]').click()
+  await page.waitForSelector('[data-testid="form-name"]', { timeout: 10000 })
+  await page.fill('[data-testid="form-name"]', DNAME)
+  await page.fill('[data-testid="form-amount"]', '30')
+  await page.locator('[data-testid="spu-row-input"]').first().fill('990011')
+  await page.selectOption('[data-testid="form-area-type"]', '2')
+  await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 10000 })
+  await page.locator('[data-testid="district-toggle"]').click()
+  // 字典是 3212 行全量拉的，第一栏必须是 34 个省级——为 0 说明接口没通或响应形状变了
+  await page.waitForSelector('[data-testid="district-opt-440000"]', { timeout: 15000 })
+  const provinceCount = await page.locator('[data-testid^="district-opt-"]').count()
+  provinceCount === 34
+    ? ok('地域字典第一栏 34 个省级')
+    : no(`地域字典第一栏 ${provinceCount} 项，应为 34`)
+  await page.check('[data-testid="district-opt-440000"]')
+  const chipText = await page.locator('[data-testid="district-chips"]').innerText()
+  chipText.includes('广东')
+    ? ok('已选 chip 显示中文简称')
+    : no(`已选 chip 内容不对：${chipText}`)
+  await page.locator('[data-testid="submit"]').click()
+  await page.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
+
+  await page.locator('[data-testid="tab-list"]').click()
+  await page.fill('[data-testid="list-search"]', DNAME)
+  await page.waitForSelector(`text=${DNAME}`, { timeout: 10000 })
+  const dRow = page.locator('[data-testid^="activity-row-"]').filter({ hasText: DNAME }).first()
+  await dRow.waitFor({ timeout: 10000 })
+  await dRow.getByRole('button', { name: '详情', exact: true }).click()
+  await page.waitForSelector('[data-testid="detail-loaded"]', { timeout: 15000 })
+  const detailText = await page.locator('[data-testid="detail-view"]').innerText()
+  detailText.includes('广东')
+    ? ok('详情页地域回显中文而不是裸码 440000')
+    : no('详情页地域没翻译成中文')
+
   // 6. 条件树删中间行不串值：新建 → 加 3 条件 → 删中间 → 剩两条值不错位
   await page.locator('[data-testid="tab-new"]').click()
   await page.waitForSelector('[data-testid="cond-group"]', { timeout: 10000 })

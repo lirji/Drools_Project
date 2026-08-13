@@ -3,6 +3,8 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDetail } from '../activityApi'
 import { useDictStore } from '@/stores/useDictStore'
+import { useDistrictStore } from '@/stores/useDistrictStore'
+import { buildIndex, labelOf, parseCodes, pathOf } from '../district/districtLogic'
 import { benefitFormOf, isoToLocal, parseLadder, parseNth, parseRandomRange, type BenefitForm } from '../logic'
 import { errText } from '@/shared/apiClient'
 import Card from '@/shared/ui/Card.vue'
@@ -20,6 +22,7 @@ import EmptyState from '@/shared/ui/EmptyState.vue'
 
 const route = useRoute()
 const dict = useDictStore()
+const districtStore = useDistrictStore()
 const id = computed(() => String(route.params.id || ''))
 
 const detail = ref<Record<string, any> | null>(null)
@@ -29,6 +32,29 @@ let ctrl: AbortController | null = null
 let loadSequence = 0
 
 const manage = computed(() => detail.value?.manage || null)
+
+/**
+ * 地域回显：把裸码翻成中文。
+ *
+ * <p>字典自己在这个页面独立拉（EditorView 那份是 prop 下发的，这里够不着），
+ * 且**拿不到字典时回退成裸码而不是空白**——运营宁可看见一串数字，也不能看见一个空格子
+ * 然后以为这个活动没配地域。
+ *
+ * <p>另外修掉一处误导：原来 `districtIds` 为空时回显「指定地域」，
+ * 而那正是「areaType=2 却一个地域都没选」的空投放状态，看着却像配好了。
+ */
+const districtIndex = computed(() => buildIndex(districtStore.items))
+const districtCodes = computed(() => parseCodes(manage.value?.districtIds))
+const districtLabel = computed(() => {
+  if (!manage.value) return '-'
+  if (manage.value.activityAreaType !== 2) return '全国'
+  if (!districtCodes.value.length) return '未选择地域（等同不投放）'
+  const names = districtCodes.value.map((c) => labelOf(districtIndex.value, c))
+  return names.length <= 4 ? names.join('、') : `${names.slice(0, 4).join('、')} 等 ${names.length} 个`
+})
+/** 悬停给全路径，省得为了看清是哪个「鼓楼区」还要跳去编辑页。 */
+const districtTitle = computed(() =>
+  districtCodes.value.map((c) => pathOf(districtIndex.value, c)).join('\n'))
 const rule = computed(() => detail.value?.rules?.[0] || null)
 const condition = computed(() => detail.value?.conditions?.[0] || null)
 const bindings = computed<Record<string, any>[]>(() => detail.value?.bindings || [])
@@ -106,6 +132,11 @@ async function load(): Promise<void> {
       return
     }
     detail.value = response.json as Record<string, any>
+    // 只有「指定地域」的活动才需要字典。拿不到就算了——districtLabel 会回退成裸码，
+    // 不该因为一个展示增强让详情页整页报错。
+    if ((detail.value?.manage?.activityAreaType) === 2 && !districtStore.items) {
+      void districtStore.load(controller.signal)
+    }
   } catch (error) {
     if (sequence === loadSequence && (error as Error).name !== 'AbortError') err.value = (error as Error).message
   } finally {
@@ -269,7 +300,7 @@ onUnmounted(() => {
           <Card title="活动元数据">
             <Kv k="活动 ID" mono>{{ manage.activityId }}</Kv>
             <Kv k="版本">v{{ manage.version }}</Kv>
-            <Kv k="地域">{{ manage.activityAreaType === 2 ? (manage.districtIds || '指定地域') : '全国' }}</Kv>
+            <Kv k="地域" :title="districtTitle">{{ districtLabel }}</Kv>
             <Kv v-if="manage.submittedBy" k="提交人">{{ manage.submittedBy }}</Kv>
             <Kv k="合并策略" mono>{{ manage.discountStrategy || detail?.strategy || '-' }}</Kv>
           </Card>

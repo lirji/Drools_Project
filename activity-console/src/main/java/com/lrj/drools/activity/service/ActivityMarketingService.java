@@ -5,6 +5,8 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ActivityType;
 import com.lrj.drools.activity.domain.BenefitForm;
 import com.lrj.drools.activity.domain.ConditionNode;
+import com.lrj.drools.activity.domain.RuleLogic;
+import com.lrj.drools.activity.domain.RuleOperator;
 import com.lrj.drools.activity.domain.RuleScene;
 import com.lrj.drools.activity.domain.StackStrategy;
 import com.lrj.drools.activity.engine.ActivityDrlBuilder;
@@ -17,6 +19,8 @@ import com.lrj.drools.activity.error.ActivityException;
 import com.lrj.drools.activity.persistence.*;
 import com.lrj.drools.activity.tenant.ActorContext;
 import com.lrj.drools.activity.tenant.TenantContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,9 +48,20 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Service
 public class ActivityMarketingService {
 
+    private static final Logger log = LoggerFactory.getLogger(ActivityMarketingService.class);
+
     private static final int NOT_DEL = 0;
     private static final int DEL = 1;
     private static final int ENABLED = 1;
+
+    /** {@code activity_manage.district_ids} 的列宽。6 位码 + 逗号 = 7 字符 → 最多 146 个。 */
+    private static final int DISTRICT_IDS_MAX_LEN = 1024;
+
+    /** 「指定地域」的 {@code activityAreaType} 取值。1=全国，2=指定地域。 */
+    private static final int AREA_TYPE_DISTRICTS = 2;
+
+    /** 投放地域被翻译成的条件字段——必须与 {@code RuleSchemaRegistry} 里那个白名单字段同名。 */
+    private static final String FIELD_USER_DISTRICT = "userDistrictId";
     private static final BigDecimal MAX_AMOUNT = new BigDecimal("999999");
 
     private final ActivityManageRepository manageRepo;
@@ -69,6 +84,8 @@ public class ActivityMarketingService {
     private final ActivityRuleRuntimeService ruleRuntime;
     private final ActivityPoolMatchService poolMatchService;
     private final ArtifactService artifactService;
+    /** 投放地域展开成 {@code userDistrictId} 取值集合时用（见 {@link #mergeDistrictCondition}）。 */
+    private final DistrictQueryService districtQuery;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicInteger seq = new AtomicInteger(0);
@@ -92,7 +109,9 @@ public class ActivityMarketingService {
                                     ActivityDrlBuilder drlBuilder,
                                     ActivityRuleRuntimeService ruleRuntime,
                                     ActivityPoolMatchService poolMatchService,
-                                    ArtifactService artifactService) {
+                                    ArtifactService artifactService,
+                                    DistrictQueryService districtQuery) {
+        this.districtQuery = districtQuery;
         this.manageRepo = manageRepo;
         this.ruleRepo = ruleRepo;
         this.conditionRepo = conditionRepo;
@@ -183,9 +202,13 @@ public class ActivityMarketingService {
             version = 1;
         }
 
+        // 投放地域 → 资格条件。**必须发生在翻译之前**：翻译、条件落库、artifact 冻结三处都吃同一棵树，
+        // 合成晚一步就意味着这条地域约束没过翻译器校验、没参与编译、也没进 artifact 的字段 pin。
+        ConditionNode mergedTree = mergeDistrictCondition(req);
+
         // 资格条件翻译 + 严格编译校验（失败抛异常 → 整体回滚，什么都不落库）
         // schema 按 (当前租户, bizLine) 解析（无覆盖时回落共享默认 schema）
-        String constraint = translator.translate(req.eligibilityConditionTree(),
+        String constraint = translator.translate(mergedTree,
                 schemaRegistry.resolve(currentTenant(), req.bizLine()));
         String eligDrl = null;
         if (constraint != null) {
@@ -199,14 +222,14 @@ public class ActivityMarketingService {
         Integer status = ActivityStatus.NORMAL.code();
         saveManage(req, activityId, version, status, now);
         saveRule(req, activityId, version, now);
-        saveCondition(req.eligibilityConditionTree(), constraint, activityId, version, now);
+        saveCondition(mergedTree, constraint, activityId, version, now);
         saveGifts(req, activityId, version, now);
         saveManualBindings(req, activityId, version, now);
         int autoBound = savePoolRefsAndAutoBind(req, activityId, version, now);
         saveStrategyIfPresent(req, now);
 
         // P1-9：冻结本版本为不可变 artifact（pin schema 版本 + 引用字段 + 资格 DRL），供发布预热与硬失效判定。
-        artifactService.snapshot(activityId, version, req.bizLine(), eligDrl, req.eligibilityConditionTree());
+        artifactService.snapshot(activityId, version, req.bizLine(), eligDrl, mergedTree);
 
         // ISSUE-07：登记幂等结果（create/edit 统一）。同事务内 flush，并发相同 requestId 撞唯一约束 → 整事务回滚(无孤儿) → 409。
         recordIdempotency(reqId, activityId, version, status, now);
@@ -709,6 +732,14 @@ public class ActivityMarketingService {
         if (req.bizLine() != null && req.bizLine().length() > 64) {
             throw new IllegalArgumentException("业务线过长（≤64）");
         }
+        // 同一条 ISSUE-06 的第三处漏网：district_ids 是 varchar(1024)，6 位码 + 逗号 = 7 字符，
+        // 最多装 146 个。没有这条前置校验时，超长会在 saveAndFlush 抛 DataIntegrityViolationException，
+        // 而那个 catch 是为 requestId 唯一约束写的 → 落到 advice 成 **500**。
+        // 「参数写错」报成 500 会让调用方无限重试一个永远不会成功的请求，且故障从监控上消失。
+        if (req.districtIds() != null && req.districtIds().length() > DISTRICT_IDS_MAX_LEN) {
+            throw new IllegalArgumentException("投放地域过多（编码总长 ≤" + DISTRICT_IDS_MAX_LEN
+                    + " 字符，约 " + ((DISTRICT_IDS_MAX_LEN + 1) / 7) + " 个），当前 " + req.districtIds().length() + " 字符");
+        }
         ActivityType type = ActivityType.fromCode(req.activityType());
         if (type != ActivityType.RED_PACKAGE && type != ActivityType.BUY_AND_GET
                 && type != ActivityType.ADD_ON_PURCHASE) {
@@ -738,6 +769,120 @@ public class ActivityMarketingService {
         if (req.discountStrategy() != null && !req.discountStrategy().isBlank()) {
             StackStrategy.fromCode(req.discountStrategy()); // 非法策略抛异常
         }
+    }
+
+    // ------------------------------------------------------------------ 投放地域 → 资格条件
+
+    /**
+     * 把「投放地域」翻译成一条 {@code userDistrictId IN (...)} 资格条件，与运营自己的条件树 AND 后返回。
+     *
+     * <p><b>为什么要有这一步</b>：{@code activityAreaType} / {@code district_ids} 此前是一对
+     * <b>假开关</b>——能编辑、能落库、能进候选和快照，但全链路<b>零读取点</b>
+     * （{@code service/}、{@code engine/}、{@code snapshot/} 三个包对这两个字段名 grep 为空）。
+     * 运营配了地域，活动照样全国发钱，而且详情页还把它当生效配置回显。
+     * 本方法把它接到<b>唯一真正生效</b>的那条地域链路上：条件树字段 {@code userDistrictId}
+     * （{@code RuleSchemaRegistry} 白名单，由 {@code DecisionEligibilityService} 从请求填入属性袋）。
+     * 决策侧因此<b>一行都不用改</b>。
+     *
+     * <p><b>展开到「自身 + 全部后代」而不是只到叶子</b>：{@code userDistrictId} 是调用方给什么就是什么。
+     * 本仓既有取值全是省级码（{@code playbooks.ts} 的地域定向模板与 e2e 都用 {@code 310000}），
+     * 而真实业务系统多半送区县码。只展开到叶子的话，带 {@code 440000} 的请求在「投放广东」的活动上
+     * 一律不命中——失败方式是<b>少发钱</b>，最难被发现。
+     *
+     * <p><b>幂等</b>：合成前先剥掉上一次合成的节点（靠 {@link ConditionNode#SOURCE_DISTRICT} 标记）。
+     * 不剥的话，编辑器回读整份存储树、下次保存再合成一次，叶子逐次翻倍、树深逐次 +1，
+     * 而 {@code RuleConditionTranslator.MAX_DEPTH} 是硬闸，堆几次就再也保存不了。
+     *
+     * <p><b>只在保存时发生</b>。绕过控制台直接改库里的 {@code district_ids} 不会自动重译——
+     * 这是一次性翻译不是活绑定，别当它是。
+     */
+    private ConditionNode mergeDistrictCondition(ActivityCreateRequest req) {
+        ConditionNode userTree = stripDistrictNodes(req.eligibilityConditionTree());
+
+        Integer areaType = req.activityAreaType();
+        if (areaType == null || areaType != AREA_TYPE_DISTRICTS) return userTree;
+
+        List<String> picked = parseDistrictCodes(req.districtIds());
+        if (picked.isEmpty()) return userTree;
+
+        // 租户装了不含 userDistrictId 的自定义 schema 时**跳过注入**而不是炸掉：
+        // 否则每一次「指定地域」的保存都会变成一个莫名其妙的 400。落差由 declarativeOnlyWarnings 说出来。
+        if (!schemaRegistry.resolve(currentTenant(), req.bizLine()).containsKey(FIELD_USER_DISTRICT)) {
+            log.warn("[district] 租户 schema 里没有 {} 字段，投放地域未翻译成资格条件（本次为声明式）",
+                    FIELD_USER_DISTRICT);
+            return userTree;
+        }
+
+        Set<String> expanded = districtQuery.expandWithDescendants(picked);
+        if (expanded.isEmpty()) return userTree;
+
+        ConditionNode leaf = new ConditionNode();
+        leaf.setField(FIELD_USER_DISTRICT);
+        leaf.setOp(RuleOperator.IN.code());
+        leaf.setValue(new ArrayList<>(expanded));
+        leaf.setSource(ConditionNode.SOURCE_DISTRICT);
+
+        if (userTree == null) {
+            // 「只投广东、不配其它条件」是本功能最典型的用法。这里必须自己起一棵根组——
+            // 否则 saveCondition 首行的 `if (tree == null) return` 会让条件行压根不建出来，
+            // 地域依旧零生效，而且失败得悄无声息。
+            ConditionNode root = new ConditionNode();
+            root.setLogic(RuleLogic.AND.code());
+            root.setChildren(new ArrayList<>(List.of(leaf)));
+            return root;
+        }
+        if (userTree.isGroup() && RuleLogic.AND.code().equalsIgnoreCase(userTree.getLogic())) {
+            // 并进现有 AND 组：**树深不变**，不会吃掉运营的嵌套预算。
+            List<ConditionNode> children = new ArrayList<>(
+                    userTree.getChildren() == null ? List.of() : userTree.getChildren());
+            children.add(leaf);
+            userTree.setChildren(children);
+            return userTree;
+        }
+        // 用户树是 OR 组或裸叶子 → 只能包一层。包装组同样标记来源，剥离时才能原样还原回去。
+        ConditionNode wrapper = new ConditionNode();
+        wrapper.setLogic(RuleLogic.AND.code());
+        wrapper.setChildren(new ArrayList<>(List.of(userTree, leaf)));
+        wrapper.setSource(ConditionNode.SOURCE_DISTRICT);
+        return wrapper;
+    }
+
+    /**
+     * 剥掉上一次由投放地域合成的节点，还原成运营手写的那棵树。
+     *
+     * <p>两种形态都要认：① 并进 AND 组的那片叶子；② 包在外面的那层 AND 组（要还原成里面的用户子树）。
+     */
+    static ConditionNode stripDistrictNodes(ConditionNode node) {
+        if (node == null) return null;
+        if (!node.isGroup()) return node.isDistrictGenerated() ? null : node;
+
+        List<ConditionNode> children = node.getChildren() == null ? List.of() : node.getChildren();
+        if (node.isDistrictGenerated()) {
+            // 我们造的包装组：里面至多一个非 district 子节点，就是原来的用户树。
+            for (ConditionNode child : children) {
+                if (!child.isDistrictGenerated()) return stripDistrictNodes(child);
+            }
+            return null;
+        }
+        List<ConditionNode> kept = new ArrayList<>();
+        for (ConditionNode child : children) {
+            ConditionNode s = stripDistrictNodes(child);
+            if (s != null) kept.add(s);
+        }
+        if (kept.isEmpty()) return null; // 组被掏空 = 这棵树本来就只有地域条件
+        node.setChildren(kept);
+        return node;
+    }
+
+    /** CSV → 去重去空的代码列表，保持运营的选择顺序。 */
+    static List<String> parseDistrictCodes(String csv) {
+        if (csv == null || csv.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String s : csv.split(",")) {
+            String t = s.trim();
+            if (!t.isEmpty() && !out.contains(t)) out.add(t);
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ 落库 helper

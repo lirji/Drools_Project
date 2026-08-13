@@ -3,7 +3,7 @@ import { api } from '@/shared/apiClient'
 import type { ServiceKey } from '@/shared/apiClient'
 import type {
   ActivityListRow, ActivityCreateRequest, ActivityCreateResult,
-  ConditionNode, SpuDiscountRequest, ApiResult,
+  ConditionNode, SpuDiscountRequest, ApiResult, District,
   BulkStatusItem, BulkStatusResult,
   DiscountDecisionResponse, GiftDecisionResponse,
   AddOnOptionsResponse, AddOnQuoteResponse,
@@ -49,6 +49,16 @@ export function bulkChangeStatus(items: BulkStatusItem[], targetStatus: number):
 
 export function previewTree(tree: ConditionNode, signal?: AbortSignal): Promise<ApiResult<{ ok: boolean; message?: string; drl?: string }>> {
   return api('marketing', 'POST', '/preview', tree, { signal })
+}
+
+/**
+ * 行政区划字典（全量 3212 行，约 49 KB gzip）。地域选择器的取值域。
+ *
+ * 一次拉全量而不是按父级懒加载，有两个理由：① 编辑既有活动时拿到的是一串裸码，
+ * 要显示「广东省/深圳市/南山区」，懒加载得为每个码逐级反查祖先；② 拼音搜索本身就要求全集在手。
+ */
+export function listDistricts(signal?: AbortSignal): Promise<ApiResult<District[]>> {
+  return api<District[]>('marketing', 'GET', '/districts', undefined, { signal })
 }
 
 export function spuDiscount(body: SpuDiscountRequest, signal?: AbortSignal,

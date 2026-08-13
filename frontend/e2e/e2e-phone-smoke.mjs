@@ -28,6 +28,24 @@ try {
   await page.fill('[data-testid="form-name"]', `PHONE-${Date.now().toString(36)}`)
   await page.fill('[data-testid="form-amount"]', '20')
   await page.locator('[data-testid="spu-row-input"]').first().fill('990012')
+
+  // 地域级联在 390px 下的横向溢出。**这是编辑页唯一的手机溢出采样点**——
+  // 上面第 19 行那次量的是列表页，tablet 那条量的是 768（宽得多）。
+  // 三栏并排在 390 上必溢出，所以它必须塌成单栏 + 面包屑；量完要显式收起，
+  // 否则展开的面板会把 submit 顶出视口，Playwright 的可操作性检查直接超时。
+  await page.selectOption('[data-testid="form-area-type"]', '2')
+  await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 10000 })
+  await page.locator('[data-testid="district-toggle"]').click()
+  // 等到真实选项而不是面板根节点：根节点在字典到达前就已经在了，那时量到的是 Skeleton，
+  // 三栏塌没塌根本没被测到，断言会静默通过（同 e2e-visual-guard A-13 那段）。
+  await page.waitForSelector('[data-testid="district-opt-440000"]', { timeout: 15000 })
+  const districtOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  districtOverflow <= 4
+    ? ok(`手机 390：地域级联展开后无横向溢出（${districtOverflow}px）`)
+    : no(`手机 390：地域级联横向溢出 ${districtOverflow}px —— 三栏没塌成单栏？`)
+  await page.locator('[data-testid="district-toggle"]').click()
+  await page.selectOption('[data-testid="form-area-type"]', '1') // 回到全国，不给提交加必填项
+
   await page.locator('[data-testid="submit"]').click()
   await page.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('手机 390：表单可完整填写并提交成功')

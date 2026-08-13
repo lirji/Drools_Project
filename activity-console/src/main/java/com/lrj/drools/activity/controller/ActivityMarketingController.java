@@ -16,6 +16,7 @@ import com.lrj.drools.activity.tenant.TenantContext;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
+import com.lrj.drools.activity.service.DistrictQueryService;
 import com.lrj.drools.activity.service.GenerationService;
 import com.lrj.drools.activity.service.GrantService;
 import org.springframework.http.ResponseEntity;
@@ -45,6 +46,7 @@ import java.util.stream.Collectors;
  *   POST /activity-marketing/addon/quote       加价购第二阶段（按活动+换购品重新报价）
  *   POST /activity-marketing/preview           资格条件树预览（翻译+试编译，不落库）
  *   GET  /activity-marketing/field-dict        字段/运算符/枚举字典（前端报表下拉用）
+ *   GET  /activity-marketing/districts         行政区划字典（地域选择器的取值域；缺省全量，可 ?level= / ?parent=）
  *   GET  /activity-marketing/generation        库里当前发布代际（决策侧回显的 generation 的参照物）
  *
  * 错误约定与 CampaignController 一致：参数非法 400，状态/并发冲突 409，<b>四眼拒绝 403</b>
@@ -64,15 +66,17 @@ public class ActivityMarketingController {
     private final AddOnPurchaseService addOn;
     private final RuleSchemaRegistry schemaRegistry;
     private final GenerationService generations;
+    private final DistrictQueryService districts;
 
     public ActivityMarketingController(ActivityMarketingService marketing, ActivityQueryService query,
                                        AddOnPurchaseService addOn, RuleSchemaRegistry schemaRegistry,
-                                       GenerationService generations) {
+                                       GenerationService generations, DistrictQueryService districts) {
         this.generations = generations;
         this.marketing = marketing;
         this.query = query;
         this.addOn = addOn;
         this.schemaRegistry = schemaRegistry;
+        this.districts = districts;
     }
 
     @PostMapping("/create")
@@ -289,6 +293,29 @@ public class ActivityMarketingController {
                 "note", gen == 0
                         ? "这条业务线还没发布过任何活动（代际从 1 起）"
                         : "决策侧 provenance.generation 小于这个数，说明快照还没跟上"));
+    }
+
+    /**
+     * <b>行政区划字典</b>——{@code district_ids}（活动投放地域）与 {@code userDistrictId}（用户地域）
+     * 这两个 6 位代码字段的取值域。在它之前，运营配地域只能手敲数字，且配错了没人拦。
+     *
+     * <p>缺省返回**全量 3212 行**（省级 34 / 地市级 333 / 区县级 2845），前端一次拉走、本地建索引
+     * 做级联与拼音搜索。实测裁列后约 285 KB、经网关 gzip 后约 49 KB。
+     * 之所以不做按父级懒加载：编辑既有活动时拿到的是一串裸码，要显示「广东省/深圳市/南山区」，
+     * 懒加载得为每个码逐级反查祖先；而搜索（含拼音）本身就要求全集在手。
+     *
+     * <p>{@code ?level=} 与 {@code ?parent=} 是给分级取数备用的，<b>同传时 parent 优先</b>。
+     *
+     * <p>本表**无 {@code @TenantId}**（国家标准不是租户数据），所以无租户上下文也查得到全量；
+     * 但端点落在 {@code /activity-marketing/**} 之下，仍受既有认证与租户过滤器约束——
+     * 那是访问控制，不是数据隔离。
+     */
+    @GetMapping("/districts")
+    public ResponseEntity<?> districts(@RequestParam(value = "level", required = false) Integer level,
+                                       @RequestParam(value = "parent", required = false) String parent) {
+        if (parent != null && !parent.isBlank()) return ResponseEntity.ok(districts.byParent(parent.trim()));
+        if (level != null) return ResponseEntity.ok(districts.byLevel(level));
+        return ResponseEntity.ok(districts.all());
     }
 
     private ResponseEntity<?> bad(RuntimeException ex) {

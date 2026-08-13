@@ -476,10 +476,11 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 
 ## 7. 数据模型
 
-14 张表 / **20 个 Spring Data 仓库**（14 个可写 `JpaRepository` + 6 个只读 `*ReadRepository`，后者见 §2）。
+15 张表 / **21 个 Spring Data 仓库**（15 个可写 `JpaRepository` + 6 个只读 `*ReadRepository`，后者见 §2）。
 **活动配置类的表**按 **`activityId` + `version` + `is_del`** 做版本化软删；
-账本与字典类的四张（`activity_generation` / `activity_grant` / `activity_idempotency` / `demo_product`）没有 `is_del`，
-它们记的是发生过的事实，不参与版本化。主键一律自增代理键（唯一例外 `demo_product` 用业务键 `spu_id`）。
+账本与字典类的五张（`activity_generation` / `activity_grant` / `activity_idempotency` / `demo_product` / `sys_district`）没有 `is_del`，
+它们记的是发生过的事实或外部标准，不参与版本化。主键一律自增代理键
+（两个例外：`demo_product` 用业务键 `spu_id`，`sys_district` 用 6 位行政区划代码 `code`）。
 
 公共列收在**两层** `@MappedSuperclass`，分两层正是因为上面那条差异：
 `TenantScopedEntity`（`tenant_id` + 双时间戳）→ `SoftDeletableTenantEntity`（多一列 `is_del`）。
@@ -508,6 +509,46 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 | `activity_idempotency` | 创建幂等（按 `requestId`） | create |
 | `activity_grant` | 发放流水（claim 幂等键 + 每人限领计数 + 冲正 + 对账），唯一约束 `uk_grant_tenant_order_activity` | claim / release |
 | `demo_product` | 演示商品 | seeder |
+| `sys_district` | 中国行政区划字典（3212 行：省级 34 / 地市级 333 / 区县级 2845，6 位代码，**无 `@TenantId`**） | seeder（仅当表空） |
+
+> `sys_district` 是 `activity_manage.district_ids`（活动投放地域）与决策入参 `userDistrictId`（用户地域，
+> `RuleSchemaRegistry` 白名单字段之一）这两个 6 位代码字段的**取值域**——在它之前，仓库里没有任何一处
+> 能把 `440305` 翻成「广东省/深圳市/南山区」，运营配地域只能手敲数字。
+> 它**没有 `@TenantId`**（在 `TenantArchGuardTest.GLOBAL_ENTITIES` 显式登记豁免）：行政区划是国家标准不是租户数据，
+> 加租户列意味着每来一个租户复制一份 3212 行，而且落库的 `DistrictSeeder` 跑在启动期、没有请求上下文，
+> 写进去的那份只有兜底租户看得见。决策热路径**不读**本表——`userDistrictId` 是请求带进来的值，资格判定直接比字符串。
+>
+> **层级与树深解耦**：117 个区县级行政区直接挂省级（直辖市的区 / 省直辖县级市 / 兵团师市），
+> 这类行 `city_code` 为空而 `district_level` 仍是 3——民政部口径里没有「市辖区」「省直辖县级行政区划」
+> 这类占位节点（那是统计局口径的产物），所以别为了凑三级去合成它们。
+>
+> 数据出处与再生方式见 `examples/district-data/build-district-csv.py` 的头注释（结构取 `xihan123/gb2260`
+> 民政部沿革口径的 `active` 行，拼音与简称取地图厂商那份左连接补齐）。**最常被引用的 modood 那份没用**：
+> 它停更于 2023-06-30，而 2025-11-06 国务院批复撤销重庆江北区(500105)、渝北区(500112)设立两江新区(500157)，
+> 民政部已废止那两个代码——用停更数据集会把活动投到已不存在的行政区上。回归由 `DistrictSeederTest`
+> 的**双向**金丝雀守（500157 必须在、500105/500112 必须不在）。
+>
+> 读口是 `GET /activity-marketing/districts`（缺省全量，可 `?level=` / `?parent=`），由
+> `DistrictQueryService` 提供、出参是 `DistrictView` record（**不返回裸实体**）。前端一次拉全量
+> 在本地建索引做级联与拼音搜索——懒加载在「把一串裸码回显成中文全路径」这件事上要为每个码逐级反查祖先。
+
+> **`activityAreaType` / `district_ids` 不再是假开关**（2026-08）。此前它们能编辑、能落库、能进候选和快照，
+> 但 `service/` / `engine/` / `snapshot/` 三个包对这两个字段名 grep 为空——**零读取点**，
+> 运营配了地域活动照样全国发钱，详情页还把它当生效配置回显（审计编号 B2）。
+> 现在 `ActivityMarketingService.mergeDistrictCondition` 在**翻译之前**把选中地域展开成
+> 「自身 + 全部后代」的代码集合，合成一条 `userDistrictId IN (...)` 叶子并进运营自己的条件树，
+> 于是它走的是唯一真正生效的那条地域链路（`RuleSchemaRegistry` 白名单字段 + `ConditionTreeEvaluator`），
+> **决策侧一行未改**。三条必须记住的边界：
+> - **展开含各级祖先自身，不是只到叶子**——`userDistrictId` 是调用方给什么就是什么，本仓既有取值全是省级码
+>   （`playbooks.ts` 与 e2e 都用 `310000`）。只展开到叶子的话带 `440000` 的请求一律不命中，而失败方式是**少发钱**。
+> - **注入节点带 `source="district"` 标记**，前后端都靠它剥离。不剥的话编辑器回读整份存储树、
+>   下次保存再合成一次，叶子逐次翻倍、树深逐次 +1，而 `RuleConditionTranslator.MAX_DEPTH=5` 是硬闸。
+> - **只在保存时翻译**。绕过控制台直接改库里的 `district_ids` 不会重译——这是一次性翻译不是活绑定。
+>
+> `district_ids` 本身仍只存**所选层级的码**（选广东就存 `440000`），因为它是 `varchar(1024)`、
+> 展开一个广东（自身 + 全部后代 = 144 个码）就要 1007 字符，一个省就几乎吃满整列、选两个必爆；
+> 展开只发生在 `condition_tree_json` 那一份（`text`，64 KB）。
+> 列宽上限 146 个码由 `validateCommon` 前置校验守住（此前超限会掉进为 requestId 唯一约束写的 catch，报成 **500**）。
 
 > `activity_grant` **不复用 `activity_idempotency`**：后者的键是客户端生成的 `requestId`，
 > 语义是「这个请求处理过没有」，可以随重试策略变化；前者的键是业务事实（哪一单、哪个用户、哪个活动），

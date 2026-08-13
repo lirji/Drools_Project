@@ -222,3 +222,32 @@ flash 试算前后库存不变，以及 390 / 768 / 1440 零页面级横向溢�
 
 > 档位提醒：编排默认 **auth 档**。除 `e2e:oidc` 外的 8 套都走 header 档，跑之前需
 > `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`。
+
+## 2026-08 投放地域选择器（console-district-picker）
+
+> 落点：`EditorView` 基础信息区，`areaType===2` 时才渲染（**默认「全国」不渲染** ——
+> 六条经过编辑页的 e2e 只填名称/金额/SPU，这个默认值是它们零改动的前提）。
+
+| testid | 位置 | 用途 |
+|---|---|---|
+| `form-area-type` | EditorView | 地域类型下拉（1=全国 / 2=指定地域） |
+| `district-picker` | DistrictPicker | 选择器根节点 |
+| `district-toggle` | DistrictPicker | 展开/收起级联面板 |
+| `district-count` | DistrictPicker | 「已选 N / 146」计数 |
+| `district-clear` | DistrictPicker | 清空已选 |
+| `district-chips` | DistrictPicker | 已选 chips 容器 |
+| `district-chip-x-{code}` | DistrictPicker | 移除某个已选地域 |
+| `district-chips-more` | DistrictPicker | 「+N」展开全部 chips |
+| `district-limit` | DistrictPicker | 达到 146 个上限的提示 |
+| `district-unknown` | DistrictPicker | 含已撤销/未知代码的提示 |
+| `district-warning` | DistrictPicker | 字典不可用降级条 |
+| `district-raw` | DistrictPicker | 字典不可用时的裸 CSV 逃生门输入 |
+| `district-empty-hint` | DistrictPicker | 一个都没选时的提示 |
+| `district-cascader` | DistrictCascader | 级联面板根节点 |
+| `district-search` | DistrictCascader | 搜索框（≥16px，防 iOS 聚焦缩放） |
+| `district-search-clear` | DistrictCascader | 清空搜索 |
+| `district-search-trunc` | DistrictCascader | 搜索结果截断提示 |
+| `district-opt-{code}` | DistrictCascader | 逐级列表里的勾选框 |
+| `district-into-{code}` | DistrictCascader | 下钻到该行政区的下级 |
+| `district-hit-{code}` | DistrictCascader | 搜索结果里的勾选框 |
+| `district-crumb-root` / `district-crumb-{code}` | DistrictCascader | 面包屑回退（<768 时是唯一回退路径） |

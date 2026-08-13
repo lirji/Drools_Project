@@ -355,6 +355,52 @@ facts（`ActivityCandidate/ActivityRuleContext/ActivityRuleResult/GiftResult`）
 
 > **被 Java 硬引用的那几个 key 现在有常量出处** `DecisionAttrs`（`orderAmount` / `spuId` / `userId` / `randomSeedSpu` / `orderLines`）。属性袋的键分两类：运营可配的条件字段权威在 `RuleSchemaRegistry` 白名单，写侧改名会被 `DecisionContextFieldsTest` 当场照出来；而**代码自己读**的那几个此前是写侧（`requestAttributes`）与读侧（`ActivityRuleContext` 便捷访问器 / `BenefitEvaluator` 的随机指纹 / `ActivityQueryService` 的阶梯字段）各写一遍字面量，中间没有任何编译期或测试期的联结。<br>⚠️ 常量化**不替代**测试守卫：`DecisionContextFieldsTest` 里那条键集合断言写的是**字面量、不引用 `DecisionAttrs`**——那条才是真正的守卫，常量类改名它照样红。<br>⚠️ `spuId`（ARRAY，整车 SPU 列表）与 `randomSeedSpu`（标量）是**两个不同的键，不要合并——合并即全量随机红包重抽**。
 
+## 投放地域（`activityAreaType` + `districtIds`）
+
+控制台「新建/编辑活动」的**地域类型**选「指定地域」后，用级联多选选择器挑省 / 地市 / 区县；
+取值域来自 `sys_district`（3212 行，见 [`architecture.md` §7](architecture.md)），读口是
+`GET /activity-marketing/districts`（缺省全量，可 `?level=` / `?parent=`）。支持中文、简称、拼音、首字母搜索。
+
+```bash
+# 字典（前端一次拉全量，本地建索引做级联与搜索）
+curl -s localhost:8081/activity-marketing/districts | head -c 200
+# → [{"code":"110000","name":"北京市","shortName":"北京","level":1,"parent":null,"pinyin":"beijing","pinyinInitial":"b"},…
+
+# 建一个只投广东的活动
+curl -XPOST localhost:8081/activity-marketing/create -H 'Content-Type: application/json' -d '{
+  "activityName":"广东专享","bizLine":"mall","activityType":1,
+  "activityStartTime":…,"activityEndTime":…,
+  "activityAreaType":2,"districtIds":"440000",
+  "redPackageAmount":50,"redPackageAmountUnit":"元","spuBindings":[{"bindType":1,"spuId":9001}]}'
+```
+
+**它是怎么生效的**（2026-08 之前它不生效，见下）：保存时写平面把选中地域展开成「**自身 + 全部后代**」的
+代码集合，合成一条 `userDistrictId IN (...)` 叶子，与运营自己的资格条件树做 AND，落进同一份
+`condition_tree_json`。也就是说它**复用**了本来就唯一生效的那条地域链路（`RuleSchemaRegistry` 白名单字段
+`userDistrictId` + `ConditionTreeEvaluator`），**决策侧一行未改**。决策请求里带 `userDistrictId` 即可命中：
+
+- 展开含各级祖先自身，所以调用方送**省级码**（`440000`）还是**区县码**（`440305`）都能命中。
+  只展开到叶子的话前者一律不中，而那种失败方式是「少发钱」，最难被发现。
+- 注入的节点带 `source="district"` 标记，编辑器回读时剥掉、后端下次合成前也先剥掉。
+  不剥的话每保存一次叶子翻倍、树深 +1，很快撞上 `RuleConditionTranslator.MAX_DEPTH=5`。
+
+**四条边界**：
+
+1. **只在保存时翻译**。绕过控制台直接改库里的 `district_ids` 不会重译——一次性翻译，不是活绑定。
+2. **`districtIds` 只存所选层级的码**（选广东就是 `440000` 一个码）。它是 `varchar(1024)`，
+   一个广东展开后是 144 个码 / 1007 字符，一个省就几乎吃满整列、选两个必爆；
+   展开只发生在 `condition_tree_json`（`text`，64 KB）那一份。
+3. **最多 146 个码**（6 位 + 逗号 = 7 字符）。前端选满即禁选，后端 `validateCommon` 前置校验返回 400
+   ——此前超限会掉进为 `requestId` 唯一约束写的 catch，报成 **500**，让调用方去无限重试一个永不成功的请求。
+4. **租户装了不含 `userDistrictId` 的自定义 schema 时跳过注入**（打 warn），而不是把每一次「指定地域」的
+   保存都变成一个莫名其妙的 400。这种情况下地域退回声明式。
+
+> **历史**：`activityAreaType` / `districtIds` 曾是一对**假开关**——能编辑、能落库、能进候选和快照，
+> 但 `service/` / `engine/` / `snapshot/` 三个包对这两个字段名 grep 为空，**零读取点**。
+> 运营配了地域，活动照样全国发钱，详情页还把它当生效配置回显（审计 `activity-chain-review-0811-1730/REVIEW.md`
+> 编号 B2）。对照组是库存：同样是声明式，但它三处都标了「声明式」。地域一处都没有——
+> 这正是**沉默比不做更危险**的样本。
+
 ## 本次未迁移（来源存在）
 
 砍价/拼团/门店拼团/抽奖等其它玩法、CPS 订单分润、红包合伙人签名校验、真实商品/权益/钉钉集成、活动版本历史浏览/回滚。`COUPONS/CPS/RIGHT_COUPON` 三类活动类型保留枚举位但未实现（后端 400、前端禁用）。

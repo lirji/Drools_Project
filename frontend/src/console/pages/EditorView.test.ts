@@ -95,8 +95,26 @@ describe('EditorView 玩法模板预填', () => {
     for (const item of [...toast.toasts.value]) toast.dismiss(item.id)
   })
 
+  /**
+   * 行政区字典夹具。**故意只有 5 行**：3212 行真实数据 × 每个 it 一次完整 mount，
+   * 在 jsdom 里是白烧时间；「大数据集不崩」单独由 districtLogic 那条用例守。
+   */
+  const DISTRICTS = [
+    { code: '440000', name: '广东省', shortName: '广东', level: 1, parent: null, pinyin: 'guangdong', pinyinInitial: 'g' },
+    { code: '440300', name: '深圳市', shortName: '深圳', level: 2, parent: '440000', pinyin: 'shenzhen', pinyinInitial: 's' },
+    { code: '440305', name: '南山区', shortName: '南山', level: 3, parent: '440300', pinyin: 'nanshan', pinyinInitial: 'n' },
+    { code: '110000', name: '北京市', shortName: '北京', level: 1, parent: null, pinyin: 'beijing', pinyinInitial: 'b' },
+    { code: '110101', name: '东城区', shortName: '东城', level: 3, parent: '110000', pinyin: 'dongcheng', pinyinInitial: 'd' },
+  ]
+
   function dictOk() {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, FIELD_DICT)))
+    // 三个 helper 都必须认 /districts：它们都是「按 URL 分派 + 其余兜底」，
+    // 而兜底各不相同（这里恒 FieldDict、captureCreates 是 404、backendReturns 是详情 JSON）。
+    // 漏一处，地域选择器就会收到一个形状完全不对的响应，而且多半是静默的。
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(String(url).includes('/districts')
+        ? response(200, DISTRICTS)
+        : response(200, FIELD_DICT))))
   }
 
   function captureCreates(statuses: number[] = [200]) {
@@ -104,6 +122,7 @@ describe('EditorView 玩法模板预填', () => {
     let createIndex = 0
     vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+      if (String(url).includes('/districts')) return Promise.resolve(response(200, DISTRICTS))
       if (String(url).endsWith('/create')) {
         bodies.push(JSON.parse(String(init?.body)))
         const status = statuses[Math.min(createIndex++, statuses.length - 1)]
@@ -493,8 +512,11 @@ describe('EditorView 玩法模板预填', () => {
     }
 
     function backendReturns(rule: Record<string, unknown>) {
-      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) =>
-        Promise.resolve(response(200, String(url).includes('/field-dict') ? FIELD_DICT : detailOf(rule)))))
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+        if (String(url).includes('/districts')) return Promise.resolve(response(200, DISTRICTS))
+        return Promise.resolve(response(200, detailOf(rule)))
+      }))
     }
 
     const ROUNDTRIP_CASES = [
@@ -593,6 +615,225 @@ describe('EditorView 玩法模板预填', () => {
       expect(wrapper.find('[data-testid="form-price"]').exists()).toBe(false)
       await wrapper.get('[data-testid="mode-price"]').trigger('click')
       expect(wrapper.find('[data-testid="form-price"]').exists()).toBe(true)
+    })
+  })
+
+  /**
+   * 投放地域。守两类东西：**别打扰默认路径**（「全国」是默认值，也是六条 e2e 走的路），
+   * 以及**别在回读时吃掉运营存过的码**。
+   */
+  describe('EditorView 投放地域', () => {
+    afterEach(() => { vi.unstubAllGlobals() })
+
+    it('「全国」默认态下根本不请求字典——不给六条经过编辑页的 e2e 凭空加网络依赖', async () => {
+      dictOk()
+      await setup(false, '/console/activities/new?playbook=flat')
+      const urls = (globalThis.fetch as any).mock.calls.map((c: any[]) => String(c[0]))
+      expect(urls.some((u: string) => u.includes('/districts'))).toBe(false)
+    })
+
+    it('切到「指定地域」才拉字典，选中的码按 CSV 提交', async () => {
+      const bodies = captureCreates()
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+      await wrapper.get('[data-testid="form-name"]').setValue('地域活动')
+
+      await wrapper.get('[data-testid="form-area-type"]').setValue('2')
+      await flushPromises()
+      const urls = (globalThis.fetch as any).mock.calls.map((c: any[]) => String(c[0]))
+      expect(urls.some((u: string) => u.includes('/districts'))).toBe(true)
+
+      await wrapper.get('[data-testid="district-toggle"]').trigger('click')
+      await wrapper.get('[data-testid="district-opt-440000"]').setValue(true)
+      await flushPromises()
+
+      await wrapper.get('[data-testid="submit"]').trigger('click')
+      await flushPromises()
+      expect(bodies[0].districtIds).toBe('440000')
+      expect(bodies[0].activityAreaType).toBe(2)
+    })
+
+    it('选了省，再点它下面的市不会重复占名额（后端展开时本来就包含）', async () => {
+      dictOk()
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+      await wrapper.get('[data-testid="form-area-type"]').setValue('2')
+      await flushPromises()
+      await wrapper.get('[data-testid="district-toggle"]').trigger('click')
+
+      await wrapper.get('[data-testid="district-opt-440000"]').setValue(true)
+      await flushPromises()
+      // 广东被选中后，深圳这一项应当是禁用的（它已经被包含了）
+      await wrapper.get('[data-testid="district-into-440000"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="district-opt-440300"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('[data-testid="district-count"]').text()).toContain('已选 1')
+    })
+
+    it('「指定地域」但一个都没选 → 拦在保存前（否则详情页会回显成「指定地域」，看着像配好了）', async () => {
+      dictOk()
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+      await wrapper.get('[data-testid="form-name"]').setValue('空投放')
+      await wrapper.get('[data-testid="form-area-type"]').setValue('2')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="validation-errs"]').text()).toContain('至少选择一个行政区')
+    })
+
+    it('回读保真：含已撤销代码的存量活动，不做任何修改直接保存，districtIds 一字不差', async () => {
+      // 500105 江北区 2025-11 撤销、民政部废止代码 —— 字典里查不到，但库里存量活动可能有。
+      // 选择器若按字典过滤，运营打开编辑器保存一次，这个码就永久没了，而且全链路不报错。
+      const bodies: Array<Record<string, any>> = []
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (String(url).includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+        if (String(url).includes('/districts')) return Promise.resolve(response(200, DISTRICTS))
+        if (String(url).endsWith('/create')) {
+          bodies.push(JSON.parse(String(init?.body)))
+          return Promise.resolve(response(200, { activityId: 'KEEP', version: 2, autoBoundCount: 0, idempotentHit: false }))
+        }
+        return Promise.resolve(response(200, {
+          manage: {
+            activityType: 1, activityName: '存量地域活动', bizLine: 'mall', activityRule: '',
+            priority: 1, inventory: 100, activityAreaType: 2, districtIds: '500105,440305',
+            activityStartTime: '2026-08-01T10:00:00Z', activityEndTime: '2026-08-08T10:00:00Z',
+          },
+          rules: [{ redPackageTakeType: 1, redPackageAmountUnit: '元', redPackageAmount: 10, redPackageMaxDiscount: null, redPackageRangeAmount: null }],
+          conditions: [], gifts: [], bindings: [], poolRefs: [],
+        }))
+      }))
+
+      const { wrapper } = await setup(false, '/console/activities/KEEP/edit')
+      await flushPromises()
+
+      // 未知码必须在界面上看得见，并且被标出来
+      expect(wrapper.get('[data-testid="district-chips"]').text()).toContain('500105')
+      expect(wrapper.get('[data-testid="district-unknown"]').text()).toContain('可能已撤销')
+
+      await wrapper.get('[data-testid="submit"]').trigger('click')
+      await flushPromises()
+      expect(bodies[0].districtIds).toBe('500105,440305')
+    })
+
+    /**
+     * `.form` 上挂的是 `@input="markDirty" @click="onFormClick"`（EditorView.vue:623），
+     * **两个事件都会从选择器内部冒泡上去**。DistrictPicker 只截了 click 的话，
+     * 在搜索框里打一个字就算「改过表单」：清掉刚保存的成功卡、重铸幂等 requestId、
+     * 离开时还弹未保存确认——而运营其实只是想找一下「南山」在哪。
+     */
+    it('在地域搜索框里打字不算改表单：保存成功卡不该被清掉', async () => {
+      dictOk()
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+      await wrapper.get('[data-testid="form-name"]').setValue('搜索不脏')
+      await wrapper.get('[data-testid="form-area-type"]').setValue('2')
+      await flushPromises()
+      await wrapper.get('[data-testid="district-toggle"]').trigger('click')
+      await wrapper.get('[data-testid="district-opt-440000"]').setValue(true)
+      await flushPromises()
+
+      await wrapper.get('[data-testid="submit"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="save-success"]').exists()).toBe(true)
+
+      // 只是搜索，不是改动
+      await wrapper.get('[data-testid="district-search"]').setValue('南山')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="save-success"]').exists()).toBe(true)
+
+      // 真改了才算脏：移除 chip 走的是 v-model setter，EditorView 的 districtCodes 里显式 markDirty。
+      // （此处不能点 district-opt-*：搜索态下逐级列表被搜索结果替掉了，那些 testid 不在 DOM 里。）
+      await wrapper.get('[data-testid="district-chip-x-440000"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="save-success"]').exists()).toBe(false)
+    })
+
+    /**
+     * 字典不可用时的裸 CSV 逃生门。`v-model` 每敲一个字符都走一遍 set→get，
+     * 若 get 直接返回规范化结果，敲到 `440300,` 时尾随逗号会被 parseCodes 丢掉再写回，
+     * **逗号刚打出来就没了，第二个码永远输不进去**——逃生门实际只能填一个地域。
+     */
+    it('字典不可用时的裸 CSV 逃生门能输入多个码（逗号不会被边打边吞）', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) =>
+        Promise.resolve(String(url).includes('/districts')
+          ? response(500, { message: 'dict down' })
+          : response(200, FIELD_DICT))))
+
+      const { wrapper } = await setup(false, '/console/activities/new?playbook=flat')
+      await wrapper.get('[data-testid="form-area-type"]').setValue('2')
+      await flushPromises()
+
+      const raw = wrapper.get('[data-testid="district-raw"]')
+      await raw.setValue('440300,')          // 用户刚打完逗号，准备输第二个码
+      expect((raw.element as HTMLInputElement).value).toBe('440300,')
+      await raw.setValue('440300,110000')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="district-count"]').text()).toContain('已选 2')
+
+      await raw.trigger('blur')              // 失焦回到规范形
+      expect((raw.element as HTMLInputElement).value).toBe('440300,110000')
+    })
+
+    /**
+     * 存储树是**合成后**的那棵：写平面保存时会往里注入一片
+     * `userDistrictId IN (自身+全部后代)` 并标 `source:"district"`。
+     *
+     * 编辑器回读的是整份存储树，所以这条注入节点必须在**进 UI 之前**被剥掉。不剥的两个后果，
+     * 第二个才是致命的：
+     * ① 运营在条件树里看到一条自己没写过、含上百个代码的规则，还能手动改它；
+     * ② `pruneTree` 会把 `source` 一起剥掉（它原本只剥 UI 临时 id），于是这条节点
+     *    以「运营手写的条件」身份提交回后端 —— 后端的幂等剥离认不出它，只好保留，
+     *    再叠一条新的。把投放地域从广东改成北京，就会得到
+     *    `IN(广东…) AND IN(北京…)`：**恒不命中、活动静默停发**，而全链路一声不响。
+     */
+    it('回读时剥掉写平面注入的地域条件：UI 里看不到，提交回去也不会被当成用户条件再叠一层', async () => {
+      const bodies: Array<Record<string, any>> = []
+      // ⚠ 这里必须用**后端真实写出来的形状**，不能手写成"干净"的 JSON。
+      // 后端存这份用的是零配置 new ObjectMapper()（JsonInclude.ALWAYS），所以叶子上带着
+      // "logic":null / "children":null，组上带着 "field":null。用干净 JSON 写这条用例，
+      // 它照样绿，而线上一开编辑器条件树就整棵消失——那正是 isGroup 判别写错时的表现。
+      const storedTree = {
+        logic: 'AND',
+        children: [
+          { logic: null, children: null, field: 'userLevel', op: '>=', value: '3', source: null },
+          {
+            logic: null, children: null, field: 'userDistrictId', op: 'IN',
+            value: ['440000', '440300', '440305'], source: 'district',
+          },
+        ],
+        field: null, op: null, value: null, source: null,
+      }
+      vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (String(url).includes('/field-dict')) return Promise.resolve(response(200, FIELD_DICT))
+        if (String(url).includes('/districts')) return Promise.resolve(response(200, DISTRICTS))
+        if (String(url).endsWith('/create')) {
+          bodies.push(JSON.parse(String(init?.body)))
+          return Promise.resolve(response(200, { activityId: 'DIS', version: 2, autoBoundCount: 0, idempotentHit: false }))
+        }
+        return Promise.resolve(response(200, {
+          manage: {
+            activityType: 1, activityName: '广东专享', bizLine: 'mall', activityRule: '',
+            priority: 1, inventory: 100, activityAreaType: 2, districtIds: '440000',
+            activityStartTime: '2026-08-01T10:00:00Z', activityEndTime: '2026-08-08T10:00:00Z',
+          },
+          rules: [{ redPackageTakeType: 1, redPackageAmountUnit: '元', redPackageAmount: 10, redPackageMaxDiscount: null, redPackageRangeAmount: null }],
+          conditions: [{ conditionTreeJson: JSON.stringify(storedTree) }], gifts: [], bindings: [], poolRefs: [],
+        }))
+      }))
+
+      const { wrapper } = await setup(false, '/console/activities/DIS/edit')
+      await flushPromises()
+
+      // 条件树 UI 里只剩运营自己那一条
+      expect(wrapper.html()).not.toContain('userDistrictId')
+      // 而地域本身仍由 DistrictPicker 完整回显（同一件事只有一个控件）
+      expect(wrapper.get('[data-testid="district-chips"]').text()).toContain('广东')
+
+      await wrapper.get('[data-testid="submit"]').trigger('click')
+      await flushPromises()
+
+      const tree = bodies[0].eligibilityConditionTree
+      expect(JSON.stringify(tree)).not.toContain('userDistrictId')
+      expect(tree.children).toHaveLength(1)
+      expect(tree.children[0].field).toBe('userLevel')
+      // 地域仍旧原样带回去，由后端重新翻译一次
+      expect(bodies[0].districtIds).toBe('440000')
     })
   })
 })

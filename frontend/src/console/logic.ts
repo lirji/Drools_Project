@@ -17,7 +17,18 @@ export function assignIds(node: ConditionNode): ConditionNode {
   return node
 }
 
-/** 提交前剪空组 + 剥离临时 id（空树返回 null=恒通过）。不 mutate 入参。 */
+/**
+ * 写平面按「投放地域」自动合成的节点标记（后端 `ConditionNode.SOURCE_DISTRICT`，两侧必须同字面量）。
+ */
+export const SOURCE_DISTRICT = 'district'
+
+/**
+ * 提交前剪空组 + 剥离临时 id（空树返回 null=恒通过）。不 mutate 入参。
+ *
+ * **剥 `id` 但保留 `source`**：两者看着都像"多余字段"，性质却相反——`id` 是本页给递归组件用的
+ * 临时 key，后端不认；`source` 是后端做幂等合成的唯一依据，剥了它，上一次注入的地域条件
+ * 就会被当成运营手写的条件留下来，下次保存再叠一条，见 {@link LeafNode.source}。
+ */
 export function pruneTree(node: ConditionNode | null): ConditionNode | null {
   if (!node) return null
   if (isGroup(node)) {
@@ -25,11 +36,42 @@ export function pruneTree(node: ConditionNode | null): ConditionNode | null {
       .map(pruneTree)
       .filter((x): x is ConditionNode => x !== null)
     if (!kids.length) return null
-    return { logic: node.logic, children: kids }
+    return node.source ? { logic: node.logic, children: kids, source: node.source }
+      : { logic: node.logic, children: kids }
   }
   // 叶子：剥 id
   const leaf = node as LeafNode
-  return { field: leaf.field, op: leaf.op, value: leaf.value }
+  return leaf.source ? { field: leaf.field, op: leaf.op, value: leaf.value, source: leaf.source }
+    : { field: leaf.field, op: leaf.op, value: leaf.value }
+}
+
+/**
+ * 剥掉写平面按「投放地域」自动合成的节点，还原成运营手写的那棵树。
+ * 与后端 `ActivityMarketingService.stripDistrictNodes` **同语义**，两侧都要剥：
+ *
+ * - 后端剥，是为了不把上次注入的条件当成用户条件、无限叠加；
+ * - 前端剥（`loadForEdit`），是为了运营在条件树 UI 里**看不到也改不了**这条自己没写过的规则——
+ *   它可能是一条含上百个代码的 `IN`，展开在界面上既没法读，手动删了还会与「投放地域」控件的显示对不上。
+ *
+ * 两种形态都要认：① 并进 AND 组的那片叶子；② 包在外面的那层 AND 组（还原成里面的用户子树）。
+ * 不 mutate 入参。
+ */
+export function stripDistrictNodes(node: ConditionNode | null): ConditionNode | null {
+  if (!node) return null
+  if (!isGroup(node)) return node.source === SOURCE_DISTRICT ? null : node
+  const kids = node.children
+  if (node.source === SOURCE_DISTRICT) {
+    // 我们造的包装组：里面至多一个非 district 子节点，就是原来的用户树。
+    for (const child of kids) {
+      if (child.source !== SOURCE_DISTRICT) return stripDistrictNodes(child)
+    }
+    return null
+  }
+  const kept = kids
+    .map(stripDistrictNodes)
+    .filter((x): x is ConditionNode => x !== null)
+  if (!kept.length) return null // 组被掏空 = 这棵树本来就只有地域条件
+  return { ...node, children: kept }
 }
 
 export interface LadderRow {

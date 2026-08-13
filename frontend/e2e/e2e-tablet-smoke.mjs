@@ -24,6 +24,20 @@ try {
   // 无横向溢出（body scrollWidth 不超 viewport 太多）
   const overflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
   overflow <= 4 ? ok(`平板无横向溢出（body 溢出 ${overflow}px）`) : no(`平板横向溢出 ${overflow}px`)
+
+  // 768 正是地域级联**仍然三栏并排**的那一档（<768 才塌成单栏），也就是最容易被长地名撑破的宽度。
+  // 量完必须收起：展开的面板会把 submit 顶下去，Playwright 的可操作性检查会直接超时。
+  await page.selectOption('[data-testid="form-area-type"]', '2')
+  await page.waitForSelector('[data-testid="district-toggle"]', { timeout: 10000 })
+  await page.locator('[data-testid="district-toggle"]').click()
+  // 同 phone-smoke：等真实选项，不然量到的是字典到达前的 Skeleton，断言静默通过。
+  await page.waitForSelector('[data-testid="district-opt-440000"]', { timeout: 15000 })
+  const districtOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
+  districtOverflow <= 4
+    ? ok(`平板 768：地域三栏展开后无横向溢出（${districtOverflow}px）`)
+    : no(`平板 768：地域三栏横向溢出 ${districtOverflow}px —— 栏宽写了硬 min-width？`)
+  await page.locator('[data-testid="district-toggle"]').click()
+  await page.selectOption('[data-testid="form-area-type"]', '1') // 回全国，不给提交加必填项
   await page.locator('[data-testid="submit"]').click()
   await page.waitForSelector('[data-testid="save-success"]', { timeout: 15000 })
   ok('平板 768：表单可完整填写并提交成功')

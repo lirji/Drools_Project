@@ -6,6 +6,7 @@ import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.engine.RuleSchemaRegistry;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityQueryService;
+import com.lrj.drools.activity.service.DistrictQueryService;
 import com.lrj.drools.activity.service.GenerationService;
 import com.lrj.drools.activity.service.AddOnPurchaseService;
 import com.lrj.drools.activity.service.AddOnPurchaseService.AddOnOption;
@@ -62,13 +63,14 @@ class ActivityMarketingAddOnAliasTest {
     @Mock AddOnPurchaseService addOn;
     @Mock RuleSchemaRegistry schemaRegistry;
     @Mock GenerationService generations;
+    @Mock DistrictQueryService districts;
 
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         ActivityMarketingController controller =
-                new ActivityMarketingController(marketing, query, addOn, schemaRegistry, generations);
+                new ActivityMarketingController(marketing, query, addOn, schemaRegistry, generations, districts);
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

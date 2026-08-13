@@ -39,8 +39,13 @@ class TenantArchGuardTest {
      * {@code findAll()} 扫描；若加 @TenantId，后台线程会被自动追加 {@code tenant_id = NO_TENANT} 谓词而恒空。
      * 隔离由 poller 读某租户 ACTIVE artifact 时的 {@code TenantContext.callWith(tenant,…)} 保证，不靠本表自过滤。
      * 详见 {@link com.lrj.drools.activity.persistence.ActivityGenerationEntity} 类注释。
+     *
+     * <p>{@code DistrictEntity}（行政区划字典）：国家标准的参考数据，<b>不属于任何租户</b>。
+     * 加了 {@code @TenantId} 就意味着每来一个租户复制一份 3212 行的字典；更要命的是落库的
+     * {@code DistrictSeeder} 跑在启动期、<b>没有请求上下文</b>，写进去的那份只有兜底租户看得见，
+     * 其余租户查到的是空字典。本表只读不写、也不含任何租户数据，泄漏面为零。
      */
-    private static final Set<String> GLOBAL_ENTITIES = Set.of("ActivityGenerationEntity");
+    private static final Set<String> GLOBAL_ENTITIES = Set.of("ActivityGenerationEntity", "DistrictEntity");
 
     @Test
     void everyEntityHasTenantId() throws Exception {

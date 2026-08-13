@@ -36,22 +36,63 @@ export interface DictOperator {
   operand: 'SCALAR' | 'RANGE' | 'LIST'
 }
 
+/**
+ * GET /activity-marketing/districts —— 行政区划字典，地域选择器的取值域。
+ *
+ * `level` 与树深**解耦**：117 个区县级（level=3）直接挂在省级下面（直辖市的区、省直辖县级市、
+ * 兵团师市），它们的 `parent` 是省级码。所以级联不能假设「省→市→区」严格三层。
+ */
+export interface District {
+  code: string
+  name: string
+  shortName: string
+  level: 1 | 2 | 3
+  parent: string | null
+  /** 全拼，已去空格（后端归一化，恒非 null） */
+  pinyin: string
+  /** 拼音首字母，恒非 null（给不出时是空串） */
+  pinyinInitial: string
+}
+
 /** 条件树节点：分组（logic+children）或叶子（field/op/value）。id 是前端临时 key，提交前 pruneTree 剥离 */
 export interface GroupNode {
   id?: string
   logic: 'AND' | 'OR'
   children: ConditionNode[]
+  /** 见 {@link LeafNode.source}。包装组同样会被标记，剥离时才能还原出里面的用户子树。 */
+  source?: string
 }
 export interface LeafNode {
   id?: string
   field: string
   op: string
   value: string | string[]
+  /**
+   * 这个节点是**谁生成的**：运营手写的为 `undefined`，写平面按「投放地域」自动合成的为 `'district'`
+   * （后端 `ConditionNode.SOURCE_DISTRICT`）。
+   *
+   * **不是装饰字段**：`id` 是纯 UI 概念所以 `pruneTree` 要剥，`source` 恰恰相反——
+   * 它是后端做幂等合成的**唯一依据**。剥掉它，后端就会把上一次自己注入的
+   * `userDistrictId IN (...)` 当成运营手写的条件保留下来，再叠一条新的，于是
+   * 「把投放地域从广东改成北京」会得到 `IN(广东…) AND IN(北京…)` —— 恒不命中、**静默停发**。
+   */
+  source?: string
 }
 export type ConditionNode = GroupNode | LeafNode
 
+/**
+ * 分组节点判别。**必须与后端 `ConditionNode.isGroup()`（`logic != null && !logic.isBlank()`）一致。**
+ *
+ * <p>不能写成 `logic !== undefined`：后端存 `condition_tree_json` 用的是零配置 `new ObjectMapper()`，
+ * 默认 `JsonInclude.ALWAYS`，于是**叶子节点也带着 `"logic": null` 落库**：
+ * `{"logic":null,"children":null,"field":"userLevel","op":">=","value":"3","source":null,"group":false}`。
+ * 而 `null !== undefined` 为真——每一片叶子都会被判成分组，取 `node.children` 得 `null`，
+ * `.forEach`/`.map` 当场 TypeError，再被 `loadForEdit` 的 `catch` 静默吞掉：
+ * **打开一个配了资格条件的存量活动，条件树整棵消失；再保存一次，它就真的没了。**
+ */
 export function isGroup(n: ConditionNode): n is GroupNode {
-  return (n as GroupNode).logic !== undefined
+  const logic = (n as GroupNode).logic
+  return typeof logic === 'string' && logic.trim() !== ''
 }
 
 /** POST /activity-marketing/create 请求体 */
