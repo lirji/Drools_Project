@@ -1,5 +1,15 @@
 # 执行进度
 
+> ⚠️ **本文是 2026-08-09 那一轮（P0/P1 分层引擎 + 代际快照 + 指标）的历史归档，不再是「当前」进度锚**。
+> 2026-08-12 的**活动引擎结构性重构**已在它之上做了一轮，交接请以
+> [`docs/plans/activity-design-refactor-0812-1232/`](../activity-design-refactor-0812-1232/) 为准
+> （`FINAL_PLAN.md` 方案 / `AUDIT-FINDINGS.md` 原始审查 / `BREAKING-CHANGES.md` 对外契约变更）。
+>
+> 正文按仓库约定**不重写**，但有一处会误导接手人，先在这里说明：§data 那条以 `CandidateTemplate`
+> 为快照物料权威的说法（「它是 record，漏传构造参数编译期即报错」）**已经不成立**——该类已被删除，
+> 快照侧与走库侧现在共用 `OfferSpec.from` 这一个装配入口，由 `OfferSpecArchGuardTest` 钉死。
+> 那条记录描述的问题（三份手写字段扇出、只有一份被编译器守着）正是新一轮 R7 要解决的东西。
+
 > 交接锚点。看这里判断「做到哪了、下一步是什么」。
 > 计划见 [FINAL_PLAN.md](FINAL_PLAN.md)，裁决见 [DECISION_RECORD.md](DECISION_RECORD.md)。
 

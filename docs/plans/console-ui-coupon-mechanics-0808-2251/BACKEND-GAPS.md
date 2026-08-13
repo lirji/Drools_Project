@@ -1,7 +1,7 @@
 # 设计所依赖、但后端尚不存在的接口
 
 > 抽自设计规范 §14，按 2026-08-10 实现重新核对：**屏 5（监控看板）已有单实例聚合端点，但仍缺时序/分位/回退率契约；屏 6（发布与实验）仍整屏无接口**。
-> 屏 4 已有 discount / gifts / addon 三通道验证与平铺 trace，仍没有按阶段聚合的淘汰原因、耗时瀑布或真实订单载入。资格已固定共用 `DecisionEligibilityService`，红包六形态固定由 `BenefitEvaluator` 求值；两个旧 `java-*` false 属性只保留配置兼容，不会切回 DRL。
+> 屏 4 已有 discount / gifts / addon 三通道验证与平铺 trace，仍没有按阶段聚合的淘汰原因、耗时瀑布或真实订单载入。资格已固定共用 `DecisionEligibilityService`，红包六形态固定由 `BenefitEvaluator` 求值；两个旧 `java-*` 属性**已于 2026-08-12 从代码里删除**——此前是「绑定但不读取」，现在是根本不绑定（去 yml 里找会一无所获）。
 > 四眼发布、报价库存前后不变、无 `claim` 请求和 390/768/1440 结果态响应式验收已在 2026-08-10 的 Docker 完整 `e2e:validate` 中一次通过（pass=472 / fail=0），不再是只有静态接入。
 > 原型中超出现有契约的部分仍必须先做未接入态（见文末降级约定），不得用假数据填图。
 
@@ -52,8 +52,8 @@
 | 需要 | 当前底层能力 | 仍缺的契约 |
 |---|---|---|
 | 版本时间线 | status 发布已有 version/actor，但无时间线查询 | `GET /activities/{id}/releases` → `[{version, publishedAt, publisher, summary, approvals:[{user,at,result}], rolledBackFrom?}]` |
-| 四眼审批 | `activity.marketing.four-eyes-enabled=true` 时，现有 status 发布强制“提交人 ≠ 发布人”；Docker E2E 已实跑通过自审 409 + 异人发布 | 专用 `POST /releases/{id}/approve` / `/reject`、审批记录与屏 6 UI |
-| 回滚 | 无专用契约 | `POST /releases/{id}/rollback` + 影响摘要 `GET /releases/{id}/rollback-impact` |
+| 四眼审批 | `activity.marketing.four-eyes-enabled=true` 时，现有 status 发布强制“提交人 ≠ 发布人”；Docker E2E 已实跑通过自审拒绝 + 异人发布。**状态码 2026-08-12 由 409 改为 403**（四眼拒绝是「没有权限」不是「状态冲突」，此前的 409 是 `IllegalStateException` 实现细节泄漏；`e2e-validation.mjs` 的断言已同步） | 专用 `POST /releases/{id}/approve` / `/reject`、审批记录与屏 6 UI |
+| 回滚 | **部分已有**：`POST /decision/v1/snapshot/rollback?bizLine=`（2026-08-12 新增）把决策快照切回上一代，是求值器出 bug 时的**止损**按钮——不写库、本进程单实例、下一次代际推进即被覆盖。**活动版本回滚仍无专用契约**（要退版本只能走 console 的 status 端点重新发布旧版） | `POST /releases/{id}/rollback` + 影响摘要 `GET /releases/{id}/rollback-impact` |
 | 实验 | 无 | `GET /experiments/{id}` → `{buckets:[{name,pct,users,killed}], expected[], actual[]}`；`POST /experiments/{id}/kill` |
 
 ### 14.6 未接入时的统一降级约定

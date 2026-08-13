@@ -108,7 +108,7 @@
 | GET | `/grants?orderId=` | 按单查发放记录（客服「这一单用了哪些优惠」的数据源） |
 | GET | `/generation?bizLine=` | 库里当前发布代际——决策响应里 `provenance.generation` 的**参照物**（行不存在返回 0）。只看决策侧那个数判断不了「我刚发布的那次进去了没有」 |
 | GET | `/list` | 活动列表（当前版本） |
-| GET | `/{id}` | 详情（manage/rules/conditions/bindings/gifts/poolRefs） |
+| GET | `/{id}` | 详情（manage/rules/conditions/bindings/gifts/poolRefs）+ **`servingVersion`**。返回的 `manage` 是**最高未删除版**（P0-4 之后通常是草稿）——编辑器拿它当编辑基线，编辑就该编草稿。而 `servingVersion` 是**当前正在发钱的那一版**（最高 ONLINE 版，没有上线版本时为 null）：「你看的这一版可能不是正在服务的那一版」这件事由服务端说出来，不留给调用方拿列表行去猜 |
 | POST | `/spu-discount` | 红包优惠查询（资格→阶梯→折扣合并 + 回退 + trace）。控制台是运营的调试入口，**显式 `DecisionMode.EXPLAIN`** |
 | POST | `/gifts` | 买赠查询（同样 `EXPLAIN`） |
 | POST | `/addon/options` | 加价购第一阶段：列出当前请求上下文可选的换购品（空列表是正常结果）。同样是 `EXPLAIN` 档 |

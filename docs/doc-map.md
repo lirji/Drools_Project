@@ -1,6 +1,7 @@
 # Doc Map（由 /doc-sync 维护）
-lastSyncedCommit: 待填（工作树未提交）  # 最后一个真正对到提交的同步点是 fb87d4e；其后两批改动（链路评审整改 / 验证页改打决策平面）目前**只在工作树里**，落成提交后把这里换成真 sha，别提前填一个猜的
-lastSyncedAt: 2026-08-11
+lastSyncedCommit: 5b7ba69  # refactor/activity-design 分支末端。上一条留的「待填」已结清：
+                           # 当时只在工作树里的两批（链路评审整改 / 验证页改打决策平面）后来落成了 50eaca2 及之前的提交
+lastSyncedAt: 2026-08-13
 
 ## 映射
 | 代码区域 / 模块 | 相关文档 | 类型 | 说明 |
@@ -24,6 +25,7 @@ lastSyncedAt: 2026-08-11
 | 前端视觉换代（深空遥测 · dark-first） | docs/plans/frontend-tech-visual-0809-1424/** | 交付 | DECISION_RECORD（G1–G10 诊断 + D0–D11）/ FINAL_PLAN（令牌映射全表）/ REVIEW（6红12黄4蓝处置）/ PROGRESS（进度锚）/ style-tile.html（三方向样板屏） |
 | 活动引擎全链路评审（建活动 → 上线 → 决策 → 领取 → 对账 的断点全景） | docs/plans/activity-chain-review-0811-1730/REVIEW.md | 交付 | **dated 归档，正文不重写**。B1–B9 九个断点 + P0-1~P2-15 分级；2026-08-11 那批整改（作用域 / 封顶 / 下线也 bump / claim 幂等 + 流水 / 决策审计日志）就是照这份做的——想知道某处改动**为什么**要改，先读它 |
 | 验证页改打决策平面（provenance + 快照诊断端点） | docs/plans/validate-decision-plane-0811-1640/** | 交付 | DECISION_RECORD（D1–D10，每条带**被否方案**列：只回显三个值 / 平铺三字段 / 页面自动降级 / 前端排序补救）+ PROGRESS（gateway :8095 实跑证据 + 未做项）。承接上一行的 P1-9 |
+| **活动引擎结构性重构**（设计模式 / 可读性 / 扩展性） | docs/plans/activity-design-refactor-0812-1232/** | 交付 | **FINAL_PLAN**（4 根因 + 18 项 + 6 批次 + 明确不做清单）/ **AUDIT-FINDINGS**（36 条原始发现与逐条对抗判定，含 11 条 P0 全部被推翻的记录）/ **BREAKING-CHANGES（对外契约变更清单，改调用方前必读）**。已被 CLAUDE.md / README / architecture / QA_PROFILE 四处列为必读 |
 | 历史进度（activity-marketing 移植 / 原生前端台） | IMPLEMENTATION_PROGRESS.md | 归档 | ✅ 已加"已被 F3/四模块重构取代"顶部横幅（引用的 app.js/examples.js 已删） |
 
 ## 变更类型
@@ -52,7 +54,7 @@ lastSyncedAt: 2026-08-11
   ③ 顺带修了**代码注释**里的两处幽灵：`BenefitEvaluator` javadoc 引用的 `BenefitEvaluatorParityTest` 全仓不存在（连同 39→52 例订正）、
      `TenantContextFilter` javadoc 还写着"只挂 /activity-marketing/*"（早已扩到 /decision/v1/*）。
   ④ README 补了**整节缺失的 Step 3**（此前从 Step 2 直接跳到 Step 4，`/cart/checkout` 从未介绍）。
-  基线：后端 371（common 150 含 3 gated skip / drools-lab 0 / console 204 / decision 17），本机实跑（**该批次的时点值**；当前基线见本文件最后一条变更：后端 430 / 前端 283）。
+  基线：后端 371（common 150 含 3 gated skip / drools-lab 0 / console 204 / decision 17），本机实跑（**该批次的时点值**，非当前基线；当前基线见本文件最后一条变更）。
   容量结论一句话：每活动常驻 **纯 Java 1.8 KB / QLExpress 8.4 KB / Drools ~180 KB**——差的是量级，不是调优空间。
 
 - 2026-08-11 链路评审整改（arch-change + bugfix）：照 `docs/plans/activity-chain-review-0811-1730/REVIEW.md` 的 P0/P1 做掉四件事：
@@ -90,3 +92,40 @@ lastSyncedAt: 2026-08-11
   基线（本机实跑，**以 `Tests run:` 汇总为准，别求和 surefire XML，见 CLAUDE.md 坑 14**）：
   后端 `./mvnw clean test` **430**（activity-common 166 含 3 skipped / drools-lab 0 / activity-console 244 / activity-decision 20）；
   前端 `npx vitest run` **283**（25 个测试文件）。
+  ↑ 这两个数是**该批次的时点值**，已被下一条变更取代（当前 476 / 285）。
+
+- 2026-08-13 活动引擎结构性重构 + 文档同步（arch-change + refactor + doc-sync）：
+  起因是一句「整个项目没有使用到设计模式，活动这部分可读性、拓展性不高」。先做六维并行审查（36 条发现、逐条对抗验证），
+  **11 条被提为 P0 的发现验证后一条都没留下**——推翻理由集中在三类：作者注释里已解释且理由成立、伤害路径今天不可达、
+  提出的抽象反而增加理解成本。结论是这套代码**没有在产的结构性故障**，问题几乎全是「未来成本」，
+  于是方案的排序依据定为「这个抽象今天就在阻止一类静默事故复发」而不是「这里可以套一个模式」。
+  归并出的**根因**是：契约密度极高但**只写在注释里、没有落到类型上**——每一条「必须记得」都是一次未来的静默事故。
+  ① **单一装配入口**：新增不可变 `OfferSpec`，收敛走库 `flatten` / 快照 `CandidateTemplate` / `toCandidate` 三份手写字段扇出
+     （只有中间那份被编译器守着，这条缝已裂开过两次：坑 16 `scopedSpuIds`、`DecisionSnapshot:194` 的 `redPackageMaxDiscount`）；
+     `CandidateTemplate` 删除，由 `OfferSpecArchGuardTest` 钉死。
+  ② **编译期穷尽**：`computeAmounts` 六形态分派改成**无 `default` 的 switch 表达式**（漏分支即编译失败）——
+     注意必须是**表达式**，arrow switch 语句对枚举并不强制穷尽；两道横切 guard（随机排在 `redPackageAmount==null` 之前）留在 switch 外。
+  ③ **单一词汇表**：`RejectReason`（code 进指标 + message 进 rejectReason，此前两条独立语句手工配对、已实证漂移过
+     `price-above-order` vs `price-above-base`）、`DecisionScene`（收敛四套 scene 词汇）、`DecisionAttrs`（钉住决策属性键）、
+     `DecisionMode`（取代裸 boolean explain 并删掉四个默认值方向相反的无参重载）。
+  ④ **类型级只读边界**：六个 `*ReadRepository extends Repository<T,ID>`（非 `JpaRepository`，`save`/`delete` 在类型上不存在），
+     `ActivityPoolMatchService` 上浮 console。此前「decision 写不了库」只靠运行期只读账号。
+  ⑤ **领域异常层**：`ActivityException` + `ActivityErrorCode` + 两个 `@RestControllerAdvice`。
+     两处**刻意不注册**的兜底同样重要：console 不注册 `ISE→409`（会把 `list`/`grants` 上的内部 bug 伪装成客户端错误）、
+     decision 不注册 `IAE→400`（同理）。
+  ⑥ 写平面拆 `GrantService` + `ActivityVersionResolver` + 状态迁移表 + `targetStatus=3` 封口；
+     快照消构建期 N+1、`SnapshotSlot` 原子替换、**新增生产可达的回滚端点**（此前 `rollback` 零生产调用方，
+     文档承诺的「回滚是止损手段」是空头支票）。
+  **对外契约变更**（详见 BREAKING-CHANGES.md）：四眼 409→**403**、claim 恒 409→**400/404/409 分流**、release 缺参→400、
+  bulk-status 非法 targetStatus→400、`activity_decision_source_total` 的 scene 标签值改用 `DecisionScene.code()`
+  （已核对 grafana/prometheus 均无消费者）、详情响应新增 `servingVersion`。
+  **等价审查抓到两条真问题并已修**（提交 `6ed0e77`）：快照桶归属被下推成 SQL 相等，生产 MySQL 的
+  `utf8mb4_0900_ai_ci` 大小写不敏感会让 `Retail` 漏进 `retail` 桶（**改变了谁能被发钱**，而测试跑 H2 照不出来
+  → 新增坑 19 + `SnapshotBizLineCollationTest` 用 `IGNORECASE=TRUE` 复现生产排序规则）；console 的 `ISE→409` 兜底作用域过宽。
+  ⚠️ 一条值得记住的教训：**`e2e-validation.mjs` 里断言四眼 409 的用例在整轮重构中一直是红的却没人知道**——
+  e2e 不在 `./mvnw test` 与 `vitest` 的闸门里。闸门覆盖不到的契约，改了不会有人告诉你。
+  基线（本机实跑，以 `Tests run:` 汇总为准，见坑 14）：后端 **476**（common 193 含 3 skipped / drools-lab 0 /
+  console 256 / decision 27）、前端 **285**（25 个测试文件）。增量全部来自新增的结构性护栏用例，不是新功能。
+  同批 doc-sync：7 份活文档更新、**22 处不实描述经对抗校验修掉**；另处理 5 个缺口（本文件回写、
+  `steps-guide` 的「decision 只读」断言订正、`servingVersion` 补文档、`BACKEND-GAPS` 三处订正、
+  `benefit-model-refactor/PROGRESS.md` 加顶部横幅）。

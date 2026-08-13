@@ -102,7 +102,22 @@
 
 ---
 
-## 四、响应体键顺序（已修回，无需下游动作）
+## 四、响应体新增字段（纯附加，无需下游动作）
+
+**`GET /activity-marketing/{id}` 的详情响应新增 `servingVersion`。**
+
+含义是「当前正在发钱的那一版」（最高 ONLINE 版，没有上线版本时为 `null`）。
+它存在的理由：详情返回的 `manage` 是**最高未删除版**——P0-4 之后线上版与草稿并存，所以那通常是**草稿**。
+编辑器拿它当编辑基线是对的（编辑就该编草稿），但「你看的这一版可能不是正在服务的那一版」
+此前只能靠调用方拿列表行自己比对（前端 `ListView.vue` 的 `versionMismatch` 就是这么算的）。
+
+纯附加字段，不影响任何既有解析。**当前零消费者**——前端还在用自算的方式。
+这本身值得记一笔：它正是这轮重构在清理的那种「加了但没人用」的模式，
+写进文档是为了让它不至于变成下一个空头支票。
+
+---
+
+## 五、响应体键顺序（已修回，无需下游动作）
 
 R13 把 `tenantId` / `isDel` / 双时间戳收进 `@MappedSuperclass` 之后，Jackson 默认把**超类属性排在子类之前**，
 于是 `/activity-marketing/{list,detail,grants}` 的每个实体对象从 `{"id":…,"activityId":…}`
@@ -114,7 +129,7 @@ R13 把 `tenantId` / `isDel` / 双时间戳收进 `@MappedSuperclass` 之后，J
 
 ---
 
-## 五、观测口径的两处变化（不影响正确性，影响读数）
+## 六、观测口径的两处变化（不影响正确性，影响读数）
 
 ### 1. 买赠回退分支：「零赠品的合格候选」不再计命中
 
@@ -145,4 +160,6 @@ R13 把 `tenantId` / `isDel` / 双时间戳收进 `@MappedSuperclass` 之后，J
 - 三条最关键的不变量由我人工读 diff 确认：随机红包种子链一字未改、形态分派是**无 `default` 的 switch 表达式**
   （漏分支即编译失败）、走库与快照共用 `OfferSpec.from` 单一装配入口
 
-测试：后端 474 通过（common 191/3 skipped、console 256、decision 27，基线 430），前端 285 通过（基线 283）。
+测试：后端 **476** 通过（common 193/3 skipped、console 256、decision 27，基线 430），前端 **285** 通过（基线 283）。
+增量全部来自本轮新增的**结构性护栏**用例（`SnapshotBizLineCollationTest` / `EntityJsonOrderTest` /
+`OfferSpecArchGuardTest` / `DecisionReadRepositoryGuardTest` / `ConditionTreeGuardTest` …），不是新功能。

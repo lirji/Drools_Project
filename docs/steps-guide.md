@@ -6,7 +6,12 @@
 >
 > **不想 curl 就开 SPA**：前端「规则能力」目录（`/ui/demos`）已把 Step 1–18 的全部端点做成可点即跑的示例台（每个 Step 预置若干示例请求，执行后除了 HTTP 状态还会把**最近 12 次**耗时画成 sparkline；换示例会清空该序列，避免不同 payload 的耗时混进同一条线）。SPA 要么用 `./mvnw -pl activity-console -Pfrontend spring-boot:run` 打进 console 的 `static/ui/`，要么走 compose 的网关 `http://localhost:8095/ui/demos`（编排里前端由 gateway 镜像托管，不在 console 的 JAR 里）。
 >
-> **8082 的 `activity-decision` 不含 Step 1–18**，它只暴露活动引擎的只读决策 / 观测端点（`/decision/v1/**`：`spu-discount` / `gifts` / `addon/*` / `metrics` / `by-activity` / `snapshot`）。它已改回 `ddl-auto: validate`（只读平面不碰 DDL，建表由 console 独占），所以本地单独 `./mvnw -pl activity-decision spring-boot:run` 前得先让 console 起过一次把表建好，否则启动即 validate 失败。
+> **8082 的 `activity-decision` 不含 Step 1–18**，它暴露活动引擎的决策 / 观测端点（`/decision/v1/**`：`spu-discount` / `gifts` / `addon/*` / `metrics` / `by-activity` / `snapshot` / `snapshot/rollback`）。它已改回 `ddl-auto: validate`（只读平面不碰 DDL，建表由 console 独占），所以本地单独 `./mvnw -pl activity-decision spring-boot:run` 前得先让 console 起过一次把表建好，否则启动即 validate 失败。
+>
+> ⚠️ **「decision 是只读平面」这条断言从 2026-08-12 起有了一个例外**：`POST /decision/v1/snapshot/rollback`（把该业务线的决策快照切回上一代，是 `BenefitEvaluator` 出 bug 时的止损按钮）。
+> 它**不写数据库**，所以只读账号那条边界依然成立——但它切的是进程内的快照指针，**下一次决策发出去的钱会立刻改变**。
+> 正因为它不写库，才最容易被「只读平面」这四个字掩盖过去：它需要 `console-write-authority`，作用域是**本进程单实例**，且下一次代际推进就会被覆盖（是止血，不是回退发布）。
+> 想改活动版本本身，仍然只能走 console 的 `POST /activity-marketing/{id}/status`。
 
 ## 各 Step 详解
 
