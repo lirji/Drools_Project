@@ -89,4 +89,35 @@
          所以这里只声明 kbase, 不需要 ksession。 -->
     <kbase name="dmnKBase" packages="rules.dmn"/>
 
+    <!-- Step 19: LHS 量词补全 (collect / forall / eval)。补 Step 4 (not/exists) 没覆盖的
+         另外三种 LHS 条件元素, 独立 kbase 避免跟 Step 4 的风控规则互相触发。 -->
+    <kbase name="quantifierKBase" packages="rules.quantifier">
+        <ksession name="quantifierSession"/>
+    </kbase>
+
+    <!-- Step 8 扩展 (CEP 补完): 长度滑窗 + 时序操作符 + 多 entry-point。跟原 fraudKBase
+         同样是 stream mode + pseudo clock, 但独立 kbase —— 原 /fraud/check 只输出 BurstAlert,
+         这里的进阶规则输出 FraudAlert, 两者互不干扰。 -->
+    <kbase name="fraudCepKBase" packages="rules.fraudcep" eventProcessingMode="stream">
+        <ksession name="fraudCepSession" clockType="pseudo"/>
+    </kbase>
+
+    <!-- Step 20: RHS 对外 (globals / channels)。规则动作侧往外部推副作用 (审计/通知),
+         不往 working memory 留 fact。 -->
+    <kbase name="dispatchKBase" packages="rules.dispatch">
+        <ksession name="dispatchSession"/>
+    </kbase>
+
+    <!-- Step 21: traits (给 fact 动态贴接口做运行时多态)。don/shed 运行时支持来自
+         drools-traits 依赖；@Traitable 核心类在 domain/Applicant。 -->
+    <kbase name="traitsKBase" packages="rules.traits">
+        <ksession name="traitsSession"/>
+    </kbase>
+
+    <!-- Step 22: fireUntilHalt (引擎作为常驻守护线程持续消费事实)。规则本身普通,
+         区别在 service 把 fire 跑在另一个线程里、靠哨兵任务 halt。 -->
+    <kbase name="fireUntilHaltKBase" packages="rules.fireuntilhalt">
+        <ksession name="fireUntilHaltSession"/>
+    </kbase>
+
 </kmodule>

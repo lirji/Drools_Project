@@ -1,6 +1,8 @@
 package com.lrj.drools.service;
 
+import com.lrj.drools.domain.ContainmentFinding;
 import com.lrj.drools.domain.Location;
+import com.lrj.drools.domain.WatchTarget;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
 import org.kie.api.runtime.rule.QueryResults;
@@ -81,6 +83,40 @@ public class BackwardChainingService {
         }
     }
 
+    /**
+     * Step 13 扩展: 后向链嵌进前向链 LHS。
+     *
+     * 跟 evaluate() 的 pull 路径 (getQueryResults) 不同, 这里靠 **fireAllRules** 跑前向链:
+     *   1. insert 一批 Location (事实库) + 一批 WatchTarget (驱动 fact)
+     *   2. fireAllRules —— 规则 "Forward rule pulls backward query via ?isContainedIn"
+     *      在 LHS 用 ?isContainedIn($thing, $zone;) 反向证明; 成立则 insert ContainmentFinding
+     *   3. 从 working memory 捞出所有 ContainmentFinding 返回
+     *
+     * 关键点: 同一个 isContainedIn query 既能被 Java 侧 pull (evaluate), 又能被规则 LHS
+     * 的 ?query 语法 push 消费 —— 后向链作为前向链的可复用推理子程序。
+     */
+    public DeriveResult derive(List<Location> locations, List<WatchTarget> targets) {
+        KieSession session = kieContainer.newKieSession("backwardSession");
+        try {
+            locations.forEach(session::insert);
+            targets.forEach(session::insert);
+
+            // 前向链: ?isContainedIn 在 fire 时反向证明, 成立的 WatchTarget 会 insert 出
+            // 对应的 ContainmentFinding。
+            session.fireAllRules();
+
+            List<ContainmentFinding> findings = new ArrayList<>();
+            for (Object obj : session.getObjects()) {
+                if (obj instanceof ContainmentFinding f) {
+                    findings.add(f);
+                }
+            }
+            return new DeriveResult(findings);
+        } finally {
+            session.dispose();
+        }
+    }
+
     private Set<String> collectAllContainers(List<Location> locations) {
         Set<String> containers = new LinkedHashSet<>();
         for (Location l : locations) {
@@ -96,4 +132,6 @@ public class BackwardChainingService {
     public record ContainerLookup(String thing, List<String> ancestors) {}
 
     public record EvaluationResult(List<QueryAnswer> answers, List<ContainerLookup> ancestorsLookup) {}
+
+    public record DeriveResult(List<ContainmentFinding> findings) {}
 }

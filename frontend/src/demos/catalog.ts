@@ -46,6 +46,11 @@ export const GROUPS: DemoGroup[] = [
     "subtitle": "DMN 决策链 · 营销资格判定"
   },
   {
+    "id": "advanced",
+    "title": "进阶引擎能力",
+    "subtitle": "LHS 量词 · 动态多态 · 副作用出口 · 常驻消费 · 规则模板 · ML 评分"
+  },
+  {
     "id": "activity",
     "title": "活动营销",
     "subtitle": "报表式配置 · 条件树 · 优惠验证",
@@ -1341,6 +1346,238 @@ export const DEMOS: DemoDef[] = [
     "path": "/campaign/list",
     "summary": "campaignList",
     "desc": "列出所有活动（含 status + 是否已编译进内存缓存 cached）。重启后首次 check 前 cached=false。",
+    "examples": [
+      {
+        "label": "查询",
+        "body": null
+      }
+    ]
+  },
+  {
+    "id": "fraud-patterns",
+    "group": "event",
+    "step": 8,
+    "title": "CEP 进阶：长度窗 · 时序 · 多流",
+    "method": "POST",
+    "path": "/fraud/patterns",
+    "summary": "generic",
+    "desc": "CEP 进阶：over window:length(5) 长度滑窗 + this after[..] 时序操作符 + 订单流/登录流双 entry-point，输出 FraudAlert（type 区分三种模式）。",
+    "examples": [
+      {
+        "label": "三种模式各命中一次",
+        "body": {
+          "orders": [
+            { "orderId": "o1", "customerName": "cA", "amount": 2000, "timestamp": 1000000 },
+            { "orderId": "o2", "customerName": "cA", "amount": 2000, "timestamp": 1001000 },
+            { "orderId": "o3", "customerName": "cA", "amount": 2000, "timestamp": 1002000 },
+            { "orderId": "o4", "customerName": "cB", "amount": 5, "timestamp": 1003000 },
+            { "orderId": "o5", "customerName": "cB", "amount": 5000, "timestamp": 1093000 },
+            { "orderId": "o6", "customerName": "cC", "amount": 9000, "timestamp": 1210000 }
+          ],
+          "logins": [{ "customerName": "cC", "ip": "1.2.3.4", "timestamp": 1200000 }]
+        }
+      }
+    ]
+  },
+  {
+    "id": "backward-derive",
+    "group": "event",
+    "step": 13,
+    "title": "后向链嵌前向（?query）",
+    "method": "POST",
+    "path": "/backward/derive",
+    "summary": "generic",
+    "desc": "插 WatchTarget，前向规则 LHS 用 ?isContainedIn 反向证明后 insert ContainmentFinding。同一 query 被 Java pull 与规则 push 两种范式共用（后向链嵌前向）。",
+    "examples": [
+      {
+        "label": "Office ∈ Country 成立，∈ Mars 不成立",
+        "body": {
+          "locations": [
+            { "thing": "Office", "container": "House" },
+            { "thing": "House", "container": "City" },
+            { "thing": "City", "container": "Country" }
+          ],
+          "watchTargets": [
+            { "thing": "Office", "zone": "Country" },
+            { "thing": "Office", "zone": "Mars" }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "scanner-update-version",
+    "group": "hot",
+    "step": 16,
+    "title": "显式版本切换 updateToVersion",
+    "method": "POST",
+    "path": "/scanner/update-version",
+    "summary": "generic",
+    "desc": "install 到新固定 release（1.0.1/1.0.2…）再 KieContainer.updateToVersion 手动切，可精确回滚，不经 scanner（不触发 listener）。需先 deploy 建 container。",
+    "examples": [
+      {
+        "label": "切到新版本（含 R2）",
+        "body": {
+          "drl": "package rules.scanner\nimport com.lrj.drools.domain.Cart\nrule R when $c:Cart() then System.out.println(\"v2\"); end\nrule R2 when $c:Cart() then System.out.println(\"v2b\"); end"
+        }
+      }
+    ]
+  },
+  {
+    "id": "scanner-events",
+    "group": "hot",
+    "step": 16,
+    "title": "热替换事件监听",
+    "method": "GET",
+    "path": "/scanner/events",
+    "summary": "generic",
+    "desc": "KieScannerEventListener 攒到的热替换事件（STATUS_CHANGE / UPDATE_RESULTS）。只有走 scanner 的 scanNow / 自动轮询会触发。",
+    "examples": [
+      {
+        "label": "查询",
+        "body": null
+      }
+    ]
+  },
+  {
+    "id": "quantifier-review",
+    "group": "advanced",
+    "step": 19,
+    "title": "LHS 量词：collect / forall / eval",
+    "method": "POST",
+    "path": "/quantifier/review",
+    "summary": "generic",
+    "desc": "补 not/exists 之外的 LHS 元素：collect 收集成集合 · forall 全称量词（空集为真，需 exists 兜底）· eval 任意布尔（+ DRL function）。",
+    "examples": [
+      {
+        "label": "3 本书 + 高价电子 + VIP1",
+        "body": {
+          "customer": { "name": "张三", "age": 30, "vipLevel": 1, "yearsSinceRegistration": 2 },
+          "items": [
+            { "name": "书A", "quantity": 1, "unitPrice": 50, "category": "BOOK" },
+            { "name": "书B", "quantity": 1, "unitPrice": 60, "category": "BOOK" },
+            { "name": "书C", "quantity": 1, "unitPrice": 70, "category": "BOOK" },
+            { "name": "手机", "quantity": 1, "unitPrice": 3000, "category": "ELECTRONICS" }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "dispatch-run",
+    "group": "advanced",
+    "step": 20,
+    "title": "RHS 对外：global / channel",
+    "method": "POST",
+    "path": "/dispatch/run",
+    "summary": "generic",
+    "desc": "规则动作侧往引擎外部推副作用：global（sink.audit，pull 句柄）+ channel（channels[].send，push 出口）。大额订单记审计、VIP 客户发通知。",
+    "examples": [
+      {
+        "label": "VIP2 + 大额订单",
+        "body": {
+          "customer": { "name": "李四", "age": 40, "vipLevel": 2, "yearsSinceRegistration": 3 },
+          "items": [{ "name": "笔记本", "quantity": 1, "unitPrice": 1500, "category": "ELECTRONICS" }]
+        }
+      }
+    ]
+  },
+  {
+    "id": "traits-evaluate",
+    "group": "advanced",
+    "step": 21,
+    "title": "traits 动态多态",
+    "method": "POST",
+    "path": "/traits/evaluate",
+    "summary": "generic",
+    "desc": "给 @Traitable 的 Applicant 运行时 don 上 PremiumApplicant，之后它能被 trait 类型模式匹配（动态多态）。低收入者不被 don、看不见。",
+    "examples": [
+      {
+        "label": "高收入 don 上 trait，低收入不",
+        "body": {
+          "applicants": [
+            { "name": "王五", "age": 35, "annualIncome": 300000 },
+            { "name": "赵六", "age": 28, "annualIncome": 80000 }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "fireuntilhalt-process",
+    "group": "advanced",
+    "step": 22,
+    "title": "fireUntilHalt 常驻消费",
+    "method": "POST",
+    "path": "/fireuntilhalt/process",
+    "summary": "generic",
+    "desc": "引擎跑在守护线程里持续消费事实（不像 fireAllRules 跑空就返回）；末尾哨兵任务触发 drools.halt() 收尾。返回处理回执。",
+    "examples": [
+      {
+        "label": "3 个任务",
+        "body": {
+          "tasks": [
+            { "id": "t1", "amount": 10 },
+            { "id": "t2", "amount": 20 },
+            { "id": "t3", "amount": 30 }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "template-discount",
+    "group": "advanced",
+    "step": 23,
+    "title": "规则模板 .drt",
+    "method": "POST",
+    "path": "/template/discount",
+    "summary": "generic",
+    "desc": "档位配置（数据行）+ .drt 模板 → ObjectDataCompiler 展开成 DRL（每行一条 rule）→ KieHelper 编译跑。响应带上生成的 DRL。",
+    "examples": [
+      {
+        "label": "订单 800 命中第二档 0.85",
+        "body": {
+          "customer": { "name": "张三", "age": 30, "vipLevel": 1, "yearsSinceRegistration": 2 },
+          "items": [{ "name": "x", "quantity": 1, "unitPrice": 800, "category": "MISC" }],
+          "tiers": [
+            { "minAmount": 0, "maxAmount": 500, "discount": 0.95 },
+            { "minAmount": 500, "maxAmount": 1000, "discount": 0.85 },
+            { "minAmount": 1000, "maxAmount": 1000000000, "discount": 0.75 }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "pmml-score",
+    "group": "advanced",
+    "step": 24,
+    "title": "PMML / Scorecard 评分",
+    "method": "POST",
+    "path": "/pmml/score",
+    "summary": "generic",
+    "desc": "trusty PMML 独立求值引擎跑 ML 模型：credit-scorecard 评分卡（初始分 + 各特征档位分 + reasonCode）/ risk-regression 线性回归。",
+    "examples": [
+      {
+        "label": "评分卡（→170）",
+        "body": { "model": "credit-scorecard", "inputs": { "age": 30, "income": 50000 } }
+      },
+      {
+        "label": "线性回归（→20）",
+        "body": { "model": "risk-regression", "inputs": { "age": 30, "income": 50000 } }
+      }
+    ]
+  },
+  {
+    "id": "pmml-models",
+    "group": "advanced",
+    "step": 24,
+    "title": "PMML 模型清单",
+    "method": "GET",
+    "path": "/pmml/models",
+    "summary": "generic",
+    "desc": "列出已编译的 PMML 模型 key。",
     "examples": [
       {
         "label": "查询",

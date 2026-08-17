@@ -1,0 +1,19 @@
+template header
+minAmount
+maxAmount
+discount
+
+package rules.template;
+
+import com.lrj.drools.domain.Order;
+
+template "tiered-discount"
+
+rule "tier_@{row.rowNumber}_@{minAmount}"
+when
+    $o : Order( totalAmount >= @{minAmount}, totalAmount < @{maxAmount} )
+then
+    $o.applyRatioDiscount(@{discount}, "满 @{minAmount} 档 → @{discount} 折(模板生成)");
+end
+
+end template

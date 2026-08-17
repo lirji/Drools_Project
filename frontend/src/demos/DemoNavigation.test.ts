@@ -15,7 +15,7 @@ describe('规则能力中心分组导航', () => {
 
     expect(wrapper.text()).toContain('规则能力中心')
     expect(wrapper.text()).not.toMatch(/实验|学习|教程|Step/i)
-    expect(wrapper.findAll('[data-testid^="demo-home-"]')).toHaveLength(33)
+    expect(wrapper.findAll('[data-testid^="demo-home-"]')).toHaveLength(44)
 
     await wrapper.get('[data-testid="demo-search"]').setValue('CEP')
     expect(wrapper.find('[data-testid="demo-home-fraud-check"]').exists()).toBe(true)
@@ -25,7 +25,7 @@ describe('规则能力中心分组导航', () => {
     const eventFilter = wrapper.findAll('.filters button').find((button) => button.text().includes('实时事件'))
     expect(eventFilter).toBeDefined()
     await eventFilter!.trigger('click')
-    expect(wrapper.findAll('[data-testid^="demo-home-"]')).toHaveLength(2)
+    expect(wrapper.findAll('[data-testid^="demo-home-"]')).toHaveLength(4)
   })
 
   it('详情导航自动展开当前分组，并能跨分组搜索', async () => {

@@ -40,6 +40,8 @@
 package rules.backward
 
 import com.lrj.drools.domain.Location
+import com.lrj.drools.domain.WatchTarget
+import com.lrj.drools.domain.ContainmentFinding
 
 // ───── 位置参数 (positional pattern) 语法说明 ─────
 //
@@ -70,4 +72,27 @@ end
 
 query findContainers(String x, String y)
     isContainedIn(x, y;)
+end
+
+// ───── Step 13 扩展: 把后向链嵌进前向链 LHS (?queryName 语法) ─────
+//
+// 上面两个 query 是"声明式子程序"。原 /backward/contains 走 Java 侧 getQueryResults 主动
+// pull。这条**前向链规则**换一种消费方式: 在 LHS 里用 `?isContainedIn($thing, $zone;)`
+// 直接把后向链推理拉进来 —— 前缀 `?` 表示"pull 式查询调用" (backward chaining), 与不带
+// `?` 的普通 query 位置模式相对。
+//
+//   - 两个参数都是**已绑定**输入 ($thing / $zone 来自 WatchTarget) 时, ?query 退化成一个
+//     布尔测试: 后向链证明成立 → 该 activation 通过 → 规则 fire
+//   - 于是"后向链的证明结果"驱动了"前向链的动作 (insert ContainmentFinding)", 这正是
+//     后向链嵌入前向链的意义: 递归可达性判断作为普通规则的一个条件复用
+//
+// 注意: 这条规则需要 fireAllRules 才会跑 (前向链 push); 而 query 本身仍可被 Java 侧
+// getQueryResults 独立 pull —— 同一个 isContainedIn 被两种范式共用。
+rule "Forward rule pulls backward query via ?isContainedIn"
+    when
+        $w : WatchTarget( $thing : thing, $zone : zone )
+        ?isContainedIn( $thing, $zone; )
+    then
+        insert(new ContainmentFinding($thing, $zone, true));
+        System.out.println("[backward-fwd] " + $thing + " ∈ " + $zone + " (backward-chained)");
 end

@@ -1,0 +1,86 @@
+// Step 8 扩展 (CEP 补完): 长度滑窗 + 时序操作符 + 多 entry-point。
+//
+// Step 8 原 /fraud/check 只演示了 over window:time(5m) 一种 CEP 形态。本文件补齐另外三块,
+// 挂在**独立的 fraudCepKBase** (stream mode + pseudo clock) 上, 不动原 fraudKBase:
+//
+//   1) over window:length(N)  —— 按"最近 N 条事件"滑窗 (对比时间滑窗按"最近 N 分钟")
+//   2) this after[min,max]    —— Allen 区间时序操作符, 表达"B 在 A 之后 min~max 内发生"
+//   3) 多 entry-point          —— 订单流 / 登录流物理隔离, 规则跨流关联
+//
+// 三种事件都进各自 entry-point ("order-stream" / "login-stream"), 由 FraudCepService
+// 按时间戳合并成一条时间线、推进 pseudo clock 后逐个 insert。
+package rules.fraudcep
+
+import com.lrj.drools.domain.OrderEvent
+import com.lrj.drools.domain.LoginEvent
+import com.lrj.drools.domain.FraudAlert
+
+// 两类事件都标 @role(event) + @timestamp; 30 分钟过期 (> 规则最长关联窗 2m, 留足余量)。
+declare OrderEvent
+    @role(event)
+    @timestamp(timestamp)
+    @expires(30m)
+end
+
+declare LoginEvent
+    @role(event)
+    @timestamp(timestamp)
+    @expires(30m)
+end
+
+// ============================================================
+//   规则 1: 长度滑窗 —— 同客户最近 5 单里 ≥ 3 笔大额
+//
+//   `OrderEvent(...) over window:length(5) from entry-point "order-stream"`:
+//     - window:length(5) 只看 order-stream 里**最近 5 条** OrderEvent (跟时钟无关,
+//       跟到达条数有关), 时间滑窗 window:time 则跟时钟有关、跟条数无关
+//     - accumulate count(1) 数其中满足 (同客户 & 大额) 的条数
+//   `from entry-point "..."` 把模式数据源锁到具名事件流。
+// ============================================================
+rule "Length window: 3+ large orders within last 5 (same customer)"
+    when
+        $e : OrderEvent( $cust : customerName ) from entry-point "order-stream"
+        $n : Number( intValue >= 3 ) from accumulate(
+            OrderEvent( customerName == $cust, amount > 1000 )
+                over window:length(5) from entry-point "order-stream",
+            count(1)
+        )
+        not FraudAlert( customerName == $cust, type == "LENGTH_BURST" )
+    then
+        insert(new FraudAlert("LENGTH_BURST", $cust, "最近5单中≥3笔大额(>1000)", $e.timestamp()));
+end
+
+// ============================================================
+//   规则 2: 时序操作符 —— 小额试探后 2 分钟内大额下单
+//
+//   `$big : OrderEvent(..., this after[0s, 2m] $small)`:
+//     - after[min,max] 是 Allen 区间代数: $big 在 $small **之后** 0s~2m 内发生才命中
+//     - 这是"盗号试探 (小额过卡) → 紧接大额套现"的经典时序特征, 单看某一笔都不可疑,
+//       连起来才是信号 —— 这正是 CEP 相对普通规则的价值
+// ============================================================
+rule "Temporal: small probe then large strike within 2 min"
+    when
+        $small : OrderEvent( $cust : customerName, amount < 10 ) from entry-point "order-stream"
+        $big   : OrderEvent( customerName == $cust, amount > 1000, this after[0s, 2m] $small )
+                 from entry-point "order-stream"
+        not FraudAlert( customerName == $cust, type == "PROBE_THEN_STRIKE" )
+    then
+        insert(new FraudAlert("PROBE_THEN_STRIKE", $cust, "小额试探后2分钟内大额下单", $big.timestamp()));
+end
+
+// ============================================================
+//   规则 3: 跨 entry-point —— 登录后 30 秒内就大额下单
+//
+//   $login 来自 "login-stream", $order 来自 "order-stream", 用 after[0s,30s] 关联:
+//   两条独立事件流在时间轴上对齐后一起看, 命中"登录即大额"的盗号高危模式。
+//   时序操作符比较的是事件时间戳, 跟事件在哪个 entry-point 无关。
+// ============================================================
+rule "Cross-stream: large order within 30s of login"
+    when
+        $login : LoginEvent( $cust : customerName ) from entry-point "login-stream"
+        $order : OrderEvent( customerName == $cust, amount > 1000, this after[0s, 30s] $login )
+                 from entry-point "order-stream"
+        not FraudAlert( customerName == $cust, type == "FAST_ORDER_AFTER_LOGIN" )
+    then
+        insert(new FraudAlert("FAST_ORDER_AFTER_LOGIN", $cust, "登录后30秒内大额下单", $order.timestamp()));
+end

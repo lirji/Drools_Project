@@ -6,15 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**。渐进式 demo，从 Hello World 到"引擎安全护栏 / DMN / 真实业务场景"共 18 个 Step，每步一个 REST 入口。
+Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**。渐进式 demo，从 Hello World 到"引擎安全护栏 / DMN / 真实业务场景"共 24 个 Step，每步一个 REST 入口。
 
-**仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：本仓库已从「纯 Drools 教学脚手架」长成「多租户活动引擎平台 + 教学 Steps」两部分，物理拆成**聚合父 `pom.xml` + 4 个模块**（`org.drools:drools-bom` 与内部模块版本在父 pom 统一管）。下表 Step 1–18 的代码全在 **drools-lab**，由 **activity-console** 暴露：
+**仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：本仓库已从「纯 Drools 教学脚手架」长成「多租户活动引擎平台 + 教学 Steps」两部分，物理拆成**聚合父 `pom.xml` + 4 个模块**（`org.drools:drools-bom` 与内部模块版本在父 pom 统一管）。下表 Step 1–24 的代码全在 **drools-lab**，由 **activity-console** 暴露：
 
 | 模块 | 类型 | 职责 |
 | ---- | ---- | ---- |
 | `activity-common` | 库 | 活动引擎共享内核：`activity/{domain,engine,error,persistence,tenant,metrics,snapshot}` + 读路径服务（`ActivityQueryService` 编排 / `DecisionDataLoader` 取数 / `DecisionEligibilityService` 统一上下文与资格 / `AddOnPurchaseService` / `DecisionAuditor` 三通道留痕）。取数层注入的是六个 **`*ReadRepository`**（继承 `Repository<T,ID>` 而非 `JpaRepository`，`save`/`delete` 在**类型上**不存在——「decision 写不了库」从只靠运行期只读账号，提前到编译期）；商品池匹配 `ActivityPoolMatchService` 2026-08 已上浮到 console（只有写平面用它）。用到 Drools 的地方走 `KieHelper` 运行时编译，**不用 kmodule / KieContainer / DMN**；2026-08 起决策主链路默认是纯 Java（见下「决策链路现状」） |
-| `drools-lab` | 库 | **下表 Step 1–18 教学代码全在这里**（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`，及 Step7 决策表 / Step16 `kie-ci` / Step17 `kie-dmn` 等重依赖） |
-| `activity-console` | 应用 · 8081 | 写平面（含批量上下线 / 秒杀库存 claim）+ 复用 drools-lab 暴露 Step 1–18 全端点 + 前端 SPA 托管（`/ui/`）+ **唯一 DDL 执行者**；依赖 common + drools-lab |
+| `drools-lab` | 库 | **下表 Step 1–24 教学代码全在这里**（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`，及 Step7 决策表 / Step16 `kie-ci` / Step17 `kie-dmn` 等重依赖） |
+| `activity-console` | 应用 · 8081 | 写平面（含批量上下线 / 秒杀库存 claim）+ 复用 drools-lab 暴露 Step 1–24 全端点 + 前端 SPA 托管（`/ui/`）+ **唯一 DDL 执行者**；依赖 common + drools-lab |
 | `activity-decision` | 应用 · 8082 | 只读决策热路径 `/decision/v1`（含加价购两阶段 + 指标聚合）+ 发布代际轮询预热**兼决策快照构建/切换**；**只依赖 common，不依赖 drools-lab**（jar 更轻，甩掉 kie-ci/DMN），M2.2 起连只读 DB 账号（仅 SELECT）、`ddl-auto: validate`，DDL 由 console 独占 |
 
 两 app 主类都放根包 `com.lrj.drools`（`ConsoleApplication` / `DecisionApplication`，`scanBasePackages/@EntityScan/@EnableJpaRepositories = com.lrj.drools`）；decision 的 classpath 上没有写平面 bean / `DroolsConfig`，结构上就写不了。本地整套编排见 `deploy/`（nginx 网关 host `:8095` + 两 app + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）。
@@ -74,12 +74,28 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 | 10 | KieSession 持久化（`Marshaller` → JPA byte[]） | `POST /loyalty/start` + `/loyalty/{id}/purchase` |
 | 11 | StatelessKieSession 对比（复用 discountKBase） | `POST /stateless/calculate` + `/stateless/batch` |
 | 12 | TMS（`insertLogical` vs `insert`，自动 retract） | `POST /tms/compare` |
-| 13 | 后向链 + query（`isContainedIn` 递归） | `POST /backward/contains` |
+| 13 | 后向链 + query（`isContainedIn` 递归） | `POST /backward/contains`；**扩展** `POST /backward/derive`（前向规则 LHS 用 `?isContainedIn` 拉起后向证明） |
 | 14 | 引擎安全护栏（`fireAllRules(max)` / `halt()` / `AgendaFilter`） | `POST /guard/runaway` + `/guard/timeout` + `/guard/canary` |
 | 15 | 可观测性指标（Micrometer → Prometheus） | `POST /metrics/discount` + `GET /actuator/prometheus` |
 | 16 | KieScanner + KJAR（绑 ReleaseId 热替换 KieBase） | `POST /scanner/deploy` + `/scanner/run` |
 | 17 | DMN（`.dmn` + FEEL + DRG，走 `DMNRuntime`，非 DRL 体系） | `POST /dmn/price` |
 | 18 | 营销活动资格判定（Step 9+10+4 合体，规则即数据 + rehydrate） | `POST /campaign/create` + `/campaign/{id}/check` |
+| 19 | LHS 量词补全（`collect` / `forall` / `eval` + DRL `function`） | `POST /quantifier/review` |
+| 20 | RHS 对外（`global` 注入外部对象 + `channels[]` exit point 推消息） | `POST /dispatch/run` |
+| 21 | traits（`@Traitable` 核心 fact + `declare trait` + `don` 动态多态） | `POST /traits/evaluate` |
+| 22 | fireUntilHalt（引擎作为常驻守护线程消费事实流，哨兵任务 `drools.halt()` 收尾） | `POST /fireuntilhalt/process` |
+| 23 | 规则模板 `.drt`（`ObjectDataCompiler` 模板 + 数据行 → DRL，再走 Step 9 `KieHelper`） | `POST /template/discount` |
+| 24 | PMML / Scorecard（trusty/efesto 独立求值引擎跑 ML 模型评分 + 评分卡） | `POST /pmml/score` + `GET /pmml/models` |
+
+> 两处**扩展端点**（挂在既有 Step 下）：
+> - Step 8（CEP）`POST /fraud/patterns`：长度滑窗 `over window:length(N)` + 时序操作符 `this after[min,max]` + 多 `entry-point`（订单流 × 登录流），独立 `fraudCepKBase`，输出 `FraudAlert`（原 `/fraud/check` 只输出 `BurstAlert`、不变）。
+> - Step 16（KieScanner）`POST /scanner/update-version`（`KieContainer.updateToVersion` 显式切固定 release）+ `GET /scanner/events`（`KieScannerEventListener` 攒热替换事件）。
+>
+> **Step 24 PMML 接法两层坑**（`service/PmmlService.java`）：8.44.2 走 trusty(efesto)，依赖是 `org.kie:kie-pmml-dependencies`(pom) + `javax` JAXB 2.3（Java 21 已从 JDK 移除，必须显式补）。
+> ① **standalone 求值**：官方便捷工厂 `getPMMLRuntimeFromFile/Classpath` 不通（编译进内部 classloader 后丢掉，与另建 context 不共享 `GeneratedResources` → `Failed to retrieve EfestoOutput`）。正解：自己编译进一个持有的 `MemoryCompilerClassLoader` → 用**同一个** classloader 建 `PMMLRuntimeContextImpl` → **反射**把编译产物 `generatedResourcesMap` `putAll` 进求值 context（`EfestoRuntimeContextImpl.generatedResourcesMap` 是 protected final 可变 Map、无公开注入口）。反射仅此一处、锁死 8.44.2。
+> ② **fat jar 部署坑（务必留意）**：trusty PMML 经 jpmml 用 `javax.xml.bind` 解析，RI **必须**用 `com.sun.xml.bind:jaxb-impl:2.3.1`（javax 独立 GAV），**不能**用 `org.glassfish.jaxb:jaxb-runtime`——后者被 Spring Boot 3 的 BOM 统一管到 4.0.5（jakarta，同 GAV 无法并存），javax 运行期发现不到实现 → **console fat jar 启动即崩**（`JAXBException: 找不到实现`）。且 BOM 也会把 `jaxb-impl` 管到 4.0.5，所以在**父 pom dependencyManagement** 直接 pin `jaxb-impl` + `jaxb-api` 到 2.3.1 覆盖之。⚠ **`dependency:tree` 显示 2.3.1、fat jar 里却装 4.0.5**（BOM 对传递依赖的管理），极具迷惑性——验证要 `unzip -l 目标jar | grep jaxb`。完整复盘见 PLAN §1。
+>
+> **Rule Units（原拟 Step 25）已回退、不做**：`drools-ruleunits-impl` 与 `drools-traits`(Step 21) 争抢 Drools 唯一的 `RuntimeComponentFactory` SPI 单例、**二者互斥**（加它 traits 就 `ClassCastException`）；且其解释执行 provider 在 Spring Boot fat jar 里**扫不到自己的 DRL**（`collectResourcesInJar` 打不开 nested jar）。surefire 扁平 classpath 测得过、打包部署即崩——这正是"不追 incubator"要防的。决策留痕见 PLAN §5/§10。
 
 **每个 Step 的详细说明、完整 REST 接口表、各 Step 特有的 DRL 语义 / 实现注意点见 [`docs/steps-guide.md`](docs/steps-guide.md)。** 改某个 Step 前先读那里对应条目。
 
@@ -96,7 +112,7 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 > **M2.1 起是 Maven 多模块**（聚合父 pom + 4 模块：`activity-common` / `drools-lab` / `activity-console`(app,8081) / `activity-decision`(app,8082)）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main）；起服务要 **`-pl` 指定 app 模块**。模块拆分详情见 `docs/plans/prod-arch-refactor-0719-1330/`。
 
 ```bash
-# 起 console 服务（写平面 + Step1-18 + 前端 /ui/，8081）；连接走环境变量覆盖（不写死真实值）
+# 起 console 服务（写平面 + Step1-24 + 前端 /ui/，8081）；连接走环境变量覆盖（不写死真实值）
 DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=yourpass \
   ./mvnw -pl activity-console spring-boot:run
 ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file
@@ -176,7 +192,7 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 
 ## 代码结构（按职责，不是按目录）
 
-> 下列前 8 条「职责」均属 **drools-lab**（Step 1–18 教学，包 `com.lrj.drools.*`，路径前缀 `drools-lab/src/main/…`）；活动引擎平台代码在 **activity-common**（包 `com.lrj.drools.activity.*`），两 app 只放各自 controller/service 薄壳（见末尾三条）。
+> 下列前 8 条「职责」均属 **drools-lab**（Step 1–24 教学，包 `com.lrj.drools.*`，路径前缀 `drools-lab/src/main/…`）；活动引擎平台代码在 **activity-common**（包 `com.lrj.drools.activity.*`），两 app 只放各自 controller/service 薄壳（见末尾三条）。
 
 - `domain/` — fact 类型。record (`Customer`, `OrderItem`, `Promotion`) 用于不可变事实；mutable POJO (`Order`, `Cart`) 用于会被规则改字段的事实。`Promotion` 是 Step 4 的"标记 fact"，规则自己 insert 出来给 `not` 检测
 - `service/` — KieSession 生命周期。**每次请求 `newKieSession` + `fireAllRules` + `dispose`**，KieSession 线程不安全，不要为了"省"复用。StatelessKieSession（Step 11）/ DMNRuntime（Step 17）线程安全，可当字段缓存复用

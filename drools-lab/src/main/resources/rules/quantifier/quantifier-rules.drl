@@ -1,0 +1,84 @@
+// Step 19: LHS 量词补全 —— collect / forall / eval。
+//
+// Step 4 演示了 not / exists 这两个否定/存在量词, 但 LHS 常用的另外三件套一直没补:
+//
+//   collect  —— 把匹配 fact 收集成**一个集合**, 对"数量/整体"做判断 (跟 accumulate 的
+//               区别: accumulate 出的是聚合标量 sum/count, collect 出的是集合本身)
+//   forall   —— 全称量词: "所有匹配基准模式的 fact 都满足附加约束" (跟 exists 对偶)
+//   eval     —— 任意布尔表达式逃生舱: 能写字段约束就别用它 (见下方性能注记)
+//
+// 本文件用"订单合规审查"场景把三者串起来: 请求带 Customer + 一组 OrderItem,
+// 规则产出若干 ReviewFinding 标记 fact, service 捞回来当结果。
+package rules.quantifier
+
+import com.lrj.drools.domain.OrderItem
+import com.lrj.drools.domain.Customer
+import com.lrj.drools.domain.ReviewFinding
+import java.util.List
+
+// ───── DRL function: 供 eval 规则调用的"按 VIP 等级算免审额度" ─────
+// function 是 DRL 里的顶层辅助方法, 编译进规则包, LHS/RHS 都能调。等级越高额度越大。
+function double reviewThreshold(int vipLevel) {
+    return 1000.0 * (vipLevel + 1);
+}
+
+// ============================================================
+//   规则 1: collect —— 图书 ≥ 3 本触发批发审查
+//
+//   `List( size >= 3 ) from collect( OrderItem(category == "BOOK") )`:
+//     - collect 把所有满足内部模式的 fact 收进一个 java.util.List
+//     - 外层对这个 List 本身做约束 (size >= 3)
+//     - 注意跟 Step 3 的 accumulate 对比: accumulate 出的是 Number(sum/count),
+//       collect 出的是集合, 想拿"这些 fact 具体是哪些"就用 collect
+//
+//   `size` 能直接当属性用是 MVEL 对集合的特殊处理 (等价 list.size())。
+// ============================================================
+rule "Collect: 3+ books => wholesale review"
+    when
+        $books : List( size >= 3 ) from collect( OrderItem( category == "BOOK" ) )
+    then
+        insert(new ReviewFinding("BULK_BOOK", "图书 " + $books.size() + " 本, 触发批发审查"));
+end
+
+// ============================================================
+//   规则 2: forall —— 所有订单行都已分类且单价为正
+//
+//   `forall( $i : OrderItem() OrderItem(this == $i, category != null, unitPrice > 0) )`:
+//     - 第一个模式是"基准集合" (所有 OrderItem)
+//     - 后续模式是"每个基准 fact 都必须满足的约束" (this == $i 锁到同一条 fact)
+//     - 整体在"基准集合里每一条都满足约束"时成立, 且**只产生 1 个 activation**
+//
+//   ⚠ vacuous truth: forall 在基准集合为空时也成立 (数学上的"空集全称为真")。
+//   所以前面加一条 `exists OrderItem()` 兜底, 避免空购物车误判"全部合规"。
+// ============================================================
+rule "Forall: every line classified and priced"
+    when
+        exists OrderItem()
+        forall( $i : OrderItem()
+                OrderItem( this == $i, category != null, unitPrice > 0 ) )
+    then
+        insert(new ReviewFinding("ALL_LINES_VALID", "所有订单行均已分类且单价为正"));
+end
+
+// ============================================================
+//   规则 3: eval —— 总额超过该 VIP 等级的免审额度则转人工
+//
+//   `eval( <任意布尔表达式> )` 是 LHS 的逃生舱: 这里的判断依赖"跨 fact 的聚合总额
+//   + 一个按等级动态算的阈值", 没法写成单条 fact 的字段约束, 才用 eval。
+//
+//   ⚠ 性能注记: eval 不进 RETE 的字段索引, 每次相关 fact 变化都要**整段重算**,
+//   是最贵的 LHS 元素。能用字段约束 (Customer(vipLevel >= 2)) 或 join 表达的,
+//   永远别退化成 eval。这条规则把 eval 用在"确实无法索引化"的地方, 是它的正当场景。
+// ============================================================
+rule "Eval: total exceeds VIP auto-approve threshold"
+    when
+        $c : Customer( $lvl : vipLevel )
+        $total : Number( doubleValue > 0 ) from accumulate(
+            OrderItem( $q : quantity, $up : unitPrice ),
+            sum( $q * $up )
+        )
+        eval( $total.doubleValue() > reviewThreshold($lvl) )
+    then
+        insert(new ReviewFinding("MANUAL_REVIEW",
+            "总额 " + $total + " 超过 VIP" + $lvl + " 免审额度 " + reviewThreshold($lvl) + ", 转人工"));
+end

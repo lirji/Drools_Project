@@ -1,6 +1,7 @@
 package com.lrj.drools.controller;
 
 import com.lrj.drools.domain.Location;
+import com.lrj.drools.domain.WatchTarget;
 import com.lrj.drools.service.BackwardChainingService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -44,8 +45,35 @@ public class BackwardChainingController {
         return service.evaluate(req.locations(), req.queries());
     }
 
+    /**
+     * Step 13 扩展: 后向链嵌进前向链 LHS。
+     *
+     * 请求体:
+     *   locations:    一组直接关系 [{thing, container}, ...] (事实库)
+     *   watchTargets: 一组驱动 fact [{thing, zone}, ...]
+     *                 每条问"thing 是否 (递归地) 落在受限区域 zone 里"
+     *
+     * 与 /backward/contains 的区别: /contains 走 Java pull (getQueryResults) 返回 boolean;
+     * /derive 走前向链 fire, 由规则 LHS 的 ?isContainedIn 反向证明后 insert 出 findings。
+     *
+     * 示例 (Office → House → City → Country):
+     *   locations = [{thing:"Office",container:"House"}, {thing:"House",container:"City"},
+     *                {thing:"City",container:"Country"}]
+     *   watchTargets = [{thing:"Office", zone:"Country"}]
+     *   → findings = [{thing:"Office", zone:"Country", contained:true}]
+     */
+    @PostMapping("/backward/derive")
+    public BackwardChainingService.DeriveResult derive(@RequestBody DeriveRequest req) {
+        return service.derive(req.locations(), req.watchTargets());
+    }
+
     public record EvaluateRequest(
             List<Location> locations,
             List<BackwardChainingService.Query> queries
+    ) {}
+
+    public record DeriveRequest(
+            List<Location> locations,
+            List<WatchTarget> watchTargets
     ) {}
 }

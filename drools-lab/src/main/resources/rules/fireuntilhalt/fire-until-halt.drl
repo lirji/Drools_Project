@@ -1,0 +1,39 @@
+// Step 22: fireUntilHalt —— 引擎作为"常驻守护线程"持续消费事实。
+//
+// 对照 fireAllRules：fireAllRules 把当前 agenda 跑空就返回；fireUntilHalt **不返回**，
+// agenda 空了就阻塞等新事实到来，像一个长跑的消费者线程，直到有人调 session.halt()。
+//
+// 典型用法：另起一个线程跑 session.fireUntilHalt()，主线程不断 insert 事实被实时处理。
+// 本 demo 用一个 id="__STOP__" 的哨兵任务收尾——处理到它时规则里调 drools.halt() 让循环退出，
+// 比跨线程精确掐 halt 时机更确定。
+package rules.fireuntilhalt
+
+import com.lrj.drools.domain.Task
+import com.lrj.drools.domain.ProcessedTask
+
+// ============================================================
+//   规则 1: 处理普通任务（salience 高，排在哨兵前面）
+// ============================================================
+rule "Process task"
+    salience 10
+    when
+        $t : Task( id != "__STOP__" )
+    then
+        insert(new ProcessedTask($t.id(), $t.amount()));
+        System.out.println("[fireUntilHalt] 处理任务 " + $t.id());
+end
+
+// ============================================================
+//   规则 2: 处理到哨兵任务 → halt 让 fireUntilHalt 退出
+//
+//   salience 极低，保证所有普通任务都处理完、agenda 里只剩它时才 fire。
+//   drools.halt() 停掉守护线程里的 fireUntilHalt 循环，那个线程随即返回。
+// ============================================================
+rule "Halt on stop sentinel"
+    salience -1000
+    when
+        Task( id == "__STOP__" )
+    then
+        System.out.println("[fireUntilHalt] 收到哨兵，halt");
+        drools.halt();
+end

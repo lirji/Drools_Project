@@ -74,6 +74,24 @@ public class ScannerController {
         return scannerService.status();
     }
 
+    /** Step 16 扩展: 显式版本切换 (KieContainer.updateToVersion), install 到新固定 release 再手动切。编译错误 400。 */
+    @PostMapping("/scanner/update-version")
+    public ResponseEntity<?> updateVersion(@RequestBody DeployRequest req) {
+        try {
+            return ResponseEntity.ok(scannerService.updateToVersion(req.drl()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    /** Step 16 扩展: KieScannerEventListener 攒到的热替换事件 (只有走 scanner 的 scanNow/轮询会触发)。 */
+    @GetMapping("/scanner/events")
+    public List<ScannerService.ScanEvent> events() {
+        return scannerService.scanEvents();
+    }
+
     public record DeployRequest(String drl) {}
     public record RunRequest(String cartId, Customer customer, List<OrderItem> items) {}
     public record PollRequest(Long intervalMillis) {}

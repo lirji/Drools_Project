@@ -1,0 +1,51 @@
+// Step 21: traits —— 给 fact 动态贴"接口"做运行时多态。
+//
+// 普通 Java 多态是编译期定死的继承关系。traits 让你在**运行时**给一个 @Traitable 核心对象
+// 贴上一层 trait（一个由 `declare trait` 生成的接口实现），之后：
+//   - 这个核心对象同时也"是"该 trait 类型，能被 `TraitName(...)` 模式匹配（动态类型）
+//   - trait 里核心类没有的字段存进核心对象的隐藏动态属性表
+//   - `shed` 可以再把这层摘掉；`isA` 可以判断某对象是否已具备某 trait
+//
+// 关键字（drools-traits 在 classpath 时可用，无需 import）：don / shed / isA
+package rules.traits
+
+import com.lrj.drools.domain.Applicant
+import com.lrj.drools.domain.TraitFinding
+
+// ───── 声明 trait：等价于生成一个带 getter/setter 的接口 ─────
+// name 映射到 Applicant 已有字段；tier / creditLimit 是核心类没有的"虚拟字段"，
+// don 之后存进 Applicant 的动态属性表。
+declare trait PremiumApplicant
+    name        : String
+    tier        : String
+    creditLimit : long
+end
+
+// ============================================================
+//   规则 1: 高收入申请人 → don 上 PremiumApplicant
+//
+//   don($a, PremiumApplicant.class) 返回一个实现 PremiumApplicant 的代理，背后是 $a。
+//   代理被自动插入 working memory → 后续能被 `PremiumApplicant(...)` 匹配（规则 2）。
+// ============================================================
+rule "Grant premium status to high earners"
+    when
+        $a : Applicant( annualIncome >= 200000 )
+    then
+        PremiumApplicant p = don( $a, PremiumApplicant.class );
+        p.setTier("GOLD");
+        p.setCreditLimit(500000);
+        System.out.println("[traits] " + p.getName() + " 贴上 PremiumApplicant, creditLimit=" + p.getCreditLimit());
+end
+
+// ============================================================
+//   规则 2: 贴了 trait 之后，用 trait 类型再匹配（动态多态的核心观察点）
+//
+//   $a 原本只是 Applicant，don 之后它同时"是" PremiumApplicant，这条规则才能命中它。
+//   没有 don 的普通 Applicant（低收入）不会被这条规则看到。
+// ============================================================
+rule "Premium applicants with high limit get concierge"
+    when
+        $p : PremiumApplicant( creditLimit >= 300000 )
+    then
+        insert(new TraitFinding($p.getName(), $p.getTier(), $p.getCreditLimit(), "专属客户经理"));
+end

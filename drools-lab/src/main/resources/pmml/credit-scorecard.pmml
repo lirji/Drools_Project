@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_2" version="4.2">
+  <Header copyright="drools-demo"/>
+  <DataDictionary numberOfFields="3">
+    <DataField name="age" optype="continuous" dataType="double"/>
+    <DataField name="income" optype="continuous" dataType="double"/>
+    <DataField name="score" optype="continuous" dataType="double"/>
+  </DataDictionary>
+  <Scorecard modelName="CreditScorecard" functionName="regression" useReasonCodes="true"
+             reasonCodeAlgorithm="pointsBelow" initialScore="100" baselineMethod="other">
+    <MiningSchema>
+      <MiningField name="age" usageType="active" invalidValueTreatment="asMissing"/>
+      <MiningField name="income" usageType="active" invalidValueTreatment="asMissing"/>
+      <MiningField name="score" usageType="predicted"/>
+    </MiningSchema>
+    <Output>
+      <OutputField name="Final Score" feature="predictedValue" dataType="double" optype="continuous"/>
+      <OutputField name="Reason Code 1" rank="1" feature="reasonCode" dataType="string" optype="categorical"/>
+    </Output>
+    <Characteristics>
+      <Characteristic name="ageScore" baselineScore="30" reasonCode="AGE_RC">
+        <Attribute partialScore="10">
+          <SimplePredicate field="age" operator="lessThan" value="25"/>
+        </Attribute>
+        <Attribute partialScore="30">
+          <SimplePredicate field="age" operator="greaterOrEqual" value="25"/>
+        </Attribute>
+      </Characteristic>
+      <Characteristic name="incomeScore" baselineScore="40" reasonCode="INCOME_RC">
+        <Attribute partialScore="15">
+          <SimplePredicate field="income" operator="lessThan" value="30000"/>
+        </Attribute>
+        <Attribute partialScore="40">
+          <SimplePredicate field="income" operator="greaterOrEqual" value="30000"/>
+        </Attribute>
+      </Characteristic>
+    </Characteristics>
+  </Scorecard>
+</PMML>

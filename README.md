@@ -16,13 +16,13 @@
 - Java 21 / Spring Boot 3.3.5
 - Drools 8.44.2.Final —— 版本锁在根 pom 的 `org.drools:drools-bom`（`org.kie:kie-bom` 在 8.44.2 没发布）。
   `activity-common` 只用 `kie-api` + `drools-core/compiler/mvel`（走 `KieHelper` 运行时编译）；
-  **重依赖全隔离在 `drools-lab`**：`drools-decisiontables`（Step 7）/ `drools-xml-support`（kmodule 解析必需，少了启动即报错）/ `kie-ci`（Step 16，会拉进 maven-core、aether）/ `kie-dmn-core`（Step 17）。
+  **重依赖全隔离在 `drools-lab`**：`drools-decisiontables`（Step 7）/ `drools-xml-support`（kmodule 解析必需，少了启动即报错）/ `kie-ci`（Step 16，会拉进 maven-core、aether）/ `kie-dmn-core`（Step 17）/ `drools-traits`（Step 21）/ `drools-templates`（Step 23）/ `kie-pmml-dependencies` + `javax` JAXB 2.3（Step 24 PMML，RI 用 `com.sun.xml.bind:jaxb-impl:2.3.1`，见 Step 24 部署坑）。
   `activity-decision` 不依赖 drools-lab，因此这些一个都不背，jar 更轻
-- **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–18；`activity-decision`(8082) 只读决策热路径。Docker 部署另有独立 `activity-frontend` nginx 镜像，可单独发布 Vue 并统一代理 API。
+- **Maven 多模块**（聚合父 pom + 4 模块），跑起来是**两个独立 Spring Boot 应用**：`activity-console`(8081) 写平面 + Step 1–24；`activity-decision`(8082) 只读决策热路径。Docker 部署另有独立 `activity-frontend` nginx 镜像，可单独发布 Vue 并统一代理 API。
 
 > ⚠️ **活动引擎的决策主链路默认*不*走 Drools**——阶梯落档、六形态算额、折扣合并、资格条件树全部是纯 Java（`BenefitEvaluator` / `BenefitMath` / `ConditionTreeEvaluator`）。
 > 判据是「这条规则需不需要*其它规则的结论*」，四者都不需要。生产上真正执行 DRL 的只剩**买赠**一条通道，外加写平面的编译校验与 decision 侧的发布预热。
-> Step 1–18 是**教学层**，跟活动引擎没有代码耦合。这个决策的量化依据（实测差 ~100× 内存、~67× 决策 CPU）见 [docs/capacity-model.md](docs/capacity-model.md)，链路分层见 [docs/architecture.md](docs/architecture.md)。
+> Step 1–24 是**教学层**，跟活动引擎没有代码耦合。这个决策的量化依据（实测差 ~100× 内存、~67× 决策 CPU）见 [docs/capacity-model.md](docs/capacity-model.md)，链路分层见 [docs/architecture.md](docs/architecture.md)。
 > 这条纯 Java 链路上有两条结构性保证：候选装配只有 `OfferSpec.from` **一个入口**（走库与快照两条路共用，此前是三份手写字段扇出，漏填一份的表现是「同一张券在两条路上发不同的钱」）；
 > 六形态算额的分派是对 `BenefitForm` 的**不写 `default` 的 switch 表达式**（加第七种形态而漏了分支就是编译失败，不是「被当成金额原样发出去」；必须是 switch **表达式**，写成语句就不强制穷尽了）。两道横切 guard（随机红包、`redPackageAmount` 为空）刻意留在 switch 之外，且随机那道必须排在前面——否则「只配了区间、没配固定金额」的随机活动会被静默跳过。
 
@@ -39,7 +39,7 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 │                                tenant（多租户·安全） / error（领域异常 + 错误码→HTTP 的唯一映射处） +
 │                                只读查询服务。两个 app 都依赖它
 │                                （选品服务 `ActivityPoolMatchService` 只有写平面用，已上浮到 console）
-├── drools-lab/                  Step 1–18 教学库（重 drools 依赖：kie-ci / kie-dmn / decisiontables）
+├── drools-lab/                  Step 1–24 教学库（重 drools 依赖：kie-ci / kie-dmn / decisiontables）
 │   └── src/main/
 │       ├── java/com/lrj/drools/  config/DroolsConfig（KieContainer Bean）+ domain / service /
 │       │                         controller（/hello、/discount/calculate … 各 Step 端点）
@@ -47,7 +47,7 @@ drools-demo/                     聚合父 pom（统一版本 / 依赖管理）
 │           ├── META-INF/kmodule.xml   声明各 kbase（helloKBase / discountKBase / fraudKBase …）
 │           └── rules/                 各 Step 的 .drl / .xls（决策表） / .dmn
 ├── activity-console/   【可执行 app · 8081】写平面（活动 CRUD·发布 / 发放流水 GrantService：claim·release·grants /
-│                                选品） + Step 1–18 端点 + 前端 SPA(/ui/) + 唯一 DDL 执行者
+│                                选品） + Step 1–24 端点 + 前端 SPA(/ui/) + 唯一 DDL 执行者
 │   └── src/main/                依赖 activity-common + drools-lab
 │       ├── java/com/lrj/drools/ConsoleApplication.java   启动类
 │       └── resources/
@@ -72,12 +72,12 @@ deploy/                          docker-compose（mysql + console + decision + f
 
 ## 运行
 
-> **多模块后根 `./mvnw spring-boot:run` 已失效**（父是聚合 pom，没有 main）。起服务要用 `-pl` 指定 app 模块：`activity-console`（写平面 + Step 1–18 + 前端，8081）或 `activity-decision`（只读决策，8082）。两个 app 可分别或并行起。
+> **多模块后根 `./mvnw spring-boot:run` 已失效**（父是聚合 pom，没有 main）。起服务要用 `-pl` 指定 app 模块：`activity-console`（写平面 + Step 1–24 + 前端，8081）或 `activity-decision`（只读决策，8082）。两个 app 可分别或并行起。
 
 ```bash
 cd /Users/liruijun/personal/LLM/drools-demo
 
-# 起 console (Step 1–18 + /ui/, 8081)。默认连 MySQL (mysql profile), 连接参数走环境变量, 不写死:
+# 起 console (Step 1–24 + /ui/, 8081)。默认连 MySQL (mysql profile), 连接参数走环境变量, 不写死:
 DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo \
 DB_USERNAME=root DB_PASSWORD=yourpass \
   ./mvnw -pl activity-console spring-boot:run
@@ -116,7 +116,7 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 ## 🖥 前端演示台（在浏览器里看规则效果）
 
 前端已做**前后端分离**：一个 Vue3 + Vite + TypeScript 的 SPA（源码在 `frontend/`），挂在后端
-**<http://localhost:8081/ui/>** 下。它把 **全部 Step 1–18 的 REST 端点** + **活动引擎控制台** 做成可点选、
+**<http://localhost:8081/ui/>** 下。它把 **全部 Step 1–24 的 REST 端点** + **活动引擎控制台** 做成可点选、
 可编辑、可运行的面板——不用记 `curl`，直接选示例、改 JSON、点「运行」，看**结构化摘要**（折扣账本、
 推荐、审计时间线、TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
 
@@ -140,7 +140,7 @@ cd frontend && npm install && npm run dev
 # 只发布 Vue + nginx，不重启 console / decision / MySQL / 监控
 ./deploy.sh --frontend-only
 # 可选：./deploy.sh --core-only / --pull / --no-cache；离线恢复可用 --skip-build；完整参数见 ./deploy.sh --help
-# 网关按前缀分流：/api/decision/* → decision 服务、/api/console/* 与 /ui/、Step1-18 → console。
+# 网关按前缀分流：/api/decision/* → decision 服务、/api/console/* 与 /ui/、Step1-24 → console。
 # 附带 Prometheus http://localhost:9090、Grafana http://localhost:3001（两服务指标对比看板）。
 ```
 
@@ -163,7 +163,7 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 
 ### 活动控制台：工作台 · 玩法模板 · 优惠验证（2026-08 换代）
 
-演示台里"活动引擎控制台"那一半（`/ui/console`）换了一代，后端也跟着开了几个新口子（Step 1–18 的端点一个没动）：
+演示台里"活动引擎控制台"那一半（`/ui/console`）换了一代，后端也跟着开了几个新口子（Step 1–24 的端点一个没动）：
 
 - **活动工作台**（`/ui/console/activities`）：生效窗甘特条、三态排序、跨页选择、批量上下线、密度切换、行点击开右侧板。批量走 `POST /activity-marketing/bulk-status`，入参是 `items:[{activityId, version}]` + `targetStatus`；部分失败也返回 200，由回执逐条列出失败原因（唯一例外是 `targetStatus` **本身**非法——那不是「某几条没成功」而是整个请求没意义，进循环之前就 400；另外 `targetStatus=3`（待生效）现在被写入口封死，它是个零生产者零消费者的状态，置成它的活动控制台显示成草稿、决策永远不命中）。**版本必须传**——编辑已上线活动只建 v+1 草稿、不下线线上版，不传版本就会打到草稿、线上继续发钱。
 - **玩法模板屏**（`/ui/console/playbooks`）：12 张玩法卡（满减 / 阶梯 / 折扣券 / 人群·门店·地域定向 / 满额赠品 / 第二件半价 / 秒杀一口价 / 加价购），点"用它新建"跳编辑器并预填。
@@ -611,6 +611,31 @@ curl -X POST 'http://localhost:8081/fraud/check' -H 'Content-Type: application/j
 4. **fact 跟 event 是两种角色** — DRL 里 `declare OrderEvent @role(event) @timestamp(timestamp) end` 把普通 Java POJO 升级成事件；不加 `@role(event)` 它就是个普通 fact，没法用 over window
 5. **5 分钟窗 vs 10 分钟 @expires** — 窗口决定哪些事件参与规则计算，`@expires` 决定何时从 working memory retract。后者要 ≥ 前者，否则规则还没来得及评估窗内的旧事件已经被 retract
 
+### Step 8 扩展: `/fraud/patterns` (长度滑窗 + 时序操作符 + 多 entry-point)
+
+`POST /fraud/patterns` 在原 CEP 基础上补齐另外三种形态（独立 `fraudCepKBase`，输出 `FraudAlert`，原 `/fraud/check` 不受影响）。`orders` 走 `"order-stream"`、`logins` 走 `"login-stream"`，service 内部把两条流按 timestamp 合并成时间线再推进 pseudo clock。
+
+```bash
+curl -s -X POST 'http://localhost:8081/fraud/patterns' -H 'Content-Type: application/json' \
+  -d '{
+        "orders":[
+          {"orderId":"o1","customerName":"cA","amount":2000,"timestamp":1000000},
+          {"orderId":"o2","customerName":"cA","amount":2000,"timestamp":1001000},
+          {"orderId":"o3","customerName":"cA","amount":2000,"timestamp":1002000},
+          {"orderId":"o4","customerName":"cB","amount":5,"timestamp":1003000},
+          {"orderId":"o5","customerName":"cB","amount":5000,"timestamp":1093000},
+          {"orderId":"o6","customerName":"cC","amount":9000,"timestamp":1210000}
+        ],
+        "logins":[ {"customerName":"cC","ip":"1.2.3.4","timestamp":1200000} ]
+      }'
+# → alerts:
+#   LENGTH_BURST           (cA: over window:length(5) 里 3 笔大额)
+#   PROBE_THEN_STRIKE      (cB: 小额试探 90s 后大额, this after[0s,2m])
+#   FAST_ORDER_AFTER_LOGIN (cC: 登录后 10s 大额, 跨 entry-point + after[0s,30s])
+```
+
+**观察点**：① `window:length(N)` 按"最近 N 条"、`window:time(T)` 按"最近 T 时长"，分水岭是条数 vs 时钟；② `this after[min,max] $x` 是 Allen 区间代数，比较事件时间戳、跟 entry-point 无关，所以能跨流关联；③ 多 entry-point 用 `session.getEntryPoint(name).insert(...)` 分流，RHS `insert` 的 `FraudAlert` 落默认 entry-point 才能被 `getObjects()` 捞到。
+
 ## Step 9: 规则热加载 (运行时 DRL 编译)
 
 `POST /hot/upsert` 把 DRL 字符串运行时编译成 KieBase 缓存到 registry，`POST /hot/run/{name}` 用对应 KieBase 跑 cart。同名 upsert 替换旧 KieBase，进行中的请求不受影响。
@@ -831,9 +856,29 @@ curl -s -X POST 'http://localhost:8081/backward/contains' -H 'Content-Type: appl
 1. **递归 query 的结构** — `query isContainedIn(x, y) Location(x, y;) or (Location(z, y;) and isContainedIn(x, z;)) end`。基础情形 (直接事实) `or` 递归情形 (链一步 + 递归调用)。引导 z 是 query body 内自动绑定的中间变量, 不出现在参数表
 2. **`@Position` 不能漏** — `Location(x, y;)` 末尾分号是位置模式标记, fact 类字段必须有 `@Position(N)` 注解。漏了报 "Unable to find @Positional field 0 for class Location"。record 组件上加 `@Position(0)` / `@Position(1)` 即可
 3. **后向链不消耗 agenda** — 调 `session.getQueryResults("isContainedIn", "Office", "Country")` 直接拉证明结果, 不需要 `fireAllRules`。这是 push (前向) vs pull (后向) 的硬差别
-4. **同一规则集可以前向 + 后向混用** — DRL 里既可以写 `rule ... when ... then ... end` 走前向链, 也可以写 `query ... end` 给后向链用; 规则 LHS 里还能用 `?queryName(...)` 把后向链嵌进前向链推理。本 demo 只走 Java API 演示, 保持简洁
+4. **同一规则集可以前向 + 后向混用** — DRL 里既可以写 `rule ... when ... then ... end` 走前向链, 也可以写 `query ... end` 给后向链用; 规则 LHS 里还能用 `?queryName(...)` 把后向链嵌进前向链推理。`/backward/contains` 走 Java API (pull), **扩展 `/backward/derive` 演示 `?query` 的 LHS 形态** (见下)
 5. **"输出绑定"模式没在本 demo 用** — Drools 支持把 query 参数当 unbound output (用 `Variable.v` 占位) 自动列出所有满足条件的绑定, 但那条 API 在 internal 包。本 demo 改成"枚举候选容器 + 逐个 boolean 后向链证明", 演示 query 是可复用的"证明子程序"
 6. **跟前向链的传递闭包对比** — 用前向链算"间接包含"要写一条规则把 (A,B), (B,C) join 成 (A,C) 并 insert 新 Location, 还要处理 N 层递归的物化爆炸; 后向链按需展开, 不物化中间结果 (代价是每次查询都要重算)。N 跟"事实-查询比例"是选边的依据
+
+### Step 13 扩展: `/backward/derive` (前向规则 LHS 用 `?isContainedIn` 拉起后向证明)
+
+`POST /backward/derive` 换消费方式：插一批 `WatchTarget(thing, zone)` 驱动 fact，前向规则在 LHS 用 `?isContainedIn($thing, $zone;)` 反向证明（`?` = pull 式查询调用），成立才在 `fireAllRules` 时 insert `ContainmentFinding`。同一个 `isContainedIn` query 被 Java pull 与规则 `?query` push 两种范式共用。
+
+```bash
+curl -s -X POST 'http://localhost:8081/backward/derive' -H 'Content-Type: application/json' \
+  -d '{
+    "locations": [
+      {"thing":"Office","container":"House"},
+      {"thing":"House","container":"City"},
+      {"thing":"City","container":"Country"}
+    ],
+    "watchTargets": [
+      {"thing":"Office","zone":"Country"},
+      {"thing":"Office","zone":"Mars"}
+    ]
+  }'
+# → findings: [{thing:"Office", zone:"Country", contained:true}]   // Mars 证明不成立, 不 fire
+```
 
 ## Step 14: 引擎安全护栏 (熔断 + AgendaFilter)
 
@@ -977,6 +1022,23 @@ curl -s -X POST http://localhost:8081/scanner/deploy -H 'Content-Type: applicati
 5. **跟 Step 9 的取舍** — Step 9 轻 (无 Maven 依赖、规则即数据、应用自控编译时机), 适合"规则存数据库 / LLM 即时生成"; Step 16 重 (`kie-ci` 一票传递依赖 + 写 ~/.m2), 但换来标准化的版本/产物/多实例一致性, 适合"规则作为正式制品独立发版治理"
 6. **副作用提示** — `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`。这是 demo 自己的 GAV、每次 deploy 覆盖, 清理直接 `rm -rf ~/.m2/repository/com/lrj/rules`
 
+### Step 16 扩展: `/scanner/update-version` + `/scanner/events`
+
+两条扩展路径。`updateToVersion` 是 SNAPSHOT + scanNow 之外的另一条——每次 install 到**新固定 release**（1.0.1 / 1.0.2 …）再 `KieContainer.updateToVersion` 手动切，固定版本可精确回滚、适合版本号治理；`/scanner/events` 暴露 `KieScannerEventListener` 攒到的热替换事件。
+
+```bash
+# 先 deploy 建 container (见上)，再显式切一版 (固定 release)
+curl -s -X POST 'http://localhost:8081/scanner/update-version' -H 'Content-Type: application/json' \
+  -d '{"drl":"package rules.scanner\nimport com.lrj.drools.domain.Cart\nrule R when $c:Cart() then System.out.println(\"v2\"); end"}'
+# → {releaseId:"com.lrj.rules:scanner-cart-rules:1.0.1", generation:.., hasError:false, action:"...updateToVersion...(不经 scanner)"}
+
+# 再 deploy 一次 (走 scanNow) 后看 scanner 事件 (updateToVersion 那条不产生事件)
+curl -s http://localhost:8081/scanner/events
+# → [{type:"STATUS_CHANGE",detail:"SCANNING"},{type:"UPDATING"...},{type:"UPDATE_RESULTS",detail:"更新成功"},{type:"STATUS_CHANGE",detail:"STOPPED"}]
+```
+
+**观察点**：`updateToVersion` 走固定 release（不可变、可回滚），不经 scanner → **不触发** listener；只有 deploy 的 scanNow / 自动轮询会产生 `STATUS_CHANGE`/`UPDATE_RESULTS` 事件。
+
 ## Step 17: DMN (Decision Model and Notation)
 
 **第一个非 DRL 体系的 Step**。前面 Step 1-16 全是 Drools 私有的 DRL (when/then + RETE 前向链); DMN 是 OMG 跨厂商标准: `.dmn` XML 模型 + FEEL 表达式 + 决策需求图 (DRG)。两套引擎并存, 业务诉求选边。
@@ -1066,10 +1128,134 @@ curl -s -X POST http://localhost:8081/campaign/newuser-2026/end
 4. **DRL 即数据** — 运营写的规则不进 `resources/rules/` 也不进 `kmodule.xml`, 走 KieHelper 编译, 加活动不用改配置、不用重启。编译失败返回 400 + 行号, 跑不起来的规则绝不落库
 5. **跟 Step 16 的取舍** — 同样是"规则动态上线", Step 16 (KJAR + Maven repo) 适合"规则作为正式制品、多实例一致、版本治理"; Step 18 这种 "DRL 存业务库 + 应用内编译" 更轻, 适合"活动/规则就是业务数据"的高频小规则场景
 
+## Step 19: LHS 量词补全 (collect / forall / eval)
+
+`POST /quantifier/review` 补 Step 4 (`not`/`exists`) 没覆盖的另外三种 LHS 条件元素，用"订单合规审查"场景把三者串起来。插 `Customer` + 一组 `OrderItem`，规则产出若干 `ReviewFinding`。
+
+```bash
+curl -s -X POST 'http://localhost:8081/quantifier/review' -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"张三","age":30,"vipLevel":1,"yearsSinceRegistration":2},
+    "items": [
+      {"name":"书A","quantity":1,"unitPrice":50,"category":"BOOK"},
+      {"name":"书B","quantity":1,"unitPrice":60,"category":"BOOK"},
+      {"name":"书C","quantity":1,"unitPrice":70,"category":"BOOK"},
+      {"name":"手机","quantity":1,"unitPrice":3000,"category":"ELECTRONICS"}
+    ]
+  }'
+# → findings:
+#   BULK_BOOK        (collect: 图书 3 本 ≥ 3)
+#   ALL_LINES_VALID  (forall: 每行都有品类且单价 > 0)
+#   MANUAL_REVIEW    (eval: 总额 3180 > VIP1 免审额度 1000*(1+1)=2000)
+```
+
+**学习观察点 (Step 19)**:
+
+1. **`collect` vs `accumulate`** — `List(size >= 3) from collect(...)` 出的是**集合本身**（能拿到具体哪些 fact），`accumulate(..., sum/count)` 出的是**聚合标量** `Number`。想数量就 accumulate，想拿到那几条就 collect
+2. **`forall` 空集为真** — `forall(OrderItem(...))` 在一条 OrderItem 都没有时也成立，会把空购物车误判"全部合规"。本 demo 前置 `exists OrderItem()` 兜底。两模式写法 `forall($i: 基准 附加约束)` 用 `this == $i` 锁到同一条 fact
+3. **`eval` 是 LHS 最贵的元素** — 不进 RETE 字段索引、每次相关 fact 变化整段重算。只在"确实无法索引化"时用（这里判"跨 fact 聚合总额 > 按 VIP 等级动态算的阈值"）；能写成 `Customer(vipLevel >= 2)` 字段约束的永远别退化成 eval。DRL `function reviewThreshold(int)` 是包级辅助方法
+
+## Step 20: RHS 对外 (globals + channels)
+
+`POST /dispatch/run` 演示规则动作侧往引擎外部推副作用的两条正交出口。插 `Cart`（customer + items），大额订单经 **global** 记审计、VIP 客户经 **channel** 发通知。
+
+```bash
+curl -s -X POST 'http://localhost:8081/dispatch/run' -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"李四","age":40,"vipLevel":2,"yearsSinceRegistration":3},
+    "items": [ {"name":"笔记本","quantity":1,"unitPrice":1500,"category":"ELECTRONICS"} ]
+  }'
+# → {
+#     "auditLog": ["大额订单 ... 金额 1500.0 已记入审计"],     // global 路径 (sink.audit)
+#     "notices":  [{"channel":"SMS","target":"李四","content":"尊贵的VIP用户, ..."}]  // channel 路径
+#   }
+```
+
+**学习观察点 (Step 20)**:
+
+1. **`global` 是 pull 式外部句柄** — `global ...NotificationSink sink;` 声明后，**fire 前必须 `session.setGlobal("sink", 对象)`**，规则引用了 global 却没注入会 NPE。RHS 主动调 `sink.audit(...)`，常用于记日志 / 读外部配置 / 累加
+2. **`channel` 是 push 式 exit point** — RHS `channels["notify"].send(obj)`（`channels` 是 RHS 隐式 Map，跟 `drools`/`kcontext` 一样）把对象交给 Java 侧 `session.registerChannel("notify", ch)` 注册的回调，**对象不进 working memory**。`Channel` 是单方法接口，可用 lambda
+3. **两条出参路径的对照** — global/channel 是"把副作用推给外部系统"；跟 Step 4/8/19 的"insert 标记 fact 再 `getObjects` 捞回来"是两条不同的路子。sink 与 channel 收集器都每请求 new（KieSession 不线程安全不复用）
+4. **仍守 record RHS 坑** — Customer 是 record，RHS 取名字用 `$cart.getCustomer().name()` 不是 `getName()`（见坑 6）
+
+## Step 21: traits (给 fact 动态贴接口做多态)
+
+`POST /traits/evaluate` 演示 traits：`@Traitable` 的 `Applicant` 核心对象，规则里 `don($a, PremiumApplicant.class)` 在**运行时**贴上一层 trait，之后这个 applicant 同时"是" PremiumApplicant，能被 `PremiumApplicant(...)` 模式匹配到。跟普通 Java 继承的区别是可加可减。
+
+```bash
+curl -s -X POST 'http://localhost:8081/traits/evaluate' -H 'Content-Type: application/json' \
+  -d '{"applicants":[
+        {"name":"王五","age":35,"annualIncome":300000},
+        {"name":"赵六","age":28,"annualIncome":80000}
+      ]}'
+# → findings: [{name:"王五", tier:"GOLD", creditLimit:500000, perk:"专属客户经理"}]
+#   只有高收入的王五被 don 上 PremiumApplicant 并被 trait 类型的规则命中；赵六不是 premium，看不见
+```
+
+**观察点**：① `don` 之后核心对象能被 trait 类型模式匹配（动态多态）；② trait 里核心类没有的字段（tier/creditLimit）存进 `@Traitable` 加的隐藏动态属性表；③ `don`/`shed`/`isA` 要 classpath 上有 **drools-traits**（8.x 独立模块），`@Traitable` 在 `org.drools.base.factmodel.traits`。
+
+## Step 22: fireUntilHalt (引擎作为常驻消费者)
+
+`POST /fireuntilhalt/process` 演示 `fireUntilHalt` —— 跟 `fireAllRules`（跑空 agenda 就返回）不同，它**阻塞不返回**，agenda 空了就等新事实，像常驻消费者线程。service 起一个守护线程跑它，主线程逐个 insert `Task` 实时处理，最后一个 `__STOP__` 哨兵任务触发 `drools.halt()` 收尾。
+
+```bash
+curl -s -X POST 'http://localhost:8081/fireuntilhalt/process' -H 'Content-Type: application/json' \
+  -d '{"tasks":[{"id":"t1","amount":10},{"id":"t2","amount":20},{"id":"t3","amount":30}]}'
+# → {processed:[{id:"t1",amount:10},...], processedCount:3}
+```
+
+**观察点**：① `fireUntilHalt` 必须跑在单独线程，否则请求线程卡死；② 停止只能靠 `session.halt()`（可跨线程调，跟 Step 14 一样）；③ 用哨兵任务 + 低 salience 的 halt 规则让引擎处理完所有任务后自己收尾，比主线程直接 halt 更确定（避免异步竞态漏处理）。
+
+## Step 23: 规则模板 .drt (模板 + 数据行生成规则)
+
+`POST /template/discount` 演示 `.drt` 规则模板：把每档折扣配置做成数据行，`ObjectDataCompiler` 把模板 + 数据行展开成 DRL（每行一条 rule），再走 Step 9 的 KieHelper 编译跑。响应带上生成的 DRL。
+
+```bash
+curl -s -X POST 'http://localhost:8081/template/discount' -H 'Content-Type: application/json' \
+  -d '{
+    "customer": {"name":"张三","age":30,"vipLevel":1,"yearsSinceRegistration":2},
+    "items": [{"name":"x","quantity":1,"unitPrice":800,"category":"MISC"}],
+    "tiers": [
+      {"minAmount":0,   "maxAmount":500,        "discount":0.95},
+      {"minAmount":500, "maxAmount":1000,       "discount":0.85},
+      {"minAmount":1000,"maxAmount":1000000000, "discount":0.75}
+    ]
+  }'
+# → order.finalAmount = 680.0 (800 命中第二档 * 0.85), firedCount:1, generatedDrl:"...每档一条 rule..."
+```
+
+**观察点**：① 决策表（Step 7）本质就是"模板的表格皮"，走的同一套模板引擎，这里直接用底层 `ObjectDataCompiler`；② 数据行的 Map key 必须跟模板 `template header` 列名一字不差；③ 适合"规则结构固定、只有阈值/参数在变"的场景，数据行可来自 DB/请求（"规则即数据"）。
+
+## Step 24: PMML (规则里嵌 ML 模型评分 + Scorecard)
+
+`POST /pmml/score` 演示 PMML —— DMG 跨厂商标准，把训练好的模型（评分卡/回归/决策树…）写成 XML，用**独立求值引擎**跑（跟 DRL/RETE、DMN 都不是一套）。8.44.2 走 trusty(efesto)，`.pmml` 运行时编译成 Java 类求值。上线两个模型：评分卡 `credit-scorecard` + 线性回归 `risk-regression`。
+
+```bash
+# 评分卡：初始分 100 + 年龄档(≥25→30) + 收入档(≥30000→40) = 170
+curl -s -X POST 'http://localhost:8081/pmml/score' -H 'Content-Type: application/json' \
+  -d '{"model":"credit-scorecard","inputs":{"age":30,"income":50000}}'
+# → {model:"CreditScorecard", resultCode:"OK", variables:{"Final Score":170.0, score:170.0}}
+
+# 线性回归：100 - 1*age - 0.001*income = 100 - 30 - 50 = 20
+curl -s -X POST 'http://localhost:8081/pmml/score' -H 'Content-Type: application/json' \
+  -d '{"model":"risk-regression","inputs":{"age":30,"income":50000}}'
+# → {model:"RiskScore", resultCode:"OK", variables:{risk:20.0}}
+
+curl -s http://localhost:8081/pmml/models   # → {models:["credit-scorecard","risk-regression"]}
+```
+
+**学习观察点 (Step 24)**:
+
+1. **PMML 是独立求值引擎** — 不走 KieSession/fireAllRules（DRL），也不走 DMNRuntime（Step 17）。trusty 把 `.pmml` 编译成 Java 类，输入经 `PMMLRuntime.evaluate` 求值出 `PMML4Result`
+2. **依赖有坑** — 8.44.2 **无** `kie-pmml-trusty` 单构件，走聚合 pom `kie-pmml-dependencies`；且 trusty 编译器用 `javax.xml.bind`(JAXB 2.3)，Java 21 已从 JDK 移除，必须显式补 `jaxb-api` + `jaxb-runtime`，否则编译期 CNFE
+3. **standalone 接法有坑** — 官方 `getPMMLRuntimeFromFile/Classpath` 便捷工厂在 standalone 下不通（编译进内部 classloader 后丢掉，与另建 context 不共享 `GeneratedResources` → `Failed to retrieve EfestoOutput`）。正解：自己编译进持有的 `MemoryCompilerClassLoader` → 用同一个 classloader 建 context → 反射把编译产物 `generatedResourcesMap` 灌进求值 context。完整复盘见 `docs/plans/drools-capabilities-tier3-0817-1430/PLAN.md` §1
+4. **Scorecard 是 PMML 的一种模型** — 评分卡 `useReasonCodes` 还能给出扣分原因码（reasonCode）；把输入降到基线以下就能在 `variables` 里看到 `Reason Code 1`
+5. **⚠ fat jar 部署坑** — trusty PMML 经 jpmml 用 `javax.xml.bind`，RI 必须用 `com.sun.xml.bind:jaxb-impl:2.3.1`（在父 pom `dependencyManagement` pin 住），**不能**让 Spring Boot BOM 把它换成 jakarta 版 `jaxb-runtime:4.0.5`，否则 console fat jar 启动崩。`dependency:tree` 看着对、fat jar 里可能是错的，验证要 `unzip -l 目标jar | grep jaxb`
+
 ## 下一步预告
 
 - LLM × Drools: LLM 生成 DRL → `POST /hot/upsert` 或 `POST /scanner/deploy` 即时校验 + 上线; 或用 Drools/DMN 做 LLM 输出的硬约束验证 (Step 9 / Step 16 / Step 17 已铺好基础设施)
 - 加 BatchExecutionCommand: stateless 也能拿命名结果 / 调用 query, 不局限于 mutable fact
-- DMN 进阶: PMML 接入 (规则里嵌 ML 模型评分) / DMN 决策表的其他 hitPolicy (FIRST/PRIORITY/COLLECT)
+- **能力地图已收官**（见 [`docs/plans/drools-capabilities-tier3-0817-1430/PLAN.md`](docs/plans/drools-capabilities-tier3-0817-1430/PLAN.md)）：凡技术可行且有教学价值的都做了（Step 1–24 + 扩展，含 PMML）；Rule Units 试过后回退（fat jar 里与 traits 争 SPI 单例互斥 + 扫不到自己的 DRL）；余下 drools-persistence-jpa / KieServer / jBPM 被 **Jakarta 边界**（Drools 8.44.2 的 persistence/server/流程仍是 javax）卡死，本栈上做不了——PLAN §10 有"为什么就此打住"的完整判断
 
 需要时再喊我。

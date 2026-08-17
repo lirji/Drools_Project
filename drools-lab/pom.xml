@@ -83,6 +83,50 @@
             <groupId>org.drools</groupId>
             <artifactId>drools-serialization-protobuf</artifactId>
         </dependency>
+        <!-- Step21 traits（动态贴接口做多态）；@Traitable 在 drools-base（已传递），
+             don/shed 运行时支持在 drools-traits，8.x 拆成独立模块，不加 don() 拿不到实现 -->
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-traits</artifactId>
+        </dependency>
+        <!-- Step23 规则模板 .drt（ObjectDataCompiler 把模板 + 数据行展开成 DRL）。
+             drools-decisiontables 内部用到它但不传递暴露，显式加一条 -->
+        <dependency>
+            <groupId>org.drools</groupId>
+            <artifactId>drools-templates</artifactId>
+        </dependency>
+        <!-- Step24 PMML/Scorecard（规则里嵌 ML 模型评分 + 评分卡）。8.44.2 无 kie-pmml-trusty
+             单一构件，走聚合 pom kie-pmml-dependencies 拉齐 trusty 全栈（regression/tree/
+             scorecard/mining 的 compiler+evaluator）。drools-bom 不管其版本，显式锁同版本号。
+             standalone 求值走「自己编译进一个 MemoryCompilerClassLoader，再用同一个 classloader
+             建 runtime context」的路子（PmmlService），避开 getPMMLRuntimeFromFile 的 classloader 不共享坑 -->
+        <dependency>
+            <groupId>org.kie</groupId>
+            <artifactId>kie-pmml-dependencies</artifactId>
+            <version>${drools.version}</version>
+            <type>pom</type>
+        </dependency>
+        <!-- trusty PMML（经 jpmml pmml-model）用 javax.xml.bind(JAXB 2.3 老命名空间) 解析 .pmml；
+             Java 21 已从 JDK 移除 JAXB，必须显式补 javax 版 api + RI，否则运行期 "JAXB-API 找不到实现"。
+             ⚠ RI 必须用 com.sun.xml.bind:jaxb-impl（javax 版），**不能**用 org.glassfish.jaxb:jaxb-runtime：
+             后者被 Spring Boot 3 的 BOM 统一管到 4.0.5（jakarta 版，同 GAV 无法并存），只注册 jakarta 服务，
+             javax 发现不到实现 → console fat jar 启动即崩。jaxb-impl 是独立 GAV，与 glassfish 4.0.5 并存。 -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>com.sun.xml.bind</groupId>
+            <artifactId>jaxb-impl</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <!-- Step25 Rule Units 曾尝试接入(drools-ruleunits-impl)，2026-08-17 回退：它与 drools-traits(Step21)
+             争抢 Drools 唯一的 RuntimeComponentFactory SPI 单例、二者互斥(加它 traits 就 ClassCastException)，
+             且其解释执行 provider 在 Spring Boot fat jar 里扫不到自己的 DRL 资源(NoSuchFileException on nested jar)。
+             surefire 扁平 classpath 测得过、打包部署即崩。详见 docs/plans/drools-capabilities-tier3-*/ §5。 -->
+
+
 
         <dependency>
             <groupId>com.mysql</groupId>

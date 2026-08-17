@@ -2,13 +2,15 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// 18 Step 演示台端点是根路径散点（/hello、/discount/… 等），只能用前缀正则清单让 dev proxy 反代到后端。
+// 25 Step 演示台端点（含进阶能力）是根路径散点（/hello、/discount/… 等），只能用前缀正则清单让 dev proxy 反代到后端。
 // 与活动面 /activity-marketing、/actuator 一并转发；改后端端口用 VITE_PROXY_TARGET（dev 档 8081 / auth 档 8099）。
 // 此清单必须与 examples.js 的 demo path 前缀同步——F2 迁 catalog 时加一条 lint 校验（计划 A2）。
 const API_PREFIXES = [
   'hello', 'discount', 'cart', 'risk', 'pipeline', 'decision', 'stateless',
   'fraud', 'backward', 'hot', 'scanner', 'loyalty', 'tms', 'guard', 'metrics',
   'dmn', 'campaign', 'activity-marketing', 'actuator',
+  // Step 19–24 进阶能力（根路径散点，同样要进前缀清单，否则 dev 会把它们当 SPA 路由）
+  'quantifier', 'dispatch', 'traits', 'fireuntilhalt', 'template', 'pmml',
 ]
 
 export default defineConfig(({ mode }) => {

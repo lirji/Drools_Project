@@ -17,6 +17,7 @@ const groupVisuals: Record<string, { icon: string; eyebrow: string; tone: string
   hot: { icon: 'zap', eyebrow: '动态发布', tone: 'amber' },
   ops: { icon: 'gauge', eyebrow: '稳定性与观测', tone: 'green' },
   model: { icon: 'layers', eyebrow: '标准决策模型', tone: 'rose' },
+  advanced: { icon: 'workflow', eyebrow: '进阶引擎', tone: 'violet' },
 }
 
 function demosOf(groupId: string): DemoDef[] {

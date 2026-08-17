@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PMML xmlns="http://www.dmg.org/PMML-4_2" version="4.2">
+  <Header copyright="drools-demo"/>
+  <DataDictionary numberOfFields="3">
+    <DataField name="age" optype="continuous" dataType="double"/>
+    <DataField name="income" optype="continuous" dataType="double"/>
+    <DataField name="risk" optype="continuous" dataType="double"/>
+  </DataDictionary>
+  <RegressionModel modelName="RiskScore" functionName="regression" algorithmName="linearRegression">
+    <MiningSchema>
+      <MiningField name="age" usageType="active"/>
+      <MiningField name="income" usageType="active"/>
+      <MiningField name="risk" usageType="target"/>
+    </MiningSchema>
+    <Output>
+      <OutputField name="risk" feature="predictedValue" dataType="double" optype="continuous"/>
+    </Output>
+    <RegressionTable intercept="100.0">
+      <NumericPredictor name="age" coefficient="-1.0"/>
+      <NumericPredictor name="income" coefficient="-0.001"/>
+    </RegressionTable>
+  </RegressionModel>
+</PMML>

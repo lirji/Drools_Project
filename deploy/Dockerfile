@@ -10,7 +10,10 @@ COPY . .
 RUN ./mvnw -q -Pfrontend -Dmaven.test.skip=true clean package
 
 # ---- 运行阶段（按 MODULE 选 jar）----
-FROM eclipse-temurin:21-jre
+# ⚠ 必须是 JDK 不是 JRE：Step 24 PMML 走 trusty(efesto)，其 `KieMemoryCompiler.compile` 硬编码
+#   CompilerType.NATIVE（JDK 的 ToolProvider.getSystemJavaCompiler），JRE 里没有 javac → PmmlService
+#   构造时编译模型抛 KieMemoryCompilerException 启动即崩（drools-ecj 在 classpath 也没用，该路径不 fallback ECJ）。
+FROM eclipse-temurin:21-jdk
 WORKDIR /app
 # curl 供 compose healthcheck 用（console 健康 = schema 已建好，decision 才 depends_on service_healthy）
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*

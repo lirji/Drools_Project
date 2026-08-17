@@ -1,0 +1,50 @@
+// Step 20: RHS 对外 —— globals + channels (exit points)。
+//
+// 前面的 Step 里, 规则动作 (RHS) 要么改 fact 字段, 要么 insert 新 fact, 都在引擎内部打转。
+// 真实系统里规则常要"往外说话": 记审计、发短信、推 MQ。Drools 给两条正交的出口:
+//
+//   global      —— 往 RHS **注入**一个外部句柄, RHS 主动调它 (`sink.audit(...)`)。
+//                  pull 式, 适合 logger / 领域 service / 计数器。
+//   channel     —— RHS 把对象 **send** 给外部注册的回调 (`channels["notify"].send(...)`)。
+//                  push 式 exit point, 适合"把消息投递出引擎"。
+//
+// 两者都不往 working memory 留 fact, 是纯副作用出口 —— 跟"insert 标记 fact 再捞回来"
+// 那套 (Step 4/8/19) 形成对照。
+package rules.dispatch
+
+import com.lrj.drools.domain.Cart
+import com.lrj.drools.domain.Customer
+import com.lrj.drools.domain.Notice
+
+// global 声明: 类型 + 名字。Java 侧 session.setGlobal("sink", <对象>) 注入。
+// ⚠ 规则引用了 global 却没 setGlobal 会 NPE, 所以 service 里 fire 前必须先注入。
+global com.lrj.drools.service.NotificationSink sink;
+
+// ============================================================
+//   规则 1: global —— 大额订单记审计
+//   RHS 直接调注入进来的 sink, 引擎不关心 sink 从哪来。
+// ============================================================
+rule "Global: audit large order"
+    when
+        $cart : Cart( totalAmount > 1000 )
+    then
+        sink.audit("大额订单 " + $cart.getCartId() + " 金额 " + $cart.getTotalAmount() + " 已记入审计");
+end
+
+// ============================================================
+//   规则 2: channel —— VIP 客户经 "notify" 出口发通知
+//
+//   `channels["notify"]` 是 RHS 隐式可用的 Map (跟 drools / kcontext 一样), key 是
+//   Java 侧 session.registerChannel("notify", ...) 注册的渠道名。send 的对象直接交给
+//   那个回调, 不进 working memory。
+//
+//   注意 Customer 是 record: RHS 里取名字用 record accessor `name()`, 不是 getName()。
+// ============================================================
+rule "Channel: notify VIP customer"
+    when
+        $cart : Cart( $c : customer )
+        Customer( this == $c, vipLevel >= 2 )
+    then
+        channels["notify"].send(
+            new Notice("SMS", $cart.getCustomer().name(), "尊贵的VIP用户, 您的订单已优先处理"));
+end
