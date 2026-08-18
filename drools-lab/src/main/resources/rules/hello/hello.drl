@@ -1,4 +1,4 @@
-// Drools Hello World — 演示最核心的三件事:
+// Drools Hello World — 展示最核心的三件事:
 //   1. when (LHS / pattern):    描述事实需要满足的条件
 //   2. then (RHS / consequence): 条件满足时执行的 Java
 //   3. $var: Customer(...)       绑定变量，then 里能引用

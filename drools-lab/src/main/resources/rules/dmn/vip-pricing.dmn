@@ -101,7 +101,7 @@
     </literalExpression>
   </decision>
 
-  <!-- 决策 3: 会员档位 — FEEL if/else 链, 演示表达式逻辑 (不是表格)。 -->
+  <!-- 决策 3: 会员档位 — FEEL if/else 链, 展示表达式逻辑 (不是表格)。 -->
   <decision id="id_tier" name="Membership Tier">
     <variable name="Membership Tier" typeRef="string"/>
     <informationRequirement>

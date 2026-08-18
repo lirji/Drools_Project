@@ -3,25 +3,25 @@ server:
 
 spring:
   application:
-    name: drools-demo
+    name: activity-console
 
   # 默认连 MySQL (mysql profile)。clone 下来没装 MySQL 时, 用 H2 file 跑:
-  #   ./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
-  #   java -jar target/*.jar --spring.profiles.active=h2
+  #   ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
+  #   java -jar activity-console/target/*.jar --spring.profiles.active=h2
   # 数据源细节按 profile 分到 application-mysql.yml / application-h2.yml。
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:mysql}
 
   jpa:
     hibernate:
-      ddl-auto: update      # 学习场景: 实体一改字段自动迁移; 生产不要用
+      ddl-auto: update      # 本地开发便捷配置；正式环境应使用 Flyway/Liquibase 等版本化迁移
     open-in-view: false
     show-sql: false
 
 # Step 15: Actuator + Prometheus 指标暴露。
 #   GET /actuator/prometheus  → Prometheus 抓取端点 (文本格式)
 #   GET /actuator/metrics/drools.rules.fired → 单个指标的 JSON 视图 (调试用)
-# 生产里 management.endpoints 通常单独开一个 port + 加鉴权, 学习场景全开在 8081。
+# 正式环境通常为 management.endpoints 配置独立端口与鉴权；本地开发统一暴露在 8081。
 management:
   endpoints:
     web:
@@ -29,14 +29,14 @@ management:
         include: health,info,metrics,prometheus
   metrics:
     tags:
-      application: drools-demo   # 所有指标默认带上的公共 tag, 多实例时区分来源
+      application: activity-console   # 所有指标默认带上的公共 tag, 多实例时区分来源
 
-# 活动营销 demo (com.lrj.drools.activity) 开关。
-#   rule-engine.enabled=false 时优惠查询走旧 Java 逻辑 (取最大红包), 用于灰度对照/回滚;
-#   true 时走 Drools 规则 (资格→阶梯→折扣合并), 引擎异常/空决策仍自动回退旧逻辑。
+# 活动营销平台（com.lrj.drools.activity）配置。
+#   权益算额、资格条件树与多活动合并固定走 Java 求值层；rule-engine.enabled 控制仍需 DRL 的规则能力，
+#   关闭或执行失败时使用安全回退路径，不改变红包算额权威实现。
 activity:
   marketing:
-    # P1-8 四眼职责分离。默认 false(不改 demo)；开启后活动发布(上线)要求审批人身份(auth=JWT sub / dev=X-Actor header)
+    # P1-8 四眼职责分离。开启后活动发布（上线）要求审批人身份（auth=JWT sub / dev=X-Actor header）
     # 且 ≠ 提交人——提交人不能自审自发。需控制台人流(用户身份/审批)配套，生产建议开。
     four-eyes-enabled: false
     rule-engine:
@@ -56,21 +56,30 @@ activity:
     generation-poll:
       enabled: true
       interval-ms: 3000
-    # 种入 demo 商品 + 商品池 (仅当 demo_product 空), 让前端「商品池」自动圈选可演示。
-    # 测试不开此开关, 避免污染 ActivityMarketingFlowTest 的池断言。
-    seed-demo-data: true
+    # 活动生命周期调度（仅 console 写平面执行）：
+    #   PENDING_EFFECT(3) 到 activityStartTime 自动上线；ONLINE 超过 activityEndTime 自动下线。
+    # 普通 NORMAL 草稿不会被扫描，必须由运营显式预约，避免未审批配置被后台误发布。
+    lifecycle-schedule:
+      # local=Spring @Scheduled；xxl=由 XXL-JOB activityLifecycleSweep 触发；off=完全关闭。
+      # 三种模式互斥，默认 local 保持单机开发行为不变。
+      mode: ${ACTIVITY_MARKETING_LIFECYCLE_SCHEDULE_MODE:local}
+      interval-ms: 5000
+      initial-delay-ms: 5000
+      batch-size: 200
+    # 可选的本地目录初始化。正式环境应由商品/门店主数据同步，默认禁止应用启动时自动造数。
+    seed-catalog-data: false
     # 落库中国行政区划字典 (仅当 sys_district 空)。它是 district_ids / userDistrictId 那两个
-    # 6 位代码字段的取值域, 属参考数据而非 demo 数据, 所以生产也该开着。
-    # ⚠️ 与上面 seed-demo-data 不同, **测试里它是开着的**: console 没有 src/test/resources,
+    # 6 位代码字段的取值域，属于平台参考数据，正式环境也应启用。
+    # ⚠️ 与上面 seed-catalog-data 不同, **测试里它是开着的**: console 没有 src/test/resources,
     #    测试直接吃这份 yml; 而 @SpringBootTest 会真的执行 CommandLineRunner
     #    (DistrictSeederTest 的「启动即落库」正是靠这一点), 且没有任何测试把它置 false。
     #    实测每个 Spring 上下文因此多花约 0.7s (ActivityIdempotencyTest 6.4s → 5.7s),
-    #    console 侧约 33 个不同的 @TestPropertySource 组合 ≈ 20s。要省掉就照 seed-demo-data 的老办法,
+    #    console 侧约 33 个不同的 @TestPropertySource 组合 ≈ 20s。要省掉就照 seed-catalog-data 的老办法,
     #    在各测试的 @TestPropertySource 里逐个加 seed-district-data=false。
     seed-district-data: true
   # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
   # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
-  #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地/演示, **不是 fail-closed**。
+  #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地开发, **不是 fail-closed**。
   #    生产必须: dev-default-enabled=false(无 header→403) + auth.enabled=true(JWT 定租户)。这两项默认值都安全, 是本文件显式放开的。
   tenant:
     dev-default-enabled: true
@@ -105,12 +114,26 @@ activity:
       # P1-12 last-good: 正常缓存 TTL + Casdoor 不可达时用旧密钥集续验签的窗口(0=关)。
       jwks-cache-ttl-ms: 300000
       jwks-outage-ttl-ms: 3600000
-    # P1-13 每租户限流(进程内 token bucket, demo 切片)。默认关(不改 demo)。
+    # P1-13 每租户限流（进程内 token bucket）。默认关闭；多实例正式环境应改为共享限流。
     #   生产多实例须换 Redis token bucket/网关限流(否则总配额=N×单实例)并定义 Redis 宕机开/闭。
     quota:
       enabled: false
       per-tenant-qps: 50
       burst: 50
+
+# XXL-JOB 执行器仅在 lifecycle-schedule.mode=xxl 时创建。
+xxl:
+  job:
+    admin:
+      addresses: ${XXL_JOB_ADMIN_ADDRESSES:http://localhost:8080}
+    access-token: ${XXL_JOB_ACCESS_TOKEN:}
+    executor:
+      appname: ${XXL_JOB_EXECUTOR_APPNAME:activity-console}
+      address: ${XXL_JOB_EXECUTOR_ADDRESS:}
+      ip: ${XXL_JOB_EXECUTOR_IP:}
+      port: ${XXL_JOB_EXECUTOR_PORT:9999}
+      log-path: ${XXL_JOB_EXECUTOR_LOG_PATH:./logs/xxl-job/jobhandler}
+      log-retention-days: ${XXL_JOB_EXECUTOR_LOG_RETENTION_DAYS:30}
 
 logging:
   level:

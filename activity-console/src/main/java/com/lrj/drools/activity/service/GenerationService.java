@@ -5,6 +5,7 @@ import com.lrj.drools.activity.persistence.ActivityGenerationRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
@@ -21,31 +22,26 @@ public class GenerationService {
     private static final Logger log = LoggerFactory.getLogger(GenerationService.class);
 
     private final ActivityGenerationRepository genRepo;
+    private final GenerationWriteStore writeStore;
 
-    public GenerationService(ActivityGenerationRepository genRepo) {
+    public GenerationService(ActivityGenerationRepository genRepo, GenerationWriteStore writeStore) {
         this.genRepo = genRepo;
+        this.writeStore = writeStore;
     }
 
     /**
-     * 把 {@code (tenant, bizLine)} 的发布代际 +1；行不存在则建 gen=1。无独立 {@code @Transactional}——
-     * 复用调用方（发布上线）的事务，与业务落库同提交/同回滚。
+     * 把 {@code (tenant, bizLine)} 的发布代际 +1；行不存在则建 gen=1。事务默认复用调用方
+     * （发布上线）的事务，与业务落库同提交/同回滚；直接调用时则自行开启事务。
      *
-     * <p>generation 只是**变更信号**（poller 一旦见到增长就预热该 (tenant,bizLine) 的<b>全部</b> ACTIVE artifact），
-     * 不是每次发布必须精确 +1 的计数。故用读改写即可：并发发布即便丢一次自增，最终值仍 ≥N+1、仍触发一次覆盖两者的预热，语义正确。
+     * <p>必须使用数据库原子 upsert：如果两个不同活动同时改变同一业务线，普通读改写可能都把 N 写成 N+1；
+     * decision 若恰好在两次提交之间预热，就会永久错过后一次提交的重建信号。
      */
+    @Transactional
     public long bump(String tenant, String bizLine) {
         Instant now = Instant.now();
-        ActivityGenerationEntity g = genRepo.findByTenantIdAndBizLine(tenant, bizLine).orElse(null);
-        if (g == null) {
-            genRepo.save(new ActivityGenerationEntity(tenant, bizLine, 1L, now));
-            log.info("[generation] 首次发布代际 tenant={} bizLine={} generation=1", tenant, bizLine);
-            return 1L;
-        }
-        g.setGeneration(g.getGeneration() + 1);
-        g.setUpdatedStime(now);
-        genRepo.save(g);
-        log.info("[generation] 发布代际 +1 tenant={} bizLine={} generation={}", tenant, bizLine, g.getGeneration());
-        return g.getGeneration();
+        long generation = writeStore.upsertAndIncrement(tenant, bizLine, now);
+        log.info("[generation] 发布代际更新 tenant={} bizLine={} generation={}", tenant, bizLine, generation);
+        return generation;
     }
 
     /**

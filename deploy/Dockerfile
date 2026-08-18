@@ -17,7 +17,7 @@ FROM eclipse-temurin:21-jdk
 WORKDIR /app
 # curl 供 compose healthcheck 用（console 健康 = schema 已建好，decision 才 depends_on service_healthy）
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-# activity-console(含前端/Step1-18/写面，~104MB) | activity-decision(只读决策，~67MB，甩掉 kie-ci/dmn)
+# activity-console(含前端/Step1-24/写面，~104MB) | activity-decision(只读决策，~67MB，甩掉 kie-ci/dmn)
 ARG MODULE=activity-console
 COPY --from=build /src/${MODULE}/target/${MODULE}-*.jar app.jar
 EXPOSE 8080

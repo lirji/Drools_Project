@@ -52,7 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         // 没有它，这个测试在两种实现下都会绿——那正是这个 bug 当初能溜过去的原因。
         "spring.datasource.url=jdbc:h2:mem:snapcollation;DB_CLOSE_DELAY=-1;MODE=MySQL;IGNORECASE=TRUE",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("快照桶归属：bizLine 必须精确相等，不随数据库排序规则放宽")
 class SnapshotBizLineCollationTest {

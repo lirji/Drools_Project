@@ -7,12 +7,10 @@
 import type { ActivityListRow } from '@/shared/types'
 
 /**
- * 工作台的五态。**不是**设计规范里那六态——
- * 后端 `ActivityStatus` 只有 4 个枚举值，其中 `PENDING_EFFECT(3)` 全仓无写入点，
- * 而「灰度中」在整个 activity-* 源码里不存在任何按活动的灰度比例。
- * 所以这里是 2 个存储态 + 3 个由时间窗派生的态，没有占位、没有假态。
+ * 工作台状态。`scheduled` 对应后端 `PENDING_EFFECT(3)`：已审批，等待开始时间自动发布；
+ * `warmup/live/expired` 则是 ONLINE 结合活动时间窗派生出来的展示态。
  */
-export type BenchState = 'draft' | 'warmup' | 'live' | 'expired' | 'offline'
+export type BenchState = 'draft' | 'scheduled' | 'warmup' | 'live' | 'expired' | 'offline'
 
 export interface BenchRow {
   activityId: string
@@ -26,6 +24,9 @@ export interface BenchRow {
   latestVersion: number
   /** 线上版之上还压着一版草稿时给出草稿版本号（P0-4 之后线上与草稿并存） */
   draftVersion: number | null
+  /** 已预约上线的版本；可能与正在服务的 ONLINE 版本并存。 */
+  scheduledVersion: number | null
+  scheduledStart: number | null
   start: number | null
   end: number | null
   /** 声明式库存。**没有已用量**，所以只能当数字展示，不能拿来画液面 */
@@ -42,6 +43,7 @@ export function parseTime(v: string | number | null | undefined): number | null 
 
 const ONLINE = 1
 const OFFLINE = 2
+const PENDING_EFFECT = 3
 
 /**
  * 状态派生。时间窗判据与决策侧 `DecisionDataLoader:201`
@@ -50,6 +52,7 @@ const OFFLINE = 2
  */
 export function deriveState(status: number, start: number | null, end: number | null, now: number): BenchState {
   if (status === OFFLINE) return 'offline'
+  if (status === PENDING_EFFECT) return 'scheduled'
   if (status !== ONLINE) return 'draft'
   if (start !== null && now < start) return 'warmup'
   if (end !== null && now > end) return 'expired'
@@ -79,9 +82,13 @@ export function mergeRows(rows: ActivityListRow[], now: number): BenchRow[] {
     // 但历史数据/并发编辑可能留下多个，此时「最新的那个线上版」是唯一说得通的选择
     const online = group.filter((r) => r.activityStatus === ONLINE)
       .sort((a, b) => b.version - a.version)[0]
+    const scheduled = group.filter((r) => r.activityStatus === PENDING_EFFECT)
+      .sort((a, b) => b.version - a.version)[0]
     const highest = group.slice().sort((a, b) => b.version - a.version)[0]
-    const primary = online ?? highest
+    const primary = online ?? scheduled ?? highest
     const latestVersion = highest.version
+    const draft = group.filter((r) => r.activityStatus === 0 && r.version > primary.version)
+      .sort((a, b) => b.version - a.version)[0]
 
     const start = parseTime(primary.activityStartTime)
     const end = parseTime(primary.activityEndTime)
@@ -93,7 +100,9 @@ export function mergeRows(rows: ActivityListRow[], now: number): BenchRow[] {
       version: primary.version,
       activityStatus: primary.activityStatus,
       latestVersion,
-      draftVersion: latestVersion > primary.version ? latestVersion : null,
+      draftVersion: draft?.version ?? null,
+      scheduledVersion: scheduled?.version ?? null,
+      scheduledStart: parseTime(scheduled?.activityStartTime),
       start,
       end,
       inventory: primary.inventory ?? null,
@@ -106,10 +115,26 @@ export function mergeRows(rows: ActivityListRow[], now: number): BenchRow[] {
 /**
  * 动作要打到哪一版。
  *   下线 → 主版本（正在服务的那一版）
- *   上线 → 最高版本（要发布的就是最新草稿；没有草稿时就是主版本自己，等于重新发布）
+ *   取消定时 → 预约版本
+ *   上线 / 定时上线 → 最高版本（要发布的就是最新草稿）
  */
-export function versionForTarget(row: BenchRow, target: 1 | 2): number {
-  return target === 1 ? row.latestVersion : row.version
+export function versionForTarget(row: BenchRow, target: 0 | 1 | 2 | 3): number {
+  if (target === 2) return row.version
+  if (target === 0) return row.scheduledVersion ?? row.latestVersion
+  return row.latestVersion
+}
+
+export interface StatusAction {
+  target: 0 | 1 | 2 | 3
+  label: '上线' | '下线' | '定时上线' | '取消定时'
+}
+
+/** 单条主操作：未来开始的草稿预约上线，已到开始时间的草稿直接上线。 */
+export function statusActionFor(row: BenchRow, now: number): StatusAction {
+  if (row.activityStatus === ONLINE) return { target: 2, label: '下线' }
+  if (row.activityStatus === PENDING_EFFECT) return { target: 0, label: '取消定时' }
+  if (row.start !== null && row.start > now) return { target: 3, label: '定时上线' }
+  return { target: 1, label: '上线' }
 }
 
 /** 搜索 + 状态筛选。**注意**：不要把关键词回显进列表容器——
@@ -117,7 +142,8 @@ export function versionForTarget(row: BenchRow, target: 1 | 2): number {
 export function filterRows(rows: BenchRow[], keyword: string, status: number | ''): BenchRow[] {
   const kw = keyword.trim().toLocaleLowerCase()
   return rows.filter((r) => {
-    if (status !== '' && r.activityStatus !== status) return false
+    // ONLINE v1 与 PENDING v2 会归并成一行；筛“定时中”时仍要找得到这类待切版活动。
+    if (status !== '' && (status === PENDING_EFFECT ? r.scheduledVersion === null : r.activityStatus !== status)) return false
     if (kw && !`${r.activityName} ${r.activityId} ${r.bizLine || ''}`.toLocaleLowerCase().includes(kw)) return false
     return true
   })
@@ -131,7 +157,9 @@ export function nextSortDir(current: SortDir): SortDir {
   return current === null ? 'asc' : current === 'asc' ? 'desc' : null
 }
 
-const STATE_ORDER: Record<BenchState, number> = { live: 0, warmup: 1, draft: 2, expired: 3, offline: 4 }
+const STATE_ORDER: Record<BenchState, number> = {
+  live: 0, scheduled: 1, warmup: 2, draft: 3, expired: 4, offline: 5,
+}
 
 export function sortRows(rows: BenchRow[], key: SortKey, dir: SortDir): BenchRow[] {
   if (dir === null) return rows

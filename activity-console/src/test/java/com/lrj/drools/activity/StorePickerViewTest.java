@@ -1,9 +1,9 @@
 package com.lrj.drools.activity;
 
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
-import com.lrj.drools.activity.persistence.DemoStoreEntity;
-import com.lrj.drools.activity.persistence.DemoStoreRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
+import com.lrj.drools.activity.persistence.CatalogStoreEntity;
+import com.lrj.drools.activity.persistence.CatalogStoreRepository;
 import com.lrj.drools.activity.service.StorePickerQueryService;
 import com.lrj.drools.activity.service.StorePickerQueryService.PickerProductPage;
 import com.lrj.drools.activity.service.StorePickerQueryService.PickerStore;
@@ -33,13 +33,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:storepicker;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 class StorePickerViewTest {
 
     @Autowired StorePickerQueryService picker;
-    @Autowired DemoStoreRepository storeRepo;
-    @Autowired DemoProductRepository productRepo;
+    @Autowired CatalogStoreRepository storeRepo;
+    @Autowired CatalogProductRepository productRepo;
 
     @AfterEach
     void clear() {
@@ -50,7 +50,7 @@ class StorePickerViewTest {
     @Test
     void listStoresReturnsAll() {
         TenantContext.set("t-stores");
-        storeRepo.save(new DemoStoreEntity(1, "旗舰店", 1));
+        storeRepo.save(new CatalogStoreEntity(1, "旗舰店", 1));
         // store 2 故意不建店名行 → 聚合仍列出（有商品），店名回退 null
         product(11L, 1, "耳机", "electronics", "120", 1);
         product(12L, 1, "键盘", "electronics", "180", 1);
@@ -62,7 +62,7 @@ class StorePickerViewTest {
         assertEquals("旗舰店", s1.storeName());
         assertEquals(2, s1.productCount());
         PickerStore s2 = find(stores, 2);
-        assertNull(s2.storeName(), "demo_store 里没有 store 2 → 店名回退 null（前端显示「店铺 #2」）");
+        assertNull(s2.storeName(), "catalog_store 里没有 store 2 → 店名回退 null（前端显示「店铺 #2」）");
         assertEquals(1, s2.productCount());
     }
 
@@ -122,7 +122,7 @@ class StorePickerViewTest {
     // ------------------------------------------------------------------ helper
 
     private void product(long spuId, int storeId, String name, String category, String price, int onShelf) {
-        productRepo.save(new DemoProductEntity(spuId, storeId, name, category, new BigDecimal(price), null, onShelf));
+        productRepo.save(new CatalogProductEntity(spuId, storeId, name, category, new BigDecimal(price), null, onShelf));
     }
 
     private PickerStore find(List<PickerStore> stores, int storeId) {

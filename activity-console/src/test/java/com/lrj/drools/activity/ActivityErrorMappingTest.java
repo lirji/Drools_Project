@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:errmapping;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         "activity.marketing.four-eyes-enabled=true",
         "activity.tenant.dev-default-enabled=true"
 })
@@ -107,7 +107,7 @@ class ActivityErrorMappingTest {
     void existingStatusCodesDoNotDrift() throws Exception {
         mvc.perform(post("/activity-marketing/bulk-status")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"items\":[],\"targetStatus\":3}"))
+                        .content("{\"items\":[],\"targetStatus\":99}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").exists());
 

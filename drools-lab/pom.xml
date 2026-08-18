@@ -7,17 +7,17 @@
 
     <parent>
         <groupId>com.lrj</groupId>
-        <artifactId>drools-demo-parent</artifactId>
+        <artifactId>activity-platform-parent</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
     <artifactId>drools-lab</artifactId>
     <name>drools-lab</name>
     <description>
-        Step 1–18 教学库：Hello→DMN 的 18 个 Step（controller/service/config/domain/audit/metrics/guard/
+        Step 1–24 规则能力库：Hello→PMML 的 24 个 Step（controller/service/config/domain/audit/metrics/guard/
         persistence(Step10/18 JPA)/web + rules(drl/xls/dmn) + kmodule.xml）。与 activity 世界零耦合（无 activity.* import）。
         独占重依赖 kie-ci(Step16 KJAR/KieScanner) + kie-dmn(Step17) + decisiontables(Step7) + xml-support(kmodule)——
-        这些**不进** activity-common，故 decision 服务不背这些重量级传递依赖。console 服务依赖本库以提供 Step1-18。
+        这些**不进** activity-common，故 decision 服务不背这些重量级传递依赖。console 服务依赖本库以提供 Step1-24。
     </description>
 
     <dependencies>

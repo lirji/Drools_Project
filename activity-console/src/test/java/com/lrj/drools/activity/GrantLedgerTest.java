@@ -47,7 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:grantledger;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("发放流水：幂等 / 限领 / 冲正 / 对账")
 class GrantLedgerTest {

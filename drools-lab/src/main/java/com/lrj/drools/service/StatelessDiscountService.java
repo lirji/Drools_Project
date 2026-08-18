@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Step 11: StatelessKieSession 对比 demo。
+ * Step 11: StatelessKieSession 对比能力。
  *
  * 跟 DiscountService (stateful) 用同一组规则 (discountKBase / order-discount.drl),
  * 但派生的是 type="stateless" 的 ksession。教学要点全在两边 API 形态的差异:
@@ -44,7 +44,7 @@ import java.util.List;
  *     需要被 marshall 的东西。
  *
  * 适用场景:
- *   - RPC/HTTP 一次性"请求-响应"型规则评估 (本 demo 的 /discount 就属于这类, Step 2
+ *   - RPC/HTTP 一次性“请求-响应”型规则评估（/discount 就属于这类，Step 2
  *     用 stateful 是"为了教学一致"; 单看业务诉求 stateless 更贴切)。
  *   - 批量评估: 一次提交 N 个 Order, 每个独立计算, 结果不互相污染。
  *   - 任何"喂数据 → 拿结果"且不需要跨调用记忆的场景。

@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:actbulk;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("批量上下线：部分失败逐条回执")
 class BulkStatusTest {

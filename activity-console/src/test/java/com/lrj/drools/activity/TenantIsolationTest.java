@@ -5,10 +5,10 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
-import com.lrj.drools.activity.persistence.DemoStoreEntity;
-import com.lrj.drools.activity.persistence.DemoStoreRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
+import com.lrj.drools.activity.persistence.CatalogStoreEntity;
+import com.lrj.drools.activity.persistence.CatalogStoreRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.StorePickerQueryService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -48,7 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:tenantiso;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "activity.marketing.rule-engine.enabled=true",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         "activity.tenant.dev-default-enabled=true"
 })
 class TenantIsolationTest {
@@ -61,8 +61,8 @@ class TenantIsolationTest {
     @Autowired ActivityManageRepository manageRepo;
     @Autowired org.springframework.transaction.PlatformTransactionManager txm;
     @Autowired StorePickerQueryService picker;
-    @Autowired DemoStoreRepository demoStoreRepo;
-    @Autowired DemoProductRepository demoProductRepo;
+    @Autowired CatalogStoreRepository catalogStoreRepo;
+    @Autowired CatalogProductRepository catalogProductRepo;
 
     @AfterEach
     void clearTenant() {
@@ -168,14 +168,14 @@ class TenantIsolationTest {
     }
 
     /**
-     * picker 目录浏览的两条新 @Query 也必须租户隔离：A 造 demo_store+demo_product 目录，切 B 列店/列商品应为空。
+     * picker 目录浏览的两条新 @Query 也必须租户隔离：A 造 catalog_store+catalog_product 目录，切 B 列店/列商品应为空。
      * 若误把 aggregateStores/pageStoreProducts 改成 native SQL，@TenantId 不覆盖，B 会读到 A 的目录——本用例守这条红线。
      */
     @Test
     void storePickerIsolation() {
         TenantContext.set(TENANT_A);
-        demoStoreRepo.save(new DemoStoreEntity(1, "A 的旗舰店", 1));
-        demoProductRepo.save(new DemoProductEntity(9001L, 1, "A 的耳机", "electronics", new BigDecimal("120"), null, 1));
+        catalogStoreRepo.save(new CatalogStoreEntity(1, "A 的旗舰店", 1));
+        catalogProductRepo.save(new CatalogProductEntity(9001L, 1, "A 的耳机", "electronics", new BigDecimal("120"), null, 1));
         assertFalse(picker.stores().isEmpty(), "A 应看到自己的店铺目录");
         assertTrue(picker.products(1, null, 0, 20).total() > 0, "A 应能列出自己店里的商品");
 

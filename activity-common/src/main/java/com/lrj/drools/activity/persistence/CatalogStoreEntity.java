@@ -5,26 +5,28 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.TenantId;
 
 /**
- * demo 店铺表 —— 供「选店铺→勾商品」picker 展示店铺名。
+ * 店铺目录条目，供「选店铺→勾商品」选择器展示店铺信息。
  *
- * <p>来源用真实门店表；这里只保留 picker 需要的最小字段。与 {@link DemoProductEntity} 一样是**最小替身表**：
- * 主键用业务自带的 {@code store_id}（与 {@code demo_product.store_id} / 绑定层 {@code store_id} 对齐），
- * 内联 {@code @TenantId} 自动隔离，**不**继承 {@link TenantScopedEntity}（替身表不需软删 / 双时间戳 / 键序副作用）。
+ * <p>可由门店主数据同步写入；这里只保留选择器需要的最小字段。与 {@link CatalogProductEntity} 一样，
+ * 主键使用业务自带的 {@code store_id}（与 {@code catalog_product.store_id} / 绑定层 {@code store_id} 对齐），
+ * 内联 {@code @TenantId} 自动隔离，且不继承 {@link TenantScopedEntity}（目录表不需要软删与双时间戳）。
  *
- * <p>与 {@code demo_product.store_id} 是<b>逻辑引用，不加物理外键</b>：与「join 不到就回退『店铺 #id』」的
+ * <p>与 {@code catalog_product.store_id} 是<b>逻辑引用，不加物理外键</b>：与「join 不到就回退『店铺 #id』」的
  * 容错范式一致（见 {@code ActivitySpuBindingRepository} 注释、前端 {@code BindingStores} 店名回退）。
- * 店铺列表由 {@code demo_product} 的 {@code group by store_id} 驱动，本表只负责补店名。
+ * 店铺列表由 {@code catalog_product} 的 {@code group by store_id} 驱动，本表只负责补店名。
  */
 @Entity
-@Table(name = "demo_store", indexes = {
+@Comment("店铺目录表")
+@Table(name = "catalog_store", indexes = {
         @Index(name = "idx_ds_on_shelf", columnList = "tenant_id,on_shelf")
 })
-public class DemoStoreEntity {
+public class CatalogStoreEntity {
 
-    /** 业务键，与 demo_product.store_id / 绑定层对齐。 */
+    /** 业务键，与 catalog_product.store_id / 绑定层对齐。 */
     @Id
     @Column(name = "store_id", nullable = false)
     private Integer storeId;
@@ -41,9 +43,9 @@ public class DemoStoreEntity {
     @Column(name = "on_shelf", nullable = false)
     private Integer onShelf;
 
-    public DemoStoreEntity() {}
+    public CatalogStoreEntity() {}
 
-    public DemoStoreEntity(Integer storeId, String storeName, Integer onShelf) {
+    public CatalogStoreEntity(Integer storeId, String storeName, Integer onShelf) {
         this.storeId = storeId;
         this.storeName = storeName;
         this.onShelf = onShelf;

@@ -10,7 +10,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * P1-13：把 {@link TenantQuotaService} 挂到 {@code /activity-marketing/**} 上做每租户限流。
- * 仅 {@code activity.tenant.quota.enabled=true} 时注册（默认不挂，零开销、不改 demo）。
+ * 仅 {@code activity.tenant.quota.enabled=true} 时注册（默认不挂，零开销）。
  * 拦截器在 DispatcherServlet 阶段跑，此时租户来源过滤器（header 或 JWT aud）已把 {@link TenantContext} 落好。
  */
 @Configuration

@@ -1,6 +1,9 @@
 package com.lrj.drools.activity.persistence;
 
+import jakarta.persistence.LockModeType;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -28,6 +31,37 @@ public interface ActivityManageRepository extends JpaRepository<ActivityManageEn
     /** P0-4：某活动当前处于某状态的全部版本。发布新版本时用它把旧的线上版本退役（原子指针切换的实现基础）。 */
     List<ActivityManageEntity> findByActivityIdAndActivityStatusAndIsDel(
             String activityId, Integer activityStatus, Integer isDel);
+
+    /**
+     * 当前租户本轮需要处理的活动 id。用 activityId 做续扫游标，避免固定第一页中的故障活动
+     * 永久阻塞后续到期活动；扫到末尾后由调用方回卷到 null。
+     */
+    @Query("""
+            select distinct e.activityId
+              from ActivityManageEntity e
+             where e.isDel = 0
+               and (:afterActivityId is null or e.activityId > :afterActivityId)
+               and ((e.activityStatus = 3 and e.activityStartTime <= :now)
+                 or (e.activityStatus = 1 and e.activityEndTime < :now))
+             order by e.activityId
+            """)
+    List<String> findDueLifecycleActivityIds(@Param("now") Instant now,
+                                             @Param("afterActivityId") String afterActivityId,
+                                             Pageable pageable);
+
+    /**
+     * 锁住同一活动的全部未删除版本，再决定“激活哪版、退役哪版”。这样多 console 实例同时扫描时，
+     * 第二个事务拿到锁后会看到第一个事务已经完成的状态并幂等跳过。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            select e
+              from ActivityManageEntity e
+             where e.activityId = :activityId and e.isDel = :isDel
+             order by e.version asc
+            """)
+    List<ActivityManageEntity> lockVersionsForLifecycle(@Param("activityId") String activityId,
+                                                        @Param("isDel") Integer isDel);
 
     /** 幂等：同 requestId 首次结果。 */
     Optional<ActivityManageEntity> findFirstByRequestIdAndIsDel(String requestId, Integer isDel);

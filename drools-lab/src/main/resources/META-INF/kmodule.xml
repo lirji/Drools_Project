@@ -24,15 +24,15 @@
         <ksession name="cartSession"/>
     </kbase>
 
-    <!-- Step 4: not / exists 演示 (风控 + 推荐)。跟 cartKBase 隔离，
+    <!-- Step 4: not / exists 展示 (风控 + 推荐)。跟 cartKBase 隔离，
          Step 5 会用 agenda-group 把它们合到一个 kbase 里分阶段触发。 -->
     <kbase name="riskKBase" packages="rules.risk">
         <ksession name="riskSession"/>
     </kbase>
 
     <!-- Step 5: agenda-group 流水线 (validate → discount → risk → notify)。
-         独立 kbase 避免跟 Step 2/4 原 demo 互相污染; 规则跟前面相似但每条都标了
-         agenda-group, 演示 setFocus 栈式控制 + auto-focus + lock-on-active。 -->
+         独立 kbase 避免跟 Step 2/4 的规则互相污染；规则跟前面相似但每条都标了
+         agenda-group, 展示 setFocus 栈式控制 + auto-focus + lock-on-active。 -->
     <kbase name="pipelineKBase" packages="rules.pipeline">
         <ksession name="pipelineSession"/>
     </kbase>
@@ -57,7 +57,7 @@
     </kbase>
 
     <!-- Step 12: TMS 对照组。同样的业务规则各写一份, 一份用 insertLogical,
-         一份用普通 insert, 让 demo 在同一次请求里跑两遍展示差异。
+         一份用普通 insert，让同一次请求运行两遍并展示差异。
          隔离成两个 kbase 是为了避免"两份规则跑在同一 working memory 里互相污染"。 -->
     <kbase name="tmsLogicalKBase" packages="rules.tms.logical">
         <ksession name="tmsLogicalSession"/>
@@ -77,7 +77,7 @@
 
     <!-- Step 14: 引擎安全护栏。一个 kbase 同时放"失控循环规则" (Counter 触发) 和
          "灰度规则" (Cart 触发, 带 @release 元数据), 靠 fact 类型天然隔离。
-         演示 fireAllRules(maxFires) 熔断、session.halt() 超时打断、
+         展示 fireAllRules(maxFires) 熔断、session.halt() 超时打断、
          fireAllRules(AgendaFilter) 按发布通道灰度放行。 -->
     <kbase name="guardKBase" packages="rules.guard">
         <ksession name="guardSession"/>

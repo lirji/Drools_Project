@@ -7,7 +7,7 @@
 
     <parent>
         <groupId>com.lrj</groupId>
-        <artifactId>drools-demo-parent</artifactId>
+        <artifactId>activity-platform-parent</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 

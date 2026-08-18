@@ -2,8 +2,8 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.persistence.ActivitySpuBindingEntity;
 import com.lrj.drools.activity.persistence.ActivitySpuBindingRepository;
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.SpuBindingPage;
 import com.lrj.drools.activity.service.ActivityMarketingService.SpuBindingRow;
@@ -42,7 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:bindingview;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 class ActivityBindingViewTest {
 
@@ -51,7 +51,7 @@ class ActivityBindingViewTest {
 
     @Autowired ActivityMarketingService marketing;
     @Autowired ActivitySpuBindingRepository bindingRepo;
-    @Autowired DemoProductRepository demoProductRepo;
+    @Autowired CatalogProductRepository catalogProductRepo;
 
     @BeforeEach
     void setTenant() {
@@ -118,13 +118,13 @@ class ActivityBindingViewTest {
         assertEquals(5, distinct, "跨页不应有重叠");
     }
 
-    /** 商品名/价一页批量补：demo_product 有的填名+价，没有的回退 null（前端显示裸 SPU 编号）。 */
+    /** 商品名/价一页批量补：catalog_product 有的填名+价，没有的回退 null（前端显示裸 SPU 编号）。 */
     @Test
     void drillDownEnrichesNamesAndFallsBack() {
         String act = "ACT-NAME";
-        demoProductRepo.save(new DemoProductEntity(6001L, 10, "蓝牙耳机", "electronics", new BigDecimal("120"), null, 1));
+        catalogProductRepo.save(new CatalogProductEntity(6001L, 10, "蓝牙耳机", "electronics", new BigDecimal("120"), null, 1));
         bind(act, 10, 6001L, 1, 1);   // 有商品档
-        bind(act, 10, 6002L, 1, 1);   // demo_product 里没有 → 回退
+        bind(act, 10, 6002L, 1, 1);   // catalog_product 里没有 → 回退
 
         SpuBindingPage page = marketing.bindingSpus(act, V, 10, 0, 20);
         SpuBindingRow named = page.items().stream().filter(r -> r.spuId() == 6001L).findFirst().orElseThrow();

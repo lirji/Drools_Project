@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -26,6 +27,7 @@ import java.time.Instant;
  * MySQL longblob / H2 大对象, 两个 profile 都够装。
  */
 @Entity
+@Comment("Drools 会话状态快照表")
 @Table(name = "session_snapshot")
 public class SessionSnapshot {
 

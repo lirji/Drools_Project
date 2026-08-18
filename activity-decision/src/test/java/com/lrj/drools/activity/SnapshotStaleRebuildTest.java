@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "activity.marketing.generation-poll.enabled=false",
         // 1ms 阈值：任何已存在的快照在下一轮扫描时都算陈旧，无需等待真实的 60s
         "activity.marketing.snapshot.max-age-ms=1",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("快照兜底重建：信号漏发也能自愈")
 class SnapshotStaleRebuildTest {

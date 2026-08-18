@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:actmetrics;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "activity.marketing.rule-engine.enabled=false",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("决策链路指标：耗时 / 回退 / 候选数")
 class DecisionMetricsTest {

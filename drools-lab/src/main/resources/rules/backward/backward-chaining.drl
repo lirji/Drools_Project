@@ -1,4 +1,4 @@
-// Step 13: 后向链 (backward chaining) + query 演示。
+// Step 13: 后向链 (backward chaining) + query 展示。
 //
 // 前面 Step 1-12 全部是**前向链** (data-driven / forward chaining):
 //   1. 数据进 working memory

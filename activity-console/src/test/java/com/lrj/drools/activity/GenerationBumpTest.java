@@ -8,6 +8,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -19,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:genbump;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 class GenerationBumpTest {
 
@@ -41,5 +48,34 @@ class GenerationBumpTest {
         assertEquals(1L, genRepo.findByTenantIdAndBizLine("gb-t2", "retail").orElseThrow().getGeneration());
         assertEquals(1L, genRepo.findByTenantIdAndBizLine("gb-t2", "wholesale").orElseThrow().getGeneration(),
                 "不同 bizLine 各自独立代际");
+    }
+
+    @Test
+    void concurrentBumpsOnSameBizLineAreNotLost() throws Exception {
+        int workers = 8;
+        CountDownLatch ready = new CountDownLatch(workers);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(workers);
+        try {
+            List<Future<Long>> results = new ArrayList<>();
+            for (int i = 0; i < workers; i++) {
+                results.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    return generationService.bump("gb-concurrent", "retail");
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<Long> result : results) {
+                result.get();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertEquals(workers,
+                genRepo.findByTenantIdAndBizLine("gb-concurrent", "retail").orElseThrow().getGeneration(),
+                "同一业务线的并发发布必须逐次递增，不能丢失 decision 重建信号");
     }
 }

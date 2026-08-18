@@ -30,7 +30,7 @@ import java.io.IOException;
 public class TenantContextFilter extends OncePerRequestFilter {
 
     public static final String TENANT_HEADER = "X-Tenant-Id";
-    /** P1-8 dev 档操作者来源：dev/header 档无 JWT，从 X-Actor header 取审批人身份（本地演示四眼用）。 */
+    /** P1-8 dev 档操作者来源：dev/header 档无 JWT，从 X-Actor header 取审批人身份（本地展示四眼用）。 */
     public static final String ACTOR_HEADER = "X-Actor";
 
     private final TenantProperties props;

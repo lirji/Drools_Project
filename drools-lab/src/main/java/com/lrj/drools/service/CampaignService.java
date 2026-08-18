@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 /**
  * Step 18: 营销活动资格判定。
  *
- * 一个把前面几步拼起来的"实际业务场景"demo:
+ * 一个把前面几项能力组合起来的实际业务场景：
  *   - 创建活动时**绑定一段资格规则 (DRL)** —— 复用 Step 9 的 KieHelper 运行时编译
  *   - 规则文本持久化到 H2 (campaign 表) —— 复用 Step 10 的 JPA + H2 思路
  *   - 用户申请参加 → 插 UserProfile → fire → 看有没有产出 Eligibility 标记 fact

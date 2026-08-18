@@ -4,7 +4,7 @@ package com.lrj.drools.activity.domain;
  * 规则场景。对齐来源 {@code ActivityRuleScene}，决定加载哪一组 KieBase / DRL。
  *
  * 来源里 DISCOUNT 分两段（DISCOUNT_COMPUTE 用 QLExpress 先算金额，再 DISCOUNT 合并）。
- * 本 demo 是**纯 Drools**（不引 QLExpress），金额计算与合并放在同一组 discount 规则里完成，
+ * 当前规则能力模块使用 Drools（不引 QLExpress），金额计算与合并放在同一组 discount 规则里完成，
  * 故省掉 DISCOUNT_COMPUTE 这一 QL 专用场景。
  */
 public enum RuleScene {

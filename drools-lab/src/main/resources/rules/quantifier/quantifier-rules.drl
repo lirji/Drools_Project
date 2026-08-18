@@ -1,6 +1,6 @@
 // Step 19: LHS 量词补全 —— collect / forall / eval。
 //
-// Step 4 演示了 not / exists 这两个否定/存在量词, 但 LHS 常用的另外三件套一直没补:
+// Step 4 展示了 not / exists 这两个否定/存在量词, 但 LHS 常用的另外三件套一直没补:
 //
 //   collect  —— 把匹配 fact 收集成**一个集合**, 对"数量/整体"做判断 (跟 accumulate 的
 //               区别: accumulate 出的是聚合标量 sum/count, collect 出的是集合本身)

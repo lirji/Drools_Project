@@ -8,7 +8,7 @@ import java.util.List;
  *
  * 跟 Order 的区别:
  * - items 里每个 OrderItem 带 category，用于 accumulate 按品类聚合
- * - 加了 goldStatus (mutable boolean)，给 modify 语法演示用:
+ * - 加了 goldStatus (mutable boolean)，给 modify 语法展示用:
  *   一条规则会把它从 false 改成 true，另一条规则的 LHS 依赖这个字段
  *
  * setGoldStatus 是给 DRL 里 `modify($cart) { setGoldStatus(true) }` 调的；

@@ -2,8 +2,8 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.persistence.ActivitySpuBindingEntity;
 import com.lrj.drools.activity.persistence.ActivitySpuBindingRepository;
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.tenant.TenantContext;
 import jakarta.persistence.EntityManagerFactory;
@@ -28,7 +28,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 详情下钻的**无 N+1 证据**：一页明细的 SQL 语句数与该页 SPU 数无关。
  *
  * <p>商品名/价用 {@code findAllById(本页 spuId 集合)} 一次批量补（PK IN + @TenantId 自动）。
- * 若哪天有人改成逐行查 {@code demo_product}，M=5 的语句数就会比 M=1 多，本测试立刻红。
+ * 若哪天有人改成逐行查 {@code catalog_product}，M=5 的语句数就会比 M=1 多，本测试立刻红。
  * 手法照 {@link DecisionQueryCountTest}：用 Hibernate {@link Statistics} 数真实语句数，
  * 并断言 {@code count>0} 防「统计没开→空断言假绿」。
  */
@@ -38,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:bindingqcount;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "spring.jpa.properties.hibernate.generate_statistics=true",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 @DisplayName("下钻查询次数：与该页 SPU 数无关（商品名批量补，无 N+1）")
 class BindingViewQueryCountTest {
@@ -47,7 +47,7 @@ class BindingViewQueryCountTest {
 
     @Autowired ActivityMarketingService marketing;
     @Autowired ActivitySpuBindingRepository bindingRepo;
-    @Autowired DemoProductRepository demoProductRepo;
+    @Autowired CatalogProductRepository catalogProductRepo;
     @Autowired EntityManagerFactory emf;
 
     @BeforeEach
@@ -103,7 +103,7 @@ class BindingViewQueryCountTest {
             e.setCreatedStime(now);
             e.setModifiedStime(now);
             bindingRepo.save(e);
-            demoProductRepo.save(new DemoProductEntity(spu, storeId, "商品" + spu, "c", new BigDecimal("9.9"), null, 1));
+            catalogProductRepo.save(new CatalogProductEntity(spu, storeId, "商品" + spu, "c", new BigDecimal("9.9"), null, 1));
         }
     }
 }

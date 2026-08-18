@@ -55,7 +55,7 @@ public class ReleaseAgendaFilter implements AgendaFilter {
         return allowed;
     }
 
-    /** 本次 fire 被拦下的规则 (规则名 + release 通道), 用于 demo 里"看见"灰度生效。 */
+    /** 本次 fire 被拦下的规则（规则名 + release 通道），用于在能力结果中展示灰度效果。 */
     public List<String> skipped() {
         return Collections.unmodifiableList(skipped);
     }

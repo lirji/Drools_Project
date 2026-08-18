@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 /**
  * 多活动合并策略。收敛自来源 {@code ActivityRuleStrategy}。
@@ -16,6 +17,7 @@ import jakarta.persistence.Table;
  * {@code version} 变化触发 KieBase 重建。
  */
 @Entity
+@Comment("多活动权益合并策略表")
 @Table(name = "activity_strategy", indexes = {
         @Index(name = "idx_st_biz_type_scene", columnList = "tenant_id,biz_line,activity_type,scene,is_del")
 })

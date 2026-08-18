@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:foureyes;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         "activity.marketing.four-eyes-enabled=true",
         "activity.tenant.dev-default-enabled=true"
 })
@@ -57,6 +57,15 @@ class ActivityFourEyesTest {
                 null, List.of(new ActivityCreateRequest.SpuBinding(1, spuId)), null, null);
     }
 
+    private ActivityCreateRequest futureReq(String name, Long spuId) {
+        long hLater = System.currentTimeMillis() + 3_600_000L;
+        return new ActivityCreateRequest(
+                null, null, name, "mall", 1, name,
+                hLater, hLater + 3_600_000L, 1, null, 1, 100,
+                1, new BigDecimal("50"), "元", null, "MAX",
+                null, List.of(new ActivityCreateRequest.SpuBinding(1, spuId)), null, null);
+    }
+
     @Test
     void submitterCannotSelfPublish() {
         CreateResult a = ActorContext.callWith("alice", () -> marketing.create(req("四眼-自审", 96601L)));
@@ -74,6 +83,19 @@ class ActivityFourEyesTest {
         CreateResult r = ActorContext.callWith("bob",
                 () -> marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code()));
         assertEquals(ActivityStatus.ONLINE.code(), r.status().intValue(), "非提交人 bob 可发布");
+    }
+
+    @Test
+    void scheduleApprovalAlsoRequiresDifferentActor() {
+        CreateResult a = ActorContext.callWith("alice", () -> marketing.create(futureReq("四眼-预约", 96605L)));
+        ActivityException denied = assertThrows(ActivityException.class,
+                () -> ActorContext.runWith("alice", () -> marketing.changeStatus(
+                        a.activityId(), a.version(), ActivityStatus.PENDING_EFFECT.code())));
+        assertEquals(ActivityErrorCode.FOUR_EYES_REQUIRED, denied.code(), "预约上线也是未来发布，不能自审");
+
+        CreateResult scheduled = ActorContext.callWith("bob", () -> marketing.changeStatus(
+                a.activityId(), a.version(), ActivityStatus.PENDING_EFFECT.code()));
+        assertEquals(ActivityStatus.PENDING_EFFECT.code(), scheduled.status().intValue(), "不同审批人可以预约上线");
     }
 
     @Test

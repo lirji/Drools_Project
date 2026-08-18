@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Step 12: Truth Maintenance System 对照演示。
+ * Step 12: Truth Maintenance System 对照展示。
  *
  * 一次请求里在两个 kbase 各跑一遍同样的"先超阈值 → 再回落"流水线, 让调用方直观
  * 看到 insertLogical 和普通 insert 在"前提-结论"撤销上的差别:

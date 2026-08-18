@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:actratiolegacy;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         // 关键：整个规则引擎关掉 → 决策必然走 legacyMax
         "activity.marketing.rule-engine.enabled=false"
 })

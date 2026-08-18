@@ -4,7 +4,7 @@ package com.lrj.drools.activity.domain;
  * 资格条件树的分组逻辑。对齐来源 {@code RuleLogic}。
  *
  * separator 是翻译成 Drools LHS 约束时子条件之间的连接符
- * （本 demo 不用 QLExpress，直接拼 Drools 约束表达式）。
+ * （当前实现不用 QLExpress，直接生成受控 Drools 约束表达式）。
  */
 public enum RuleLogic {
 

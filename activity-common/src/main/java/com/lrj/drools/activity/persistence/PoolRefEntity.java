@@ -7,12 +7,14 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 /**
  * 活动↔商品池关联。收敛自来源 {@code ActivityPoolRef}。
  * 一个活动可引用多个池；一个池可被多个活动复用。链接键 = (activityId, version, poolId)。
  */
 @Entity
+@Comment("活动与商品池关联表")
 @Table(name = "activity_pool_ref", indexes = {
         @Index(name = "idx_ref_aid_ver_del", columnList = "tenant_id,activity_id,version,is_del"),
         @Index(name = "idx_ref_pool_del", columnList = "tenant_id,pool_id,is_del")

@@ -6,12 +6,14 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 /**
  * 商品池。收敛自来源 {@code ActivityProductPool}。
  * {@code poolType}：1=规则圈选 2=手动维护；{@code status}：0 停用 1 启用。
  */
 @Entity
+@Comment("活动商品池表")
 @Table(name = "activity_product_pool")
 public class ProductPoolEntity extends SoftDeletableTenantEntity {
 

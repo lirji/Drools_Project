@@ -20,13 +20,13 @@ public class PipelineController {
         this.pipelineService = pipelineService;
     }
 
-    /** Step 5 演示: agenda-group 流水线 (validate → discount → risk → notify)。 */
+    /** Step 5 展示: agenda-group 流水线 (validate → discount → risk → notify)。 */
     @PostMapping("/pipeline/run")
     public Cart run(@RequestBody RunRequest req) {
         return pipelineService.run(buildCart(req));
     }
 
-    /** Step 6 演示: 同样的 pipeline, 但挂 AgendaEventListener + RuleRuntimeEventListener,
+    /** Step 6 展示: 同样的 pipeline, 但挂 AgendaEventListener + RuleRuntimeEventListener,
      *  返回的 auditTrail 包含 matchCreated / matchCancelled / agendaGroupPushed 等结构化事件。 */
     @PostMapping("/pipeline/audit")
     public PipelineService.AuditedRun runWithAudit(@RequestBody RunRequest req) {

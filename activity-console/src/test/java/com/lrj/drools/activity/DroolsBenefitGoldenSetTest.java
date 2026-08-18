@@ -17,7 +17,7 @@ import org.springframework.test.context.TestPropertySource;
 @TestPropertySource(properties = {
         "spring.datasource.url=jdbc:h2:mem:actgoldendrools;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         // 旧环境仍可保留 false，但它们不得再切换生产求值语义。
         "activity.marketing.rule-engine.java-benefit-eval=false",
         "activity.marketing.rule-engine.java-eligibility-eval=false"

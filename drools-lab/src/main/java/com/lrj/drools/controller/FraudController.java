@@ -18,7 +18,7 @@ public class FraudController {
         this.fraudService = fraudService;
     }
 
-    /** Step 8 演示: CEP 滑窗风控。请求体里 events 不需要预排序, service 内部会按
+    /** Step 8 展示: CEP 滑窗风控。请求体里 events 不需要预排序, service 内部会按
      *  timestamp 排序后逐个 insert 并推进 pseudo clock。 */
     @PostMapping("/fraud/check")
     public CheckResponse check(@RequestBody CheckRequest req) {

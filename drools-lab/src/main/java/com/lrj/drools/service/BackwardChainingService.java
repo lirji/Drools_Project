@@ -27,7 +27,7 @@ import java.util.Set;
  *   - args 跟 query 声明里的参数一一对应; 都是 input 模式时, 返回的 QueryResults
  *     要么有一条 (证明成功) 要么空 (证明失败)
  *   - 想做"列出所有满足 query 的绑定" (output 模式), 要用 `Variable.v` 占位 unbound arg,
- *     但本 demo 走"枚举候选容器 + 逐个 boolean 检"的路径, 避免 internal API 依赖,
+ *     当前实现走“枚举候选容器 + 逐个 boolean 检”的路径，避免 internal API 依赖，
  *     教学上也更直白
  *
  * 注意点 (vs 前向链):

@@ -334,12 +334,12 @@ claim 的顺序是：**查流水命中即返回首次结果 → 校验每人限�
 现在有一张 from × to 的 `ALLOWED_TRANSITIONS`。**它按今天实际发生的流转成文，不趁机收紧**
 （收紧是行为变更，要单独立项），包括那条看起来不对称、实则原样保留的 `OFFLINE → ONLINE`。
 
-唯一被封死的是 `targetStatus=3`（`PENDING_EFFECT`）：它是 `fromCode` 认可的合法码，
-但全 main 源码**零生产者、零消费者**——置成该状态的活动代际照常 bump，可它永远进不了任何读路径，
-控制台显示成草稿、决策永远不命中，而这个落差没有任何一条日志或指标会说出来。
-与其给一个没实现的状态立法，不如在写入口封口（作为**源**仍可迁出，好让外部导入的脏数据有逃生口）。
+`targetStatus=3`（`PENDING_EFFECT`）现在是显式预约态：只接受未来开始的合法时间窗，预约时完成四眼校验；
+console 生命周期编排可由本地 Spring 调度或 XXL-JOB `activityLifecycleSweep` 互斥触发；到点原子发布最高预约版本、退役旧 ONLINE 版，结束时间之后自动下线。普通 NORMAL 草稿不参与扫描，
+因此“保存了未来活动”不等于“授权后台自动发布”。悲观写锁让重复扫描与多实例并发保持幂等。
 
-**代码**：`ActivityMarketingService.changeStatus` / `ALLOWED_TRANSITIONS` / `resolveTargetStatus`
+**代码**：`ActivityMarketingService.changeStatus` / `ActivityLifecycleScheduler` /
+`ActivityLifecycleXxlJobHandler` / `ActivityLifecycleScheduleService` / `ActivityLifecycleTransitionService`
 
 ### 3.4 缓存击穿：Caffeine 天然 single-flight
 
@@ -751,7 +751,7 @@ console 与 decision **各一个** `@RestControllerAdvice`。四眼失败由此�
   免得把 Spring 本来就该 400 的情况（请求体不是合法 JSON、缺必填 `@RequestParam`）一起吞成 500。
 
 另两条约束：advice 的 `basePackages` **只圈本包**（console 的 classpath 上还挂着 drools-lab 的
-Step 1–18 教学 controller，全局 advice 会把它们的错误行为一起改掉）；
+Step 1–24 教学 controller，全局 advice 会把它们的错误行为一起改掉）；
 错误码表**刻意不先铺完整**——一个没人抛的错误码，与文档里写着却没人调用的回滚入口是同一类东西。
 
 **代码**：`ActivityErrorCode` / `ActivityException` / `ActivityExceptionAdvice`（console）/
@@ -819,7 +819,7 @@ Step 1–18 教学 controller，全局 advice 会把它们的错误行为一起�
 
 ## 十、Drools 本体（教学层覆盖的知识点）
 
-`drools-lab` 的 18 个 Step 是一条从 Hello World 到生产护栏的完整路径，
+`drools-lab` 的 24 个 Step 是一条从 Hello World 到生产护栏的完整路径，
 每个 Step 一个 REST 入口，可以单独跑：
 
 | 主题 | Step | 知识点 |
@@ -883,7 +883,6 @@ Step 1–18 教学 controller，全局 advice 会把它们的错误行为一起�
 | per-tenant 公平份额只有设计 | Caffeine 单缓存不原生支持 per-key 配额，机制延后 |
 | `rollback` 只能滚一次 | 只保留一代，显式设计；且它**只影响被调到的那个实例**、下一次代际推进会把它盖掉（见 §4.1） |
 | "活动不存在"仍报 400 | 语义上是 404，但今天它走 `IllegalArgumentException` → 400。改成 404 是面向调用方的状态码变更（前端 / 脚本 / e2e 都会看到），要单独立项，不塞进异常分类那一批 |
-| `PENDING_EFFECT`(3) 这个状态没实现 | 写入口已封死（见 §3.3），但读路径仍然完全不认它——库里如果已经躺着这种脏数据，它对决策就是不存在 |
 | `bizLine` 为空的活动进不了任何快照桶 | 写平面不强制必填，兜底重建也只遍历**已存在**的桶。现在构建期会数一遍并打 `activity.decision.snapshot.orphan` + WARN（从"完全静默"变成"有读数"），但根治要么是写入口必填、要么是给它一个默认桶 |
 
 更完整的清单见 [`activity-marketing.md`](activity-marketing.md) 的「已知落差」一节。

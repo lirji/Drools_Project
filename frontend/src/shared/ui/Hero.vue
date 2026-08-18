@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Hero 原语（视觉换代 0809 · 步骤 6）—— Tier A 门面三屏（/home、/demos、/login 旁）共用的顶部大区块。
+ * Hero 原语（视觉换代 0809 · 步骤 6）—— /home、/login 等门面页共用的顶部大区块。
  *
- * 为什么单独成件：换代前 HomeView 的区域卡、DemoHome 的 hero、PlaybooksView 的券卡都是各自手搓的，
+ * 为什么单独成件：换代前 HomeView 的区域卡、PlaybooksView 的券卡都是各自手搓的，
  * 全站**没有任何「大区块」原语**，导致同一个概念在三个文件里长出三种写法。
  *
  * 视觉约定：

@@ -13,7 +13,7 @@ import java.util.List;
 /**
  * Step 8 扩展 (CEP 补完) 入口: 长度滑窗 + 时序操作符 + 多 entry-point。
  *
- * 跟原 /fraud/check 并列 —— 后者只演示 window:time, 只输出 BurstAlert; 本端点演示
+ * 跟原 /fraud/check 并列 —— 后者只展示 window:time, 只输出 BurstAlert; 本端点展示
  * 另外三种 CEP 形态, 输出 FraudAlert (带 type 区分)。events 不需预排序, service 内部
  * 会把两条流按 timestamp 合并成时间线后推进 pseudo clock。
  *

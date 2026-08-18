@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.TenantId;
 import org.hibernate.type.SqlTypes;
@@ -22,6 +23,7 @@ import java.time.Instant;
  * （ACTIVE → NEEDS_REBUILD / RETIRED），规则/pin 不改。发布时按此 DRL **异步预热**（P0-5）。
  */
 @Entity
+@Comment("活动决策规则制品表")
 @Table(name = "activity_artifact",
         indexes = {
                 @Index(name = "idx_art_biz_status", columnList = "tenant_id,biz_line,status"),

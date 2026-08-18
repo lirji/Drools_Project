@@ -43,7 +43,7 @@
 //     操作 (其他规则 update / modify / insert) 都不会让它再次触发
 //
 // 适用场景: 一阶段内某条规则只允许跑一次 (例如"打个总开关"), 不管该阶段内其他规则
-// 怎么折腾 fact 都不重复执行。本文件 "Apply VIP discount once" 演示。
+// 怎么折腾 fact 都不重复执行。本文件 "Apply VIP discount once" 展示。
 package rules.pipeline
 
 import com.lrj.drools.domain.Cart
@@ -62,11 +62,11 @@ rule "Reject empty cart"
     then
         System.out.println("[validate] 拒单: 空购物车 " + $cart.getCartId());
         $cart.addRecommendation("[REJECTED] 购物车为空, 流水线终止");
-        // 实战里这里会 retract($cart) 让后续阶段全部 short-circuit; demo 只打标
+        // 完整业务实现可 retract($cart) 让后续阶段全部 short-circuit；这里仅打标
 end
 
 // ============================================================
-//  阶段 2: discount — 折扣 (lock-on-active 演示)
+//  阶段 2: discount — 折扣 (lock-on-active 展示)
 // ============================================================
 
 rule "Apply VIP discount once"
@@ -104,7 +104,7 @@ rule "Insurance reco in pipeline"
 end
 
 // ============================================================
-//  阶段 4: notify — auto-focus 演示, 不需要 Java 侧 setFocus
+//  阶段 4: notify — auto-focus 展示, 不需要 Java 侧 setFocus
 //
 //  跑一次大额订单的 case, 控制台会看到 "[notify]" 最后打印, 证明 auto-focus
 //  确实在 validate/discount/risk 三阶段跑完后才被激活的 group 拿到焦点。

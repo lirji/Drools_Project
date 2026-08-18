@@ -12,7 +12,7 @@ import java.util.List;
  * 访问器返回 null → 正向比较恒 false → 候选被淘汰。表现是**配了 storeId 条件的活动永远不命中**，
  * 且因为 fail-closed 是「静默不发」而不是报错。
  *
- * <p>写侧其实完整建模了店铺（{@code DemoProductEntity.storeId} /
+ * <p>写侧其实完整建模了店铺（{@code CatalogProductEntity.storeId} /
  * {@code ActivitySpuBindingEntity.storeId} / {@code ActivityCreateRequest.SpuBinding} /
  * 前端编辑器的「店铺ID」列），只有决策入参漏了，故补入参而不是删白名单。
  * 语义与同组字段一致 —— 「这一单来自哪个门店」，不是「活动绑在哪个店」。

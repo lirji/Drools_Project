@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 import java.util.function.LongSupplier;
 
 /**
- * P1-13 每租户限流（**进程内** token bucket，demo 切片）。
+ * P1-13 每租户限流（进程内 token bucket）。
  *
  * <p>每租户一个令牌桶：稳态 {@code perTenantQps} 补充、桶容量 {@code burst}。{@link #tryAcquire} 取一个令牌，
  * 桶空即拒（调用方转 429）。桶存 Caffeine 有界缓存（{@code maxTenants} + {@code expireAfterAccess}），防租户维度无界增长、

@@ -28,7 +28,10 @@ function listRow(p: Record<string, unknown>) {
 const FIELD_DICT = {
   fields: [], operators: [], logics: [],
   activityTypes: [{ code: 1, label: '红包' }],
-  statuses: [{ code: 0, label: '待上线' }, { code: 1, label: '已上线' }, { code: 2, label: '已下线' }],
+  statuses: [
+    { code: 0, label: '待上线' }, { code: 1, label: '已上线' },
+    { code: 2, label: '已下线' }, { code: 3, label: '待生效' },
+  ],
   distributionModes: [], strategies: [],
 }
 
@@ -90,6 +93,41 @@ describe('ListView 工作台', () => {
     const row = wrapper.get('[data-testid="activity-row-ACT1"]')
     expect(row.text()).toContain('ACT1 · v1')
     expect(row.text()).toContain('草稿 v2')
+  })
+
+  it('未来开始的草稿给出定时上线入口，预约态可取消', async () => {
+    const wrapper = await setup([
+      listRow({
+        activityId: 'FUTURE', version: 1, activityStatus: 0,
+        activityStartTime: new Date(NOW + DAY).toISOString(),
+        activityEndTime: new Date(NOW + 2 * DAY).toISOString(),
+      }),
+      listRow({
+        activityId: 'SCHEDULED', version: 1, activityStatus: 3,
+        activityStartTime: new Date(NOW + DAY).toISOString(),
+        activityEndTime: new Date(NOW + 2 * DAY).toISOString(),
+      }),
+    ])
+
+    expect(wrapper.get('[data-testid="status-action-FUTURE"]').text()).toContain('定时上线')
+    expect(wrapper.get('[data-testid="activity-row-SCHEDULED"]').text()).toContain('定时中')
+    expect(wrapper.get('[data-testid="status-action-SCHEDULED"]').text()).toContain('取消定时')
+  })
+
+  it('线上版与预约切版并存时展示预约版本，并提供独立取消入口', async () => {
+    const wrapper = await setup([
+      listRow({ activityId: 'SWITCH', version: 1, activityStatus: 1 }),
+      listRow({
+        activityId: 'SWITCH', version: 2, activityStatus: 3,
+        activityStartTime: new Date(NOW + DAY).toISOString(),
+        activityEndTime: new Date(NOW + 2 * DAY).toISOString(),
+      }),
+    ])
+    const row = wrapper.get('[data-testid="activity-row-SWITCH"]')
+    expect(row.text()).toContain('SWITCH · v1')
+    expect(row.text()).toContain('定时 v2')
+    expect(wrapper.get('[data-testid="status-action-SWITCH"]').text()).toContain('下线')
+    expect(wrapper.get('[data-testid="cancel-scheduled-SWITCH"]').text()).toContain('取消定时 v2')
   })
 
   it('勾选行后压出批量操作条并给出计数', async () => {

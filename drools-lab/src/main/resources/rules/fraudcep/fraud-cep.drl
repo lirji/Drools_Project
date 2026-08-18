@@ -1,6 +1,6 @@
 // Step 8 扩展 (CEP 补完): 长度滑窗 + 时序操作符 + 多 entry-point。
 //
-// Step 8 原 /fraud/check 只演示了 over window:time(5m) 一种 CEP 形态。本文件补齐另外三块,
+// Step 8 原 /fraud/check 只展示了 over window:time(5m) 一种 CEP 形态。本文件补齐另外三块,
 // 挂在**独立的 fraudCepKBase** (stream mode + pseudo clock) 上, 不动原 fraudKBase:
 //
 //   1) over window:length(N)  —— 按"最近 N 条事件"滑窗 (对比时间滑窗按"最近 N 分钟")

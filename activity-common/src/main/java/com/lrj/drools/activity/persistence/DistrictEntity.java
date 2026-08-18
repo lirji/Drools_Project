@@ -5,6 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 /**
  * 中国行政区划（省 / 地市 / 区县 三级）编码字典表。
@@ -38,6 +39,7 @@ import jakarta.persistence.Table;
  * {@code DistrictSeeder}（落库入口）与 {@code examples/district-data/}（加工脚本 + 上游出处）。
  */
 @Entity
+@Comment("中国行政区划字典表")
 @Table(name = "sys_district", indexes = {
         @Index(name = "idx_district_parent", columnList = "parent_code"),
         @Index(name = "idx_district_province", columnList = "province_code"),

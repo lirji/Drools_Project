@@ -1,7 +1,7 @@
 package com.lrj.drools.domain;
 
 /**
- * Step 14: 失控循环演示用的可变计数器 fact。
+ * Step 14: 失控循环展示用的可变计数器 fact。
  *
  * 规则 "Runaway increment" 看 value、改 value, 再激活自己 → 无限循环。
  * 故意做成 mutable POJO (跟 Step 3 的 Cart、Step 12 的 Sensor 同理):

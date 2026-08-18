@@ -8,7 +8,7 @@ import java.util.function.Supplier;
  * <p>只承载"当前动作是谁发起的"这一事实，不关心它从哪来：
  * <ul>
  *   <li><b>auth 档</b>：{@link JwtTenantFilter} 从 JWT 的 {@code sub} 写入（机器/人的稳定身份）；</li>
- *   <li><b>dev/header 档</b>：{@code TenantContextFilter} 从 {@code X-Actor} header 写入（本地演示用）。</li>
+ *   <li><b>dev/header 档</b>：{@code TenantContextFilter} 从 {@code X-Actor} header 写入（本地展示用）。</li>
  * </ul>
  * 与 {@link TenantContext} 同构（ThreadLocal + finally 清理）。四眼在应用层强制：
  * {@code ActivityMarketingService} 在活动<strong>发布(上线)</strong>时校验「审批人 ≠ 提交人」。

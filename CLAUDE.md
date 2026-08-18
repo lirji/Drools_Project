@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**。渐进式 demo，从 Hello World 到"引擎安全护栏 / DMN / 真实业务场景"共 24 个 Step，每步一个 REST 入口。
+多租户活动规则平台，包含活动控制面、只读决策面、Vue 管理控制台与 Drools 规则能力实验室。`drools-lab` 的 24 个 Step 用于验证引擎能力；活动业务链路按平台级代码与数据边界维护。
 
-**仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：本仓库已从「纯 Drools 教学脚手架」长成「多租户活动引擎平台 + 教学 Steps」两部分，物理拆成**聚合父 `pom.xml` + 4 个模块**（`org.drools:drools-bom` 与内部模块版本在父 pom 统一管）。下表 Step 1–24 的代码全在 **drools-lab**，由 **activity-console** 暴露：
+**仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：系统由「多租户活动规则平台 + 规则能力实验室」两部分组成，物理拆成**聚合父 `pom.xml` + 4 个模块**（`org.drools:drools-bom` 与内部模块版本在父 pom 统一管）。下表 Step 1–24 的代码全在 **drools-lab**，由 **activity-console** 暴露：
 
 | 模块 | 类型 | 职责 |
 | ---- | ---- | ---- |
@@ -99,7 +99,7 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 **每个 Step 的详细说明、完整 REST 接口表、各 Step 特有的 DRL 语义 / 实现注意点见 [`docs/steps-guide.md`](docs/steps-guide.md)。** 改某个 Step 前先读那里对应条目。
 
-后续（LLM 联动）按需扩展，**没需求时不要提前加**。Step 16 的 `kie-ci` 是重依赖（拉进 maven-core / aether），且 `installArtifact` 会真写 `~/.m2/repository/com/lrj/rules/`（demo 自己的 GAV，每次 deploy 覆盖，清理 `rm -rf ~/.m2/repository/com/lrj/rules`）。Step 10 / 18 的 JPA 仅服务于持久化 demo，不要扩成"全项目状态都进数据库"。
+后续（LLM 联动）按需扩展，**没需求时不要提前加**。Step 16 的 `kie-ci` 是重依赖（拉进 maven-core / aether），且 `installArtifact` 会写入本机 Maven 仓库的 `com/lrj/rules/` 坐标，只能在隔离开发环境使用。Step 10 / 18 的 JPA 只服务对应能力，不要扩成“全项目状态都进数据库”。
 
 ## 技术栈与版本背景
 
@@ -113,7 +113,7 @@ Drools 学习脚手架，配合 LangChain4j 项目用，**不是生产代码**�
 
 ```bash
 # 起 console 服务（写平面 + Step1-24 + 前端 /ui/，8081）；连接走环境变量覆盖（不写死真实值）
-DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=yourpass \
+DB_HOST=localhost DB_PORT=3306 DB_NAME=activity_platform DB_USERNAME=root DB_PASSWORD=yourpass \
   ./mvnw -pl activity-console spring-boot:run
 ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2   # 没 MySQL 时切 H2 file
 # 起 decision 服务（只读决策热路径 /decision/v1 + 发布代际轮询预热，8082）
@@ -133,7 +133,7 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=drools_demo DB_USERNAME=root DB_PASSWORD=
 docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 http://localhost:8095/ui/console
 ```
 
-**测试**：console 只有 `FixedPriceAndClaimTest`（9 个用例）吃 `h2` profile 的**文件库**（`activity-console/data/drools-demo.mv.db`，其余 h2 用例都用 `@TestPropertySource` 覆到内存库），别的进程占着它时（本地起着 console、或另一处并行在跑 `./mvnw test`）会整片报 `Database may be already in use` + `Unable to determine Dialect`——是环境冲突不是代码回归，串行跑即可。
+**测试**：console 只有 `FixedPriceAndClaimTest`（9 个用例）吃 `h2` profile 的**文件库**（`activity-console/data/activity-platform.mv.db`，其余 h2 用例都用 `@TestPropertySource` 覆到内存库），别的进程占着它时（本地起着 console、或另一处并行在跑 `./mvnw test`）会整片报 `Database may be already in use` + `Unable to determine Dialect`——是环境冲突不是代码回归，串行跑即可。
 **端口**：console 8081 / decision 8082，跟主项目 LangChain4j (8080) 错开。console 改端口看 `activity-console/src/main/resources/application.yml`，decision 看 `activity-decision/.../application.yml`。
 **数据库 profile**：console / decision **各自带一套** `application.yml`（公共配置 + `spring.profiles.active: mysql` 默认）；数据源细节分到 `application-mysql.yml` / `application-h2.yml`。**只有 console 的 mysql URL 带 `createDatabaseIfNotExist=true`**（库不存在自动建）；decision 的刻意不带——它连只读账号、本来也没有建库权限，对着不存在的库起 decision 会直接连接失败而不是自动建好。连接参数 `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD` 都能用环境变量覆盖。
 
@@ -150,7 +150,7 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
    - 本项目 LHS 条件都看 `vipLevel` / `totalAmount` / `yearsSinceRegistration`（不可变字段），修改 `finalAmount` 不会让条件失配 → 规则永远满足，被反复触发，请求挂住
    - `no-loop true` 只防"自己 consequence 重新激活自己"，**不防其他规则的 update 间接重新激活自己**
    - cross-rule 防护要用 `lock-on-active true` + `agenda-group`
-   - **本 demo 根本不需要 update()**，教学上的"什么时候用 update()"放在 Step 3 真实级联（`modify` + goldStatus）里讲
+   - **该能力不需要 update()**，“什么时候用 update()”由 Step 3 的真实级联（`modify` + goldStatus）说明
 
 4. **DRL 是运行时解析**，`mvn compile` 过了不代表规则没语法错。改完 DRL 必须至少启动一次或跑一次冒烟请求
 
@@ -158,7 +158,7 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 
 7. **MySQL 下 `@Lob` 大字段会被截断** — `@Lob byte[]`（Step 10 session 快照）在 MySQL 默认建成 64KB `blob`、`@Lob String`（Step 18 DRL 文本）建成 64KB `text`，大会话 / 长 DRL 会超限。本项目改用 `@JdbcTypeCode(SqlTypes.LONGVARBINARY)` / `@JdbcTypeCode(SqlTypes.LONGVARCHAR)`，映射成 MySQL `longblob` / `longtext`，H2 下也够装。H2 时代用 `@Lob` 不暴露这个坑，换 MySQL 才踩到
 
-12. **库存扣减只能是一条原子 UPDATE，且必须在写平面** — `ActivityManageRepository.decrementInventory` 把「判余量」和「减一」压进同一条 `update ... where inventory >= :n`；**绝不能先 SELECT 再 UPDATE**（check-then-act 竞态，低并发测不出、大促必现）。返回 0 = 没抢到，调用方不能忽略返回值。决策服务连只读账号写不了库，所以分工是「决策只报价、`POST /activity-marketing/{id}/claim` 才是提交」；claim **已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。不传 `version` 时解析成**当前 ONLINE 版本**（此前取最高版=草稿，闸门装错了行），扣减谓词另含活动状态与时间窗。冲正走 `POST /{id}/release`。它已列入 `console-write-authority` 保护的写路径；auth 生产环境必须配该 authority，不要依赖 demo 默认空值
+12. **库存扣减只能是一条原子 UPDATE，且必须在写平面** — `ActivityManageRepository.decrementInventory` 把「判余量」和「减一」压进同一条 `update ... where inventory >= :n`；**绝不能先 SELECT 再 UPDATE**（check-then-act 竞态，低并发测不出、大促必现）。返回 0 = 没抢到，调用方不能忽略返回值。决策服务连只读账号写不了库，所以分工是「决策只报价、`POST /activity-marketing/{id}/claim` 才是提交」；claim **已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。不传 `version` 时解析成**当前 ONLINE 版本**（此前取最高版=草稿，闸门装错了行），扣减谓词另含活动状态与时间窗。冲正走 `POST /{id}/release`。它已列入 `console-write-authority` 保护的写路径；auth 正式环境必须配置该 authority，不能依赖空值
 
 14. **别用「求和 surefire XML」来数用例数，会少数 52 个** — `DroolsBenefitGoldenSetTest extends DecisionGoldenSetTest`（全仓库唯一的测试类继承）。父类的用例全在 `@Nested` 内部类里，跑子类时 JUnit 会把这些嵌套类**再发现一遍**，但它们仍按**父类**的 `@TestPropertySource` 执行、并写进**同名** `TEST-…DecisionGoldenSetTest$Ladder.xml`，第二遍直接覆盖第一遍。于是文件求和得 console 204、Maven 自己报 256（差额恒为 52 = 金标集的用例数）。**以 `./mvnw test` 输出的 `Tests run:` 汇总为准**（当前权威数见「常用命令」那行）。历史上文档里的 307 / console 147 就是这么数出来的错数字；另有 371 / 430 那两批只是**过期**的旧总数，别把两类混为一谈（⚠ 那批旧总数里也出现过 `console 204`，与今天 XML 求和恰好同值，纯属巧合）。<br>顺带两个后果：① 那 52 个用例**白跑一遍**（约 10 秒 + 一个多余的 Spring 上下文）；② `DroolsBenefitGoldenSetTest` **自身用例数为 0**——它想验的「不会换回 DRL 求值器」实际由 `ActivityQuerySafetyFallbackTest#legacyFalseFlagsCannotSwitchProductionBackToDrools` 守着（两个开关字段删掉后，它改为断言红包链路对 `ActivityRuleRuntimeService` **零交互**），别把前者当门禁
 
@@ -237,10 +237,10 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 - [`docs/steps-guide.md`](docs/steps-guide.md) — **各 Step 详解 + REST 接口全表 + 各 Step 的 DRL 语义 / 实现注意点**（本文件的详细配套）
 - `README.md` — 每个 Step 的完整请求示例 + 学习观察点 + 下一步指引
 - `docs/rete-intuition.md` — RETE 算法直觉（拿本仓库折扣规则当例子）
-- `docs/drools-capabilities.md` — Drools 能力地图（七大块 + 每项标注本仓库哪步演示 + 选型决策树）
+- `docs/drools-capabilities.md` — Drools 能力地图（七大块 + 每项标注本仓库对应能力 + 选型决策树）
 - `docs/drools-vs-aviator.md` — Drools 与 Aviator（轻量表达式引擎）的选型对照
 - `docs/drools-use-cases.md` — Drools 应用场景与定位（风控/保险/信贷/计费，以及什么时候不该上 Drools）
-- `examples/aviator/AviatorDemo.java` — Aviator 独立学习示例（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
+- `examples/aviator/AviatorComparison.java` — Aviator 独立对照程序（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
 - `examples/capacity/` — 三引擎容量基准 `CapacityBench.java` + `run.sh`（**同样刻意在源码根外**：它引 QLExpress，生产四模块都不该有这个依赖）。跑法 `./examples/capacity/run.sh`；结论见 `docs/capacity-model.md`
 - `deploy/` — 微服务本地编排：`docker-compose.yml`（console 8081 / decision 8082 / nginx 网关 host `:8095` / MySQL 单库双账号 / Prometheus `:9090` / Grafana `:3001`）+ `nginx.conf`（API 网关原位替身，文本资源开 gzip）+ `mysql-init/`（decision 只读账号）+ `Dockerfile`
   - **前端 `/ui/` 由 gateway 镜像托管，不在 console 的 JAR 里**（`Dockerfile.frontend` → `activity-frontend:latest`）。改了前端只 `--build console` 是**没用的**，页面纹丝不动——要 `docker compose -f deploy/docker-compose.yml up -d --build gateway`。反过来改了后端才重建 console。<br>⚠️ **但 `--build gateway` 本身也不够**：`Dockerfile.frontend` 不在容器里构建前端，它只 `COPY frontend/dist/`——dist 必须**先在宿主机** `cd frontend && npm run build` 生成。漏了这一步时 Docker 看 dist 内容没变会直接复用镜像层，**构建全程 exit 0、镜像时间戳纹丝不动、页面还是旧的**，极难察觉。正确顺序：`npm run build` → `up -d --build gateway`；验证方式是 `docker images | grep activity-frontend` 看时间戳，或直接 grep 线上 bundle 里有没有你新加的 `data-testid`

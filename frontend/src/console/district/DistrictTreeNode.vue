@@ -94,7 +94,7 @@ const selCount = computed(() => selectedLeafCountOf(props.index, props.selected,
   border-radius: var(--radius-sm);
 }
 .row.checked { background: var(--accent-soft); }
-/* 半选行底：照抄 DemoNav .group.current 的 46%-mix「次级激活」配方，非自造。 */
+/* 半选行底使用 46%-mix 的次级激活配方，和全站强调色层级保持一致。 */
 .row.indeterminate { background: color-mix(in srgb, var(--accent-soft) 46%, transparent); }
 @media (hover: hover) {
   /* 触屏点过会「粘住」hover 被误读成选中，故只在真 hover 设备开。 */

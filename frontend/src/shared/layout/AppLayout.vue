@@ -28,8 +28,7 @@ defineEmits<{ (e: 'close'): void }>()
 <style scoped>
 .shell { min-height: 100dvh; display: flex; flex-direction: column; }
 /* 玻璃条：`.u-glass`（effects.css）给底色 + blur + 1px 高光边，`@supports` 与小屏关闭都在那里统一管。
-   **只有顶栏做玻璃化**——侧栏是竖向长条、面积大，玻璃化的合成开销换不来观感，且会把
-   「同屏 backdrop-filter ≤2」的配额在 /demos 上直接顶穿（那里还有 hero-stats）。 */
+   **只有顶栏做玻璃化**——侧栏是竖向长条、面积大，玻璃化的合成开销换不来观感。 */
 .shell-topbar {
   position: sticky; top: 0; z-index: var(--z-sticky);
   height: var(--shell-topbar-h); flex-shrink: 0;

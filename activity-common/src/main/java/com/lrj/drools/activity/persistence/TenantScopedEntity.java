@@ -24,7 +24,7 @@ import java.time.Instant;
  * 生成的 DDL 与改造前完全一致（console 是唯一 DDL 执行者，decision 侧是 {@code ddl-auto: validate}，
  * 这里任何一处漂移都会让只读平面起不来）。
  *
- * <p>不含 {@code @Id}：各表主键并不同形（{@code demo_product} 用业务键 {@code spu_id}，
+ * <p>不含 {@code @Id}：各表主键并不同形（{@code catalog_product} 用业务键 {@code spu_id}，
  * 其余是自增代理键），把它收上来只会逼出一堆例外。
  */
 // 序列化时把身份字段提回队首。**这不是洁癖，是在修一个副作用**：

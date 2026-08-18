@@ -19,7 +19,7 @@ public class DiscountController {
         this.discountService = discountService;
     }
 
-    /** Step 1 演示: 跑 hello 规则，规则触发会打到 stdout，body 返回触发条数。 */
+    /** Step 1 展示: 跑 hello 规则，规则触发会打到 stdout，body 返回触发条数。 */
     @PostMapping("/hello")
     public Map<String, Object> hello(@RequestBody Customer customer) {
         int fired = discountService.runHello(customer);
@@ -27,7 +27,7 @@ public class DiscountController {
                 "hint", "看应用控制台输出每条规则的打印");
     }
 
-    /** Step 2 演示: 跑订单折扣规则，返回折后价 + 折扣说明列表。 */
+    /** Step 2 展示: 跑订单折扣规则，返回折后价 + 折扣说明列表。 */
     @PostMapping("/discount/calculate")
     public Order calculate(@RequestBody CalculateRequest req) {
         Order order = new Order(

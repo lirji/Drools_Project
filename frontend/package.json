@@ -1,9 +1,9 @@
 {
-  "name": "drools-console-frontend",
+  "name": "activity-platform-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "活动引擎控制台 + Drools 18 Step 演示台的前端工程（前后端分离，Vue3+Vite+TS）。产物挂载在后端 /ui/。",
+  "description": "活动规则平台前端工程（Vue 3 + Vite + TypeScript）。",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -13,7 +13,6 @@
     "test:watch": "vitest",
     "e2e:dev": "node e2e/e2e-dev-v2.mjs",
     "e2e:oidc": "node e2e/e2e-oidc-v2.mjs",
-    "e2e:catalog": "node e2e/e2e-catalog-v2.mjs",
     "e2e:tablet": "node e2e/e2e-tablet-smoke.mjs",
     "e2e:phone": "node e2e/e2e-phone-smoke.mjs",
     "e2e:ruler": "node e2e/e2e-tier-ruler.mjs",

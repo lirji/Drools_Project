@@ -5,26 +5,28 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.TenantId;
 
 import java.math.BigDecimal;
 
 /**
- * demo 商品表 —— 本项目自带的替身商品库，供商品池圈选有数据可选。
+ * 商品目录条目。保存商品池圈选与活动绑定所需的最小商品信息。
  *
- * 来源用真实商品/车辆表；这里只保留圈选需要的最小字段。{@code onShelf} 用来演示
+ * 可由商品主数据同步写入；这里只保留圈选需要的最小字段。{@code onShelf} 用于表达
  * "商品上下架 → 自动绑定 effective 翻转"（1=在架 0=下架）。
  *
  * 主键用业务自带的 spuId（与绑定层对齐）。
  */
 @Entity
-@Table(name = "demo_product", indexes = {
+@Comment("商品目录表")
+@Table(name = "catalog_product", indexes = {
         @Index(name = "idx_dp_price", columnList = "tenant_id,price"),
         @Index(name = "idx_dp_category", columnList = "tenant_id,category"),
         // 「选店铺→勾商品」picker 按 store_id 列商品（group by / 分页）走全索引命中
         @Index(name = "idx_dp_store", columnList = "tenant_id,store_id")
 })
-public class DemoProductEntity {
+public class CatalogProductEntity {
 
     @Id
     @Column(name = "spu_id", nullable = false)
@@ -55,10 +57,10 @@ public class DemoProductEntity {
     @Column(name = "on_shelf", nullable = false)
     private Integer onShelf;
 
-    public DemoProductEntity() {}
+    public CatalogProductEntity() {}
 
-    public DemoProductEntity(Long spuId, Integer storeId, String spuName, String category,
-                             BigDecimal price, String tags, Integer onShelf) {
+    public CatalogProductEntity(Long spuId, Integer storeId, String spuName, String category,
+                                BigDecimal price, String tags, Integer onShelf) {
         this.spuId = spuId;
         this.storeId = storeId;
         this.spuName = spuName;

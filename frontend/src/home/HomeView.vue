@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 概览首页（视觉换代 0809 · 步骤 6 Tier A）：登录后的第一屏，也是换代前全站最朴素的一页
- * （两张白卡 + 一个纯文本列表）。现在结构为 hero + 两大区域 + 最近活动。
+ * （一张白卡 + 一个纯文本列表）。现在结构为 hero + 核心工作区 + 最近活动。
  *
  * 数据源全复用现成 API：listActivities（按租户 header 隔离）+ useDictStore 出类型/状态标签。
  *
@@ -90,7 +90,7 @@ onUnmounted(() => ctrl?.abort())
     <Hero
       kicker="ACTIVITY ENGINE PLATFORM"
       title="概览"
-      desc="多租户活动与规则决策平台。配置即生成受控 Drools，发布代际由决策面轮询预热。"
+      desc="多租户活动与规则决策平台。统一管理活动配置、发布代际与只读决策快照。"
     >
       <template #actions>
         <Button variant="primary" :to="{ name: 'activity-new' }" data-testid="home-go-new">
@@ -108,7 +108,7 @@ onUnmounted(() => ctrl?.abort())
       </template>
     </Hero>
 
-    <!-- 两大区域介绍 + 快捷入口 -->
+    <!-- 核心工作区介绍 + 快捷入口 -->
     <div class="areas u-stagger">
       <article class="area-card">
         <div class="head">
@@ -131,20 +131,6 @@ onUnmounted(() => ctrl?.abort())
         </div>
       </article>
 
-      <article class="area-card">
-        <div class="head">
-          <span class="area-ic demos"><Icon name="flask" :size="22" /></span>
-          <div>
-            <h2 class="area-title">规则能力中心</h2>
-            <p class="area-desc">统一调用并验证规则执行、决策表、实时事件、动态发布与可观测能力。</p>
-          </div>
-        </div>
-        <div class="entries">
-          <Button variant="subtle" :to="{ name: 'demos' }" data-testid="home-go-demos">
-            <Icon name="flask" :size="16" /><span>进入能力中心</span>
-          </Button>
-        </div>
-      </article>
     </div>
 
     <!-- 最近活动 -->
@@ -196,7 +182,7 @@ onUnmounted(() => ctrl?.abort())
 </template>
 
 <style scoped>
-.areas { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin-bottom: var(--gap-block); }
+.areas { display: grid; grid-template-columns: 1fr; gap: var(--sp-4); margin-bottom: var(--gap-block); }
 .area-card {
   display: flex; flex-direction: column; gap: var(--sp-4);
   background: var(--bg-elev); border: 1px solid var(--border);
@@ -216,7 +202,6 @@ onUnmounted(() => ctrl?.abort())
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22);
 }
 .area-ic.console { background: linear-gradient(180deg, var(--accent-hover), var(--accent)); }
-.area-ic.demos { background: linear-gradient(180deg, var(--accent-2), color-mix(in srgb, var(--accent-2) 70%, var(--accent))); }
 .area-title { margin: 0 0 var(--sp-1); font-size: var(--fs-lg); font-weight: var(--fw-semibold); }
 .area-desc { margin: 0; font-size: var(--fs-sm); color: var(--text-soft); line-height: var(--lh-normal); }
 .entries { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
@@ -243,9 +228,6 @@ onUnmounted(() => ctrl?.abort())
 .rtype { font-size: var(--fs-sm); color: var(--text-soft); }
 .rchev { color: var(--text-faint); }
 
-@media (max-width: 1023px) {
-  .areas { grid-template-columns: 1fr; }
-}
 @media (max-width: 560px) {
   .rtype { display: none; }
 }

@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: drools-decision   # 独立指标 application tag，Prometheus/grafana 区分 console vs decision
+    name: activity-decision   # 独立指标 application tag，Prometheus/Grafana 区分 console 与 decision
 
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:mysql}
@@ -26,10 +26,10 @@ management:
         include: health,info,metrics,prometheus
   metrics:
     tags:
-      application: drools-decision
+      application: activity-decision
 
 # 决策平面只需：规则引擎（读热路径）+ 发布代际轮询预热 + 多租户/安全。
-# 不含 four-eyes / seed-demo-data（那是 console 写平面的 bean 读的，decision classpath 上没有）。
+# 不含 four-eyes / seed-catalog-data（那是 console 写平面的 bean 读的，decision classpath 上没有）。
 activity:
   marketing:
     rule-engine:

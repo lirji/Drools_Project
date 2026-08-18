@@ -35,10 +35,10 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 活动营销 demo REST 入口。收敛自来源 {@code ActivityAdminPlatformManageController} + toC 优惠查询。
+ * 活动营销控制面 REST 入口。收敛自来源 {@code ActivityAdminPlatformManageController} + toC 优惠查询。
  *
  *   POST /activity-marketing/create            创建/编辑活动（带 activityId 即编辑，版本+1）
- *   POST /activity-marketing/{id}/status       上下线
+ *   POST /activity-marketing/{id}/status       上线 / 下线 / 预约上线 / 取消预约
  *   GET  /activity-marketing/list              活动列表（当前版本）
  *   GET  /activity-marketing/{id}              活动详情（基础/规则/条件/绑定/买赠/池引用）
  *   POST /activity-marketing/spu-discount      商品红包优惠查询（资格→阶梯→折扣合并 + 回退 trace）
@@ -114,7 +114,7 @@ public class ActivityMarketingController {
      * 不传版本就会打到草稿、线上继续发钱（见
      * {@link com.lrj.drools.activity.service.ActivityMarketingService#bulkChangeStatus}）。
      *
-     * <p>唯一的例外是 {@code targetStatus} 本身非法（含已封死的「待生效」3）：那是<b>整个请求</b>的参数错误，
+     * <p>唯一的例外是 {@code targetStatus} 本身非法（不在 0/1/2/3 内）：那是<b>整个请求</b>的参数错误，
      * 不是某几条活动的结果，逐条回执反而会把一次参数写错报成「几十个活动各有各的毛病」。
      * 这种情况按单条 {@code /status} 接口的同款反应转 400。
      */

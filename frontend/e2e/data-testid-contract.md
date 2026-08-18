@@ -10,7 +10,7 @@
 |---|---|---|
 | `theme-btn` | TopBar | 主题切换（迁自 App.vue） |
 | `nav-toggle` | TopBar | 汉堡按钮（<768 出现），phone-smoke 用它开抽屉 |
-| `nav-home` / `nav-console` / `nav-demos` | SidebarNav | 概览 / 控制台 / 规则能力中心一级入口（无 e2e 点击，仅登记） |
+| `nav-home` / `nav-console` | SidebarNav | 概览 / 控制台一级入口（无 e2e 点击，仅登记） |
 | `tab-list` / `tab-new` / `tab-validate` | SidebarNav | 控制台三个子导航项 |
 | `tenant-bar` | IdentityBar（dev 档） | dev 档租户栏容器 |
 | `tenant-input` | IdentityBar | X-Tenant-Id 输入 |
@@ -85,11 +85,10 @@
 | 新增 testid | 位置 | 说明 |
 |---|---|---|
 | `home-view` | `HomeView`（`/home` 概览首页） | 首页容器；`home-error` 加载失败 Banner |
-| `home-go-list` / `home-go-new` / `home-go-demos` | HomeView 快捷入口 | 概览页到各区的快捷按钮 |
+| `home-go-list` / `home-go-new` | HomeView 快捷入口 | 概览页到活动列表与新建活动的快捷按钮 |
 | `home-recent-{id}` | HomeView 最近活动行 | 点击进活动详情 |
 | `nav-home` | SidebarNav 概览入口 | 见上「全局/外壳」 |
 | `confirm-dialog` / `confirm-ok` / `confirm-cancel` | ConfirmDialog | 上下线 / 离开守卫二次确认 |
-| `demo-home-{id}` | DemoHome 目录页 demo 卡片项 | 点击进 demo 面板（与侧栏 `demo-nav-{id}` 并存） |
 
 ## 2026-08 PR-5 活动工作台（console-ui-coupon-mechanics）新增
 
@@ -187,7 +186,7 @@ flash 试算前后库存不变，以及 390 / 768 / 1440 零页面级横向溢�
 `finally` 尽力下线本次创建的全部活动。
 
 **图标系统**：全站 emoji/几何字形已统一为内联 SVG `Icon.vue`（`shared/ui/Icon.vue`）。装饰性图标 `aria-hidden`，语义图标透传 `aria-label`。
-**路由过渡**：`PageTransition.vue` 落 AppShell / ConsoleShell / DemoShell 三出口；被全局 `prefers-reduced-motion` 兜底禁用。
+**路由过渡**：`PageTransition.vue` 落 AppShell / ConsoleShell 两个出口；被全局 `prefers-reduced-motion` 兜底禁用。
 **首页路由**：`/` 与 catch-all 改指 `/home`（无 e2e 走裸根路径，零冲突）；`/console` 仍 redirect `/console/activities` 不变。
 
 ## 2026-08 权益形态扩容 + 视觉换代（补登记）

@@ -7,17 +7,19 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 import java.math.BigDecimal;
 
 /**
  * 商品池圈选规则。收敛自来源 {@code ActivityProductPoolRule}（去掉车辆维度字段，
- * 换成 demo 商品的类目/标签/价格）。一个 pool 对应一条启用规则。
+ * 换成商品目录的类目/标签/价格）。一个 pool 对应一条启用规则。
  *
- * 圈选口径（对 {@code demo_product}）：价格区间 [minPrice, maxPrice] + 类目 CSV + 标签 CSV，
- * 空字段=不限。来源用 SQL；demo 用 JPA/内存过滤（阶段 2）。
+ * 圈选口径（对 {@code catalog_product}）：价格区间 [minPrice, maxPrice] + 类目 CSV + 标签 CSV，
+ * 空字段=不限。当前平台用 JPA/内存过滤，后续可下推到目录查询服务。
  */
 @Entity
+@Comment("商品池圈选规则表")
 @Table(name = "activity_product_pool_rule", indexes = {
         @Index(name = "idx_pr_pool_del", columnList = "tenant_id,pool_id,is_del")
 })

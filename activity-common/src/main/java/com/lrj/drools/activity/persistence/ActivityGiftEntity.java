@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 import java.math.BigDecimal;
 
@@ -15,6 +16,7 @@ import java.math.BigDecimal;
  * 这里直接落结构化行，前端报表更好填）。字段对齐 {@code GiftResult}。
  */
 @Entity
+@Comment("活动赠品配置表")
 @Table(name = "activity_gift", indexes = {
         @Index(name = "idx_gift_aid_ver_del", columnList = "tenant_id,activity_id,version,is_del")
 })

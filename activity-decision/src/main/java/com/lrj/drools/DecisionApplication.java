@@ -9,7 +9,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
  * M2.1 · 决策服务（decision-svc，8082）主类。只读决策热路径 + 发布代际轮询预热。
  *
  * <p>classpath = activity-common(共享域/引擎/持久化/租户 + ActivityQueryService) + 本模块决策面
- * (DecisionPlaneController + GenerationWarmService/PollScheduler)。**不依赖 drools-lab**——无 Step1-18、
+ * (DecisionPlaneController + GenerationWarmService/PollScheduler)。**不依赖 drools-lab**——无 Step1-24、
  * 无 DroolsConfig(classpath KieContainer)、无 kie-ci/kie-dmn/decisiontables 重依赖；活动引擎走 KieHelper 运行时编译。
  * **无写平面 bean**（ActivityMarketingService/ArtifactService/GenerationService 不在 classpath 上）→ 结构上不能写。
  *

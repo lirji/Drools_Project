@@ -22,13 +22,13 @@ Maven 聚合父 pom + 4 个模块，跑起来是**两个独立 Spring Boot 应�
 ```
                        ┌─────────────────────────────────────────┐
                        │  activity-console   (app · 8081)        │
-   写 ─────────────────▶│  写平面 + Step1–18 端点 + SPA 托管        │
+   写 ─────────────────▶│  写平面 + Step1–24 端点 + SPA 托管        │
    （运营 / 控制台）      │  ★ 唯一 DDL 执行者（root 账号）           │
                        └───────────┬──────────────┬──────────────┘
                                    │ depends      │ depends
                        ┌───────────▼──────┐   ┌───▼──────────────┐
                        │ activity-common  │   │  drools-lab      │
-                       │ 活动引擎共享内核    │   │ Step1–18 教学库    │
+                       │ 活动引擎共享内核    │   │ Step1–24 教学库    │
                        │ domain/engine/   │   │ kmodule + DRL +  │
                        │ service/snapshot/│   │ .xls + .dmn      │
                        │ persistence/error│   │ (kie-ci/kie-dmn  │
@@ -45,12 +45,18 @@ Maven 聚合父 pom + 4 个模块，跑起来是**两个独立 Spring Boot 应�
 | 模块 | 类型 | 职责 | 关键约束 |
 | --- | --- | --- | --- |
 | `activity-common` | 库 | 活动引擎共享内核：`activity/{domain,engine,persistence,error,tenant,metrics,snapshot}` + 读路径服务 | 用 Drools 的地方走 `KieHelper` 运行时编译，**不用 kmodule / KieContainer / DMN**；只放两平面**都要**的东西——只有 console 用的选品池匹配（`ActivityPoolMatchService`）已上浮到 console |
-| `drools-lab` | 库 | Step 1–18 教学代码（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`） | 重依赖（`kie-ci` / `kie-dmn` / `drools-decisiontables` / `drools-xml-support`）**全被隔离在这里** |
-| `activity-console` | **app · 8081** | 写平面 + 复用 drools-lab 暴露 Step 1–18 + 前端 SPA 托管（`/ui/`） | **唯一 DDL 执行者**；写端点受 `console-write-authority` 保护 |
+| `drools-lab` | 库 | Step 1–24 教学代码（`config/DroolsConfig`、`rules/`、`META-INF/kmodule.xml`） | 重依赖（`kie-ci` / `kie-dmn` / `drools-decisiontables` / `drools-xml-support`）**全被隔离在这里** |
+| `activity-console` | **app · 8081** | 写平面 + 复用 drools-lab 暴露 Step 1–24 + 前端 SPA 托管（`/ui/`） | **唯一 DDL 执行者**；写端点受 `console-write-authority` 保护 |
 | `activity-decision` | **app · 8082** | 只读决策热路径 `/decision/v1` + 发布代际轮询**兼快照构建/切换** | 只连只读账号；classpath 上**没有**写平面 bean；取数与快照构建注入的是 `*ReadRepository`（`save`/`delete` 在**类型上**不存在），结构上就写不了 |
 
 两个 app 的主类都在根包 `com.lrj.drools`（`ConsoleApplication` / `DecisionApplication`，
 `scanBasePackages` / `@EntityScan` / `@EnableJpaRepositories` 都指 `com.lrj.drools`）。
+
+Docker 编排另有一个独立的 XXL-JOB Admin：它通过容器内网调用 console 的 9999 执行器端口，只负责
+`activityLifecycleSweep` 的触发、重试、日志与人工操作；活动状态不复制到调度库。Handler 仍进入 console 的
+`ActivityLifecycleScheduleService → ActivityLifecycleTransitionService`，因此跨租户隔离、逐活动事务、悲观锁、
+幂等和发布代际都属于写平面。开发环境可用 `local` 模式保留 Spring `@Scheduled`，Docker 默认 `xxl`，
+`off` 用于测试或停用，三个触发模式互斥。decision 的代际轮询维护每个实例的本地快照，仍留在进程内调度。
 
 **依赖方向是这套架构的第一条不变量**：`decision → common`，且 `decision ↛ drools-lab`。
 它换来两件事——decision 的 jar 更轻（甩掉 maven-core / aether / DMN），以及
@@ -121,7 +127,7 @@ message 与改造前逐字一致（它是面向运营的中文提示，前端有
 它继承 `RuntimeException` 而不是 ISE，是为了能**穿过**迁移期保留的旧 `catch` 落到 advice 上。
 
 两个平面各挂一个 `@RestControllerAdvice`，`basePackages` 都只圈本包（console 的 classpath 上还挂着
-drools-lab 的 Step 1–18 教学 controller，全局 advice 会把它们一起改掉）。**两边刻意各缺一条兜底**：
+drools-lab 的 Step 1–24 教学 controller，全局 advice 会把它们一起改掉）。**两边刻意各缺一条兜底**：
 
 | | console (`ActivityExceptionAdvice`) | decision (`DecisionExceptionAdvice`) |
 | --- | --- | --- |
@@ -351,8 +357,8 @@ sequenceDiagram
     participant C as activity-console
     participant DB as MySQL
     participant D as activity-decision
-    U->>C: POST /{id}/status 任意状态流转（上线 / 下线 / 回待上线）
-    Note over C: 同一事务内：<br/>① 四眼校验(提交人≠发布人)<br/>② 上线时把该活动其它 ONLINE 版本置 OFFLINE<br/>③ 本行置目标状态（原子指针切换）
+    U->>C: POST /{id}/status 状态流转（立即上线 / 预约 / 下线 / 取消预约）
+    Note over C: 同一事务内：<br/>① 上线/预约做四眼校验<br/>② 立即上线时退役其它 ONLINE 版本<br/>③ 本行置目标状态
     C->>DB: ArtifactService.onStatusChanged<br/>（任何状态变化都 bump 代际 +1，与状态同事务）
     loop 每 3s（可配）
         D->>DB: GenerationPollScheduler 轮询代际
@@ -368,15 +374,16 @@ sequenceDiagram
 - **上线时在同一事务里退役该活动其它 ONLINE 版本**——这是原子指针切换，不是"先下线再上线"的两步。
 
 **状态流转现在有一张显式的迁移表**（`ALLOWED_TRANSITIONS`，from × to）。此前 `changeStatus` 只把 `targetStatus`
-过一遍 `fromCode`、**从不看当前状态**，「哪些流转合法」在代码里没有任何一处写下来。这张表**按今天实际发生的流转成文，
-没有趁机收紧**——三个活跃态（NORMAL / ONLINE / OFFLINE）之间全通，其中两条容易被误当成 bug 的**原样保留**：
+过一遍 `fromCode`、**从不看当前状态**，「哪些流转合法」在代码里没有任何一处写下来。NORMAL / OFFLINE /
+PENDING_EFFECT 可迁往四种状态；ONLINE 不能原地变成预约态（未来切版应先编辑出新版本），仍保留：
 `OFFLINE → ONLINE`（列表页上下线按钮就是 `status===1 ? 2 : 1`，与「已下线活动不可编辑」不对称）、
 以及 `X → X` 同态自转（批量下线勾中已下线的行照样成功并推进代际，禁掉只会让回执凭空多出一批「失败」）。
-唯一的收紧是 **`targetStatus=3`（PENDING_EFFECT）被写入口封死**：它是 `fromCode` 认可的合法码，
-但全 main 源码零生产者、零消费者——置成该状态的活动代际照常 bump，却**永远进不了任何读路径**
-（控制台显示成草稿、决策永远不命中）。它作为**源**仍可迁出，那是历史/外部导入数据的逃生口。
 每个目标状态挂的副作用（四眼校验、退役旧线上版）也从散在方法体里的 `if (target == ONLINE)` 收成一张
 `transitionActions` 表，**按列表顺序执行**——四眼必须在退役旧线上版之前，否则一次被拒的发布会先把正在服务的版本退役掉。
+
+`PENDING_EFFECT(3)` 是显式预约态，不是决策可用态。console 的 `ActivityLifecycleScheduler` 每 5 秒（可配）跨租户扫描；
+到开始时间后在悲观写锁内发布最高预约版本并原子退役旧 ONLINE 版，到结束时间之后自动下线。预约动作先校验未来时间窗和四眼，
+后台不伪造审批人；NORMAL 草稿不在扫描条件中。结束时间沿用决策的闭区间语义，`end == now` 仍在线，只有 `end < now` 才下线。
 
 > **bump 唯一的例外是 `bizLine` 为空**：`activity_generation.biz_line` 是 NOT NULL，硬 bump 会在**同一个事务**里
 > 抛非空约束违例、把刚写下的状态一起回滚——「下线传播不出去」当场升级成「下线根本做不到」。
@@ -478,9 +485,9 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 
 15 张表 / **21 个 Spring Data 仓库**（15 个可写 `JpaRepository` + 6 个只读 `*ReadRepository`，后者见 §2）。
 **活动配置类的表**按 **`activityId` + `version` + `is_del`** 做版本化软删；
-账本与字典类的五张（`activity_generation` / `activity_grant` / `activity_idempotency` / `demo_product` / `sys_district`）没有 `is_del`，
+账本与字典类的五张（`activity_generation` / `activity_grant` / `activity_idempotency` / `catalog_product` / `sys_district`）没有 `is_del`，
 它们记的是发生过的事实或外部标准，不参与版本化。主键一律自增代理键
-（两个例外：`demo_product` 用业务键 `spu_id`，`sys_district` 用 6 位行政区划代码 `code`）。
+（两个例外：`catalog_product` 用业务键 `spu_id`，`sys_district` 用 6 位行政区划代码 `code`）。
 
 公共列收在**两层** `@MappedSuperclass`，分两层正是因为上面那条差异：
 `TenantScopedEntity`（`tenant_id` + 双时间戳）→ `SoftDeletableTenantEntity`（多一列 `is_del`）。
@@ -508,7 +515,7 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 | `activity_generation` | 发布代际计数器（**无 `@TenantId`**，decision 侧跨租户轮询它） | **任何**状态变化 bump |
 | `activity_idempotency` | 创建幂等（按 `requestId`） | create |
 | `activity_grant` | 发放流水（claim 幂等键 + 每人限领计数 + 冲正 + 对账），唯一约束 `uk_grant_tenant_order_activity` | claim / release |
-| `demo_product` | 演示商品 | seeder |
+| `catalog_product` | 商品目录 | 可选目录种子或主数据同步 |
 | `sys_district` | 中国行政区划字典（3212 行：省级 34 / 地市级 333 / 区县级 2845，6 位代码，**无 `@TenantId`**） | seeder（仅当表空） |
 
 > `sys_district` 是 `activity_manage.district_ids`（活动投放地域）与决策入参 `userDistrictId`（用户地域，
@@ -589,7 +596,7 @@ update ActivityManageEntity e set e.inventory = e.inventory - :n, ...
    ├─ /ui/**            → gateway 本地静态（Vue SPA + history 回退 + 自托管字体）
    ├─ /api/decision/**  → rewrite → decision:8080/decision/v1/**
    ├─ /api/console/**   → rewrite → console:8080/activity-marketing/**
-   └─ /**               → console:8080（Step1-18 / /actuator / 原始 /activity-marketing）
+   └─ /**               → console:8080（Step1-24 / /actuator / 原始 /activity-marketing）
                               │                    │
                          console(root)        decision(decision_ro)
                               └────── MySQL 单库双账号 ──────┘
@@ -647,12 +654,12 @@ decision 必须 `depends_on: console: service_healthy`——`service_started` �
 
 ---
 
-## 10. 教学层：drools-lab（Step 1–18）
+## 10. 教学层：drools-lab（Step 1–24）
 
 代码全在 `drools-lab`，端点由 console 暴露。这一层与活动引擎**没有代码耦合**——
 它走 classpath 的 `kmodule.xml` + `KieContainer`，活动引擎走 `KieHelper` 运行时编译，两套机制互不相干。
 
-18 个 Step 覆盖：facts/when-then → salience/join → accumulate/modify → not/exists →
+24 个 Step 覆盖：facts/when-then → salience/join → accumulate/modify → not/exists →
 agenda-group → listener 可观测 → 决策表 → CEP 滑窗 → 热加载 → 会话持久化 → Stateless 对比 →
 TMS → 后向链/query → 引擎安全护栏 → Micrometer 指标 → KieScanner/KJAR → DMN → 营销活动资格判定。
 

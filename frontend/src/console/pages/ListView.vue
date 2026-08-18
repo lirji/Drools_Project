@@ -14,7 +14,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { listActivities, changeStatus, bulkChangeStatus, getDetail } from '../activityApi'
 import {
-  mergeRows, filterRows, sortRows, nextSortDir, pruneSelection, summarize, versionForTarget,
+  mergeRows, filterRows, sortRows, nextSortDir, pruneSelection, summarize, versionForTarget, statusActionFor,
   type BenchRow, type BenchState, type SortKey, type SortDir,
 } from '../benchModel'
 import { useDictStore } from '@/stores/useDictStore'
@@ -98,18 +98,18 @@ watch(totalPages, (total) => { if (page.value > total) page.value = total })
 // ---------------------------------------------------------------- 展示映射
 
 const STATE_LABEL: Record<BenchState, string> = {
-  live: '生效中', warmup: '预热中', draft: '待上线', expired: '已过期', offline: '已下线',
+  live: '生效中', scheduled: '定时中', warmup: '预热中', draft: '待上线', expired: '已过期', offline: '已下线',
 }
 /** 状态的**形状**编码，与颜色正交——色觉障碍、灰度打印、余光扫一屏这三种场景下颜色都不可靠 */
 const STATE_SHAPE: Record<BenchState, 'dot' | 'square' | 'triangle' | 'ring' | 'hatch'> = {
-  live: 'dot', warmup: 'triangle', draft: 'square', expired: 'ring', offline: 'hatch',
+  live: 'dot', scheduled: 'triangle', warmup: 'triangle', draft: 'square', expired: 'ring', offline: 'hatch',
 }
 const STATE_KIND: Record<BenchState, 'ok' | 'blue' | 'neutral' | 'warn'> = {
-  live: 'ok', warmup: 'blue', draft: 'neutral', expired: 'warn', offline: 'neutral',
+  live: 'ok', scheduled: 'blue', warmup: 'blue', draft: 'neutral', expired: 'warn', offline: 'neutral',
 }
 /** 甘特条只有三种画法：实心 = 正在服务，蓝斜纹 = 尚未生效，灰斜纹 = 不再服务 */
 const STATE_BAR: Record<BenchState, 'live' | 'warmup' | 'ended'> = {
-  live: 'live', warmup: 'warmup', draft: 'warmup', expired: 'ended', offline: 'ended',
+  live: 'live', scheduled: 'warmup', warmup: 'warmup', draft: 'warmup', expired: 'ended', offline: 'ended',
 }
 
 function typeLabel(code: number): string {
@@ -189,19 +189,38 @@ function selectAllMatched(): void {
   selected.value = new Set(filtered.value.map((r) => r.activityId))
 }
 
-// ---------------------------------------------------------------- 单条上下线
+// ---------------------------------------------------------------- 单条上线 / 下线 / 预约
 
 async function toggleStatus(row: BenchRow): Promise<void> {
-  const target: 1 | 2 = row.activityStatus === 1 ? 2 : 1
-  const version = versionForTarget(row, target)
-  const goOffline = target === 2
+  const action = statusActionFor(row, now.value)
+  await runStatus(row, action.target, versionForTarget(row, action.target))
+}
+
+async function cancelScheduled(row: BenchRow): Promise<void> {
+  if (row.scheduledVersion === null) return
+  await runStatus(row, 0, row.scheduledVersion)
+}
+
+async function runStatus(row: BenchRow, target: 0 | 1 | 2 | 3, version: number): Promise<void> {
+  const label = target === 0 ? '取消定时' : target === 1 ? '上线' : target === 2 ? '下线' : '定时上线'
+  const title = `${label}「${row.activityName}」v${version}？`
+  let body: string
+  if (target === 0) {
+    body = '取消后该版本恢复为待上线，后台不会再到点自动发布。'
+  } else if (target === 1) {
+    body = '上线是一次真实发布：会推进发布代际，并退役该活动其它仍在线的版本。'
+  } else if (target === 2) {
+    body = row.scheduledVersion !== null
+      ? '当前线上版本会停止参与决策；已预约的未来版本不会被取消，如需一并取消请再点击“取消定时”。'
+      : '下线会推进发布代际，决策服务在下一轮轮询（数秒内）停止命中；可再次上线恢复。'
+  } else {
+    body = `活动将在 ${new Date(row.start as number).toLocaleString('zh-CN', { hour12: false })} 自动上线，并在结束时间后自动下线。`
+  }
   const accepted = await confirm({
-    title: goOffline ? `下线「${row.activityName}」v${version}？` : `上线「${row.activityName}」v${version}？`,
-    body: goOffline
-      ? '下线会推进发布代际，决策服务在下一轮轮询（数秒内）停止命中；可再次上线恢复。'
-      : '上线是一次真实发布：会推进发布代际，并退役该活动其它仍在线的版本。',
-    confirmText: goOffline ? '下线' : '上线',
-    danger: goOffline,
+    title,
+    body,
+    confirmText: label,
+    danger: target === 2,
   })
   if (!accepted) return
 
@@ -212,7 +231,9 @@ async function toggleStatus(row: BenchRow): Promise<void> {
       toast.err(errText(response))
       return
     }
-    toast.ok(target === 1 ? '活动已上线' : '活动已下线')
+    toast.ok(target === 0 ? '已取消定时上线'
+      : target === 1 ? '活动已上线'
+        : target === 2 ? '活动已下线' : '已设置定时上线')
     await load()
   } catch (error) {
     toast.err((error as Error).message)
@@ -332,7 +353,7 @@ onUnmounted(() => {
 
 <template>
   <section data-testid="list-view">
-    <PageHeader kicker="ACTIVITY BENCH" title="活动工作台" subtitle="检索、复核、批量上下线——一屏完成">
+    <PageHeader kicker="ACTIVITY BENCH" title="活动工作台" subtitle="检索、复核、定时与批量上下线——一屏完成">
       <template #actions>
         <Segmented
           class="density"
@@ -395,6 +416,7 @@ onUnmounted(() => {
                 <option :value="1">仅看上线</option>
                 <option :value="2">仅看下线</option>
                 <option :value="0">仅看草稿</option>
+                <option :value="3">仅看定时中</option>
               </select>
               <Icon name="chevron-down" :size="14" />
             </label>
@@ -496,6 +518,9 @@ onUnmounted(() => {
                     <small class="mono">
                       {{ activity.activityId }} · v{{ activity.version }}
                       <em v-if="activity.draftVersion" class="draft">草稿 v{{ activity.draftVersion }}</em>
+                      <em v-if="activity.scheduledVersion && activity.scheduledVersion !== activity.version" class="scheduled">
+                        定时 v{{ activity.scheduledVersion }} · {{ fmtDate(activity.scheduledStart) }}
+                      </em>
                     </small>
                   </span>
 
@@ -534,11 +559,22 @@ onUnmounted(() => {
                     <button type="button" @click="router.push({ name: 'activity-edit', params: { id: activity.activityId } })">编辑</button>
                     <button
                       type="button"
-                      :class="activity.activityStatus === 1 ? 'offline' : 'online'"
+                      :class="statusActionFor(activity, now).target === 2 ? 'offline' : (statusActionFor(activity, now).target === 0 ? 'cancel' : 'online')"
                       :disabled="pendingStatusId === activity.activityId"
+                      :data-testid="'status-action-' + activity.activityId"
                       @click="toggleStatus(activity)"
                     >
-                      {{ pendingStatusId === activity.activityId ? '处理中…' : (activity.activityStatus === 1 ? '下线' : '上线') }}
+                      {{ pendingStatusId === activity.activityId ? '处理中…' : statusActionFor(activity, now).label }}
+                    </button>
+                    <button
+                      v-if="activity.activityStatus === 1 && activity.scheduledVersion !== null"
+                      type="button"
+                      class="cancel"
+                      :disabled="pendingStatusId === activity.activityId"
+                      :data-testid="'cancel-scheduled-' + activity.activityId"
+                      @click="cancelScheduled(activity)"
+                    >
+                      取消定时 v{{ activity.scheduledVersion }}
                     </button>
                   </span>
                 </article>
@@ -715,6 +751,7 @@ onUnmounted(() => {
 .activity-name:hover { color: var(--accent); }
 .activity-main small, .classification small { max-width: 100%; overflow: hidden; margin-top: 2px; color: var(--text-faint); font-size: var(--fs-xs); text-overflow: ellipsis; white-space: nowrap; }
 .draft { margin-left: 4px; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-style: normal; }
+.scheduled { margin-left: 4px; padding: 0 4px; border: 1px solid var(--accent-line); border-radius: var(--radius-sm); color: var(--accent); font-style: normal; }
 .classification strong { font-size: var(--fs-xs); }
 .cell-quota { display: flex; align-items: baseline; gap: 4px; }
 .cell-quota b { font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
@@ -727,6 +764,7 @@ onUnmounted(() => {
 .acts .detail { border-color: var(--accent-line); color: var(--accent); }
 .acts .online { border-color: var(--ok); color: var(--ok); }
 .acts .offline { color: var(--err); }
+.acts .cancel { border-color: var(--accent-line); color: var(--accent); }
 .acts button:disabled { cursor: wait; opacity: .6; }
 .footnote { margin: 0; padding: var(--sp-2) var(--sp-5) 0; color: var(--text-faint); font-size: var(--fs-xs); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: var(--sp-2) var(--sp-5); color: var(--text-faint); font-size: var(--fs-xs); }

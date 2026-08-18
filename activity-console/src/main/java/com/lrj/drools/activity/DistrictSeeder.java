@@ -87,7 +87,7 @@ public class DistrictSeeder implements CommandLineRunner {
     @Override
     public void run(String... args) throws IOException {
         // 本表没有 @TenantId（行政区划是国家标准不是租户数据），所以这里**不需要**像
-        // ActivityDemoSeeder 那样套 TenantContext——套了也不会被写进任何谓词。
+        // CatalogDataSeeder 那样套 TenantContext——套了也不会被写进任何谓词。
         List<Object[]> rows = parse();
 
         long existing = repo.count();

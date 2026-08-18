@@ -16,7 +16,7 @@ import java.util.UUID;
 /**
  * Step 14: 引擎安全护栏 (熔断 + AgendaFilter)。
  *
- * 三个端点对应三个护栏, 都拿"失控/灰度"做靶子, 演示引擎级兜底。
+ * 三个端点对应三个护栏, 都拿"失控/灰度"做靶子, 展示引擎级兜底。
  */
 @RestController
 public class GuardController {

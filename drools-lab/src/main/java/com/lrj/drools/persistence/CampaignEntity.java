@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -26,6 +27,7 @@ import java.time.Instant;
  * 两个 profile 都够装, 且 DRL 里的中文在 application-mysql.yml 配了 UTF-8 不乱码。
  */
 @Entity
+@Comment("Drools 规则能力活动配置表")
 @Table(name = "campaign")
 public class CampaignEntity {
 

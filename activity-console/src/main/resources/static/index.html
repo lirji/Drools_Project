@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Drools 演示台 · 已迁移到新版控制台</title>
+  <title>活动规则平台</title>
   <!--
-    F3 退役：旧原生演示台（app.js/examples.js/activity.js + styles.css/activity.css）已被前后端分离的
+    F3 退役：旧原生页面（app.js/examples.js/activity.js + styles.css/activity.css）已被前后端分离的
     Vue3 SPA（挂 /ui/）取代。本页是构建无关的静态落地页——不依赖任何 JS/外部 CSS，
     在「未构建前端（默认 spring-boot:run）」下也不会白屏。SPA 产物由 `-Pfrontend` 构建拷进 static/ui/，
     或由 compose 的 nginx 网关托管。
@@ -62,21 +62,21 @@
     <div class="brand">
       <span class="logo">◆</span>
       <div>
-        <h1>Drools 演示台</h1>
-        <div class="sub">Step 1–18 + 活动引擎控制台 · 已迁移到新版前端</div>
+        <h1>活动规则平台</h1>
+        <div class="sub">活动控制台 + Drools 规则能力中心</div>
       </div>
     </div>
     <p>
-      旧的原生演示台已退役，全部功能（18 个 Step 演示 + 活动营销工作台）迁移到前后端分离的
-      Vue3 控制台，挂载在 <code>/ui/</code>。
+      平台功能已统一迁移到 Vue 3 控制台，活动配置、决策验证与规则能力调用均从
+      <code>/ui/</code> 进入。
     </p>
     <div class="actions">
       <a class="btn primary" href="/ui/console">打开控制台 →</a>
-      <a class="btn ghost" href="/ui/demos">18 Step 演示台</a>
+      <a class="btn ghost" href="/ui/capabilities">规则能力中心</a>
       <a class="btn ghost" href="/actuator/health" target="_blank" rel="noopener">健康检查</a>
     </div>
     <div class="note">
-      看到 <code>/ui/</code> 404？前端产物默认不随后端构建。用 <code>./mvnw -Pfrontend spring-boot:run</code>
+      看到 <code>/ui/</code> 404？前端产物默认不随后端构建。用 <code>./mvnw -pl activity-console -Pfrontend spring-boot:run</code>
       构建并托管 SPA，或本地 <code>cd frontend &amp;&amp; npm run dev</code>（Vite :5173），
       或走 <code>deploy/docker-compose.yml</code> 的 nginx 网关。
     </div>

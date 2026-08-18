@@ -9,7 +9,7 @@ defineProps<{ rows?: number }>()
 <style scoped>
 .skel { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0; }
 /* 扫光换成「accent 微光扫过 + 底面」双层：换代前是中性灰阶推移，在深空底上几乎看不出在动。
-   关键帧走 effects.css 的全局 sweep（原本 Skeleton 与 DemoPanel 各写一份且写法不一致）。 */
+   关键帧走 effects.css 的全局 sweep，避免各页面重复定义。 */
 .skel-row {
   height: 16px; border-radius: var(--radius-sm);
   background:

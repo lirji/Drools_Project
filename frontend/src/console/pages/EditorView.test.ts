@@ -427,7 +427,7 @@ describe('EditorView 玩法模板预填', () => {
    *
    * <p>从前这个模板会把 `activityType=6` 填进草稿，然后：类型 chip 全不高亮（白名单只有 1/5）、
    * 第 2 步整段不渲染、`gifts` 恒 null、`formValid` 对 type=6 零规则所以保存键永远可点——
-   * 运营填完整张表，在保存时收一个「demo 仅支持红包(1) / 买赠(5)」。这几条守的就是那条链路。
+   * 运营填完整张表，在保存时收一个「capability 仅支持红包(1) / 买赠(5)」。这几条守的就是那条链路。
    */
   describe('EditorView 加价购', () => {
     it('?playbook=addon 落到加价购类型，并渲染换购品配置区', async () => {
@@ -914,7 +914,7 @@ describe('EditorView 商品绑定 · 选店铺→勾商品 picker', () => {
         },
         rules: [{ redPackageTakeType: 1, redPackageAmountUnit: '元', redPackageAmount: 10, redPackageRangeAmount: null }],
         conditions: [], gifts: [], poolRefs: [],
-        // 990011/888888 都是目录外 SPU（不在 demo_product）——picker 里选不到，绝不能静默丢
+        // 990011/888888 都是目录外 SPU（不在 capability_product）——picker 里选不到，绝不能静默丢
         bindings: [{ bindSource: 0, storeId: 77, spuId: 888888 }],
       },
     })

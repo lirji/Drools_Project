@@ -39,7 +39,7 @@ import java.util.Optional;
  *     反序列化开销; 生产场景可加内存缓存 (session id → 活 session) 并在事务里 marshall。
  *   - kieBase 从 kieContainer.getKieBase("loyaltyKBase") 拿, marshaller 和当时 marshall
  *     的 kieBase 必须类型 兼容 (规则签名变了就不能复用旧 byte[])。改 DRL 的话老快照可能 unmarshall 失败,
- *     这是热升级要单独考虑的点; 学习 demo 里我们改完规则手动清 data 目录。
+ *     这是热升级要单独考虑的点；本地能力验证时可在规则变更后清理 data 目录。
  */
 @Service
 public class LoyaltyService {

@@ -1,4 +1,4 @@
-// 订单折扣规则 — 演示多规则协作、salience 优先级、跨事实关联匹配。
+// 订单折扣规则 — 展示多规则协作、salience 优先级、跨事实关联匹配。
 //
 // 业务场景: 给一个订单 (Order) + 用户 (Customer)，按下面规则计算折扣，可叠加:
 //   - VIP 1/2/3 级: 9.5 / 9 / 8.5 折
@@ -9,7 +9,7 @@
 // ⚠️ 关于 update($o) 的取舍 (Drools 新手最容易踩的坑):
 //
 // update($o) 会通知 Drools "$o 这个 fact 变了，请重新评估所有依赖它的规则"。听起来
-// 很自然，但搭配本 demo 这种"多条规则都改同一个 fact"的写法会立刻死循环:
+// 很自然，但搭配“多条规则都改同一个 fact”的写法会立刻死循环：
 //
 //   1. VIP 2 规则触发，applyRatioDiscount() 改 finalAmount，调 update($o)
 //   2. update 触发重新评估 → Bulk 规则匹配，触发，改 finalAmount，调 update($o)
@@ -20,7 +20,7 @@
 // 间接重新激活自己**。要真正阻断要用 `lock-on-active true` (更严格)，或者用
 // `agenda-group` 显式控制阶段。
 //
-// 但本 demo 没有任何 LHS 条件读 `finalAmount` (都看 totalAmount / vipLevel /
+// 但当前规则没有任何 LHS 条件读 `finalAmount`（都看 totalAmount / vipLevel /
 // yearsSinceRegistration —— 这些都是不可变字段)，所以根本不需要 update()，直接改
 // fact 就行。这是规则设计原则: **改的字段如果没有规则依赖它，就不要 update()。**
 //
@@ -38,7 +38,7 @@ rule "VIP level 3 - 8.5 fold"
     when
         $c: Customer( vipLevel == 3 )
         // customer == $c 是 join: 只有当 Order 关联的 customer 正是上面匹配到的 $c 时才命中
-        // (本 demo 一次只会插一个 Customer 一个 Order，所以 join 显得多余，
+        // （当前能力一次只会插一个 Customer 和一个 Order，所以 join 显得多余，
         //  但在多 Order/多 Customer 同时入会话的场景里它是关键)
         $o: Order( customer == $c )
     then

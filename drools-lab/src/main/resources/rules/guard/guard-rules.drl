@@ -11,7 +11,7 @@
 //
 //   2. 新规则上线翻车: 直接全量生效, 没有灰度/快速回滚手段。
 //
-// 对应两个护栏 (都在 GuardService 演示):
+// 对应两个护栏 (都在 GuardService 展示):
 //   - fireAllRules(maxFires):     硬上限, fire 到 N 条强制停 (熔断)
 //   - session.halt() + watchdog:  另一线程超时打断 (超时熔断)
 //   - fireAllRules(AgendaFilter): 运行时按 @release 元数据放行规则 (灰度/金丝雀)
@@ -24,7 +24,7 @@ import com.lrj.drools.domain.Counter
 import com.lrj.drools.domain.Cart
 
 // ============================================================
-//  靶子 1: 失控循环 (fireAllRules(max) / halt 演示)
+//  靶子 1: 失控循环 (fireAllRules(max) / halt 展示)
 // ============================================================
 //
 // LHS 看 value, RHS modify 改 value → 重新激活自己。上界设得极高 (近 int max),
@@ -38,7 +38,7 @@ rule "Runaway increment"
 end
 
 // ============================================================
-//  靶子 2: 灰度规则 (AgendaFilter by @release 元数据演示)
+//  靶子 2: 灰度规则 (AgendaFilter by @release 元数据展示)
 // ============================================================
 //
 // 三条规则命中同一个 Cart, 用 @release 标"发布通道"。ReleaseAgendaFilter 在

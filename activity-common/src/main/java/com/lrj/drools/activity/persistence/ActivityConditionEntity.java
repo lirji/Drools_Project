@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -18,6 +19,7 @@ import org.hibernate.type.SqlTypes;
  * 两者都可能较长，用 LONGVARCHAR。
  */
 @Entity
+@Comment("活动资格条件表")
 @Table(name = "activity_condition", indexes = {
         @Index(name = "idx_ac_aid_ver_scene", columnList = "tenant_id,activity_id,version,scene,enabled")
 })

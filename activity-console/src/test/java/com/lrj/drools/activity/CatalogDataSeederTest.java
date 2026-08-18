@@ -1,7 +1,7 @@
 package com.lrj.drools.activity;
 
-import com.lrj.drools.activity.persistence.DemoProductRepository;
-import com.lrj.drools.activity.persistence.DemoStoreRepository;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
+import com.lrj.drools.activity.persistence.CatalogStoreRepository;
 import com.lrj.drools.activity.tenant.TenantContext;
 import com.lrj.drools.activity.tenant.TenantProperties;
 import org.junit.jupiter.api.AfterEach;
@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link ActivityDemoSeeder} 多租户播种的证据（seeder 显式**开启**，仅此测试）。
+ * {@link CatalogDataSeeder} 多租户初始化的证据（初始化器显式开启，仅此测试）。
  *
  * <p>验：① 启动期给 {@code __dev__} 与 {@code acme} 各造了 store+product；② 未播种的租户目录为空（@TenantId 隔离）；
  * ③ 再跑 {@code run()} 幂等、count 不变。照 {@code DistrictSeederTest} 的手法。
@@ -23,15 +23,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest
 @ActiveProfiles("h2")
 @TestPropertySource(properties = {
-        "spring.datasource.url=jdbc:h2:mem:demoseeder;DB_CLOSE_DELAY=-1;MODE=MySQL",
+        "spring.datasource.url=jdbc:h2:mem:catalogseeder;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
-        "activity.marketing.seed-demo-data=true"
+        "activity.marketing.seed-catalog-data=true"
 })
-class DemoSeederTest {
+class CatalogDataSeederTest {
 
-    @Autowired ActivityDemoSeeder seeder;
-    @Autowired DemoStoreRepository storeRepo;
-    @Autowired DemoProductRepository productRepo;
+    @Autowired CatalogDataSeeder seeder;
+    @Autowired CatalogStoreRepository storeRepo;
+    @Autowired CatalogProductRepository productRepo;
     @Autowired TenantProperties tenantProps;
 
     @AfterEach

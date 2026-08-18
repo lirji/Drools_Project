@@ -14,7 +14,7 @@ import java.util.List;
  * Step 19: LHS 量词补全 (collect / forall / eval) 运行入口。
  *
  * 跟 RiskService 一个套路 —— insert 请求里的 fact, fireAllRules, 再把规则 insert 出来的
- * ReviewFinding 从 working memory 捞回来。三条规则各演示一种 LHS 元素:
+ * ReviewFinding 从 working memory 捞回来。三条规则各展示一种 LHS 元素:
  *   collect (图书批发) / forall (全部行合规) / eval (总额超免审额度)。
  */
 @Service

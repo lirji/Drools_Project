@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mergeRows, deriveState, versionForTarget, filterRows, sortRows, nextSortDir,
-  pruneSelection, summarize, parseTime, type BenchRow,
+  pruneSelection, summarize, parseTime, statusActionFor, type BenchRow,
 } from './benchModel'
 import type { ActivityListRow } from '@/shared/types'
 
@@ -34,6 +34,9 @@ describe('parseTime', () => {
 describe('deriveState —— 时间窗判据与决策侧同源（两端闭区间）', () => {
   it('未上线一律是草稿，与时间窗无关', () => {
     expect(deriveState(0, NOW - DAY, NOW + DAY, NOW)).toBe('draft')
+  })
+  it('已预约的版本显示为定时中', () => {
+    expect(deriveState(3, NOW + DAY, NOW + 2 * DAY, NOW)).toBe('scheduled')
   })
   it('已下线一律是下线，即使还在窗内', () => {
     expect(deriveState(2, NOW - DAY, NOW + DAY, NOW)).toBe('offline')
@@ -82,6 +85,19 @@ describe('mergeRows —— 一行一活动', () => {
     expect(merged[0].version).toBe(2)
   })
 
+  it('线上 v1 与定时 v2 并存时继续展示服务版，并保留预约版本', () => {
+    const scheduledStart = NOW + DAY
+    const merged = mergeRows([
+      row({ activityId: 'ACT4', version: 2, activityStatus: 3, activityStartTime: new Date(scheduledStart).toISOString() }),
+      row({ activityId: 'ACT4', version: 1, activityStatus: 1 }),
+    ], NOW)
+    expect(merged[0].version).toBe(1)
+    expect(merged[0].state).toBe('live')
+    expect(merged[0].scheduledVersion).toBe(2)
+    expect(merged[0].scheduledStart).toBe(scheduledStart)
+    expect(merged[0].draftVersion).toBeNull()
+  })
+
   it('不同活动不会被并到一起', () => {
     expect(mergeRows([
       row({ activityId: 'A', version: 1 }),
@@ -102,6 +118,34 @@ describe('versionForTarget —— 批量动作打到哪一版', () => {
   it('上线（发布）打到最高版 v2 —— 发布的就是最新草稿', () => {
     expect(versionForTarget(r, 1)).toBe(2)
   })
+
+  it('取消定时打到预约版本，而不是正在服务的版本', () => {
+    const scheduled = mergeRows([
+      row({ activityId: 'ACT2', version: 2, activityStatus: 3, activityStartTime: new Date(NOW + DAY).toISOString() }),
+      row({ activityId: 'ACT2', version: 1, activityStatus: 1 }),
+    ], NOW)[0]
+    expect(versionForTarget(scheduled, 0)).toBe(2)
+  })
+})
+
+describe('statusActionFor —— 未来草稿预约、到点草稿直接发布', () => {
+  it('未来开始的草稿给出定时上线', () => {
+    const r = mergeRows([row({
+      activityId: 'FUTURE', version: 1, activityStatus: 0,
+      activityStartTime: new Date(NOW + DAY).toISOString(),
+    })], NOW)[0]
+    expect(statusActionFor(r, NOW)).toEqual({ target: 3, label: '定时上线' })
+  })
+
+  it('已经开始的草稿直接上线，预约态可取消', () => {
+    const draft = mergeRows([row({ activityId: 'NOW', version: 1, activityStatus: 0 })], NOW)[0]
+    const scheduled = mergeRows([row({
+      activityId: 'SCHEDULED', version: 1, activityStatus: 3,
+      activityStartTime: new Date(NOW + DAY).toISOString(),
+    })], NOW)[0]
+    expect(statusActionFor(draft, NOW)).toEqual({ target: 1, label: '上线' })
+    expect(statusActionFor(scheduled, NOW)).toEqual({ target: 0, label: '取消定时' })
+  })
 })
 
 describe('filterRows', () => {
@@ -118,6 +162,13 @@ describe('filterRows', () => {
   it('状态筛选按存储态过滤', () => {
     expect(filterRows(rows, '', 1)).toHaveLength(1)
     expect(filterRows(rows, '', 2)).toHaveLength(1)
+  })
+  it('定时筛选能找到“线上版 + 预约切版”归并行', () => {
+    const scheduled = mergeRows([
+      row({ activityId: 'SWITCH', version: 1, activityStatus: 1 }),
+      row({ activityId: 'SWITCH', version: 2, activityStatus: 3, activityStartTime: new Date(NOW + DAY).toISOString() }),
+    ], NOW)
+    expect(filterRows(scheduled, '', 3)).toHaveLength(1)
   })
 })
 

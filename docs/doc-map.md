@@ -13,7 +13,7 @@ lastSyncedAt: 2026-08-13
 | **容量与引擎选型**（Drools / QLExpress / 纯 Java 实测） | docs/capacity-model.md + examples/capacity/ | 架构+基准 | ✅ **新建（活文档，2026-08-11）**。数字由 `./examples/capacity/run.sh` 实跑得出，**换机器要复跑重标定**；与 plans/activity-engine-platform-0718/50-P0-5-memory-capacity-model.md（dated 归档）互为补充 |
 | 全局 / 快速开始 / 目录树 / 部署 | README.md | 概览 | 项目简介 + 每 Step 请求示例 + 前端/部署起法 |
 | activity-common/console/decision（活动引擎） | docs/activity-marketing.md | 模块 | 活动营销模块用法 + console/decision 决策面 |
-| drools-lab（Step 1–18 教学） | docs/steps-guide.md | 模块 | 各 Step 详解 + REST 接口 + DRL 语义 |
+| drools-lab（Step 1–24 教学） | docs/steps-guide.md | 模块 | 各 Step 详解 + REST 接口 + DRL 语义 |
 | Drools 能力/选型（与本仓库结构无关，概念文档） | docs/drools-capabilities.md, docs/drools-vs-aviator.md, docs/drools-use-cases.md, docs/rete-intuition.md | 概念 | 不随模块拆分变，doc-sync 一般不动 |
 | 面试复习（QLExpress vs Drools 原理/用法/手写题） | docs/interview/qlexpress-vs-drools.md, docs/interview/coding-drills.md | 概念 | 个人复习资料；仅"我在项目里怎么用的"一节引用真实文件路径，重构后需核对。**能力对照在这份，成本/容量对照在 docs/capacity-model.md**，两份别写重 |
 | 部署编排（compose/网关/双 app/只读账号/观测/容灾） | docs/deployment.md | 部署 | ✅ 已建（活文档）；现状锚另见 docs/plans/prod-arch-refactor-0719-1330/PROGRESS.md |
@@ -114,7 +114,7 @@ lastSyncedAt: 2026-08-13
   ⑤ **领域异常层**：`ActivityException` + `ActivityErrorCode` + 两个 `@RestControllerAdvice`。
      两处**刻意不注册**的兜底同样重要：console 不注册 `ISE→409`（会把 `list`/`grants` 上的内部 bug 伪装成客户端错误）、
      decision 不注册 `IAE→400`（同理）。
-  ⑥ 写平面拆 `GrantService` + `ActivityVersionResolver` + 状态迁移表 + `targetStatus=3` 封口；
+  ⑥ 写平面拆 `GrantService` + `ActivityVersionResolver` + 状态迁移表 + `targetStatus=3` 生命周期预约；
      快照消构建期 N+1、`SnapshotSlot` 原子替换、**新增生产可达的回滚端点**（此前 `rollback` 零生产调用方，
      文档承诺的「回滚是止损手段」是空头支票）。
   **对外契约变更**（详见 BREAKING-CHANGES.md）：四眼 409→**403**、claim 恒 409→**400/404/409 分流**、release 缺参→400、

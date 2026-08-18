@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 
 /**
  * 商品绑定层。收敛自来源 {@code ActivityAdminStoreSpuProduct}。
@@ -15,10 +16,11 @@ import jakarta.persistence.Table;
  * 读取侧只取 {@code isDel=0 && effective=1}。
  */
 @Entity
+@Comment("活动商品绑定表")
 @Table(name = "activity_spu_binding", indexes = {
         @Index(name = "idx_sb_spu_eff_del", columnList = "tenant_id,spu_id,effective,is_del"),
         // store_id 尾随（D9）：详情回显的店铺聚合(group by store_id)与下钻(activity+version+store_id)
-        // 走全索引命中。⚠ ddl-auto:update 对「改已存在索引 columnList」不可靠——全新 demo 库定义即
+        // 走全索引命中。⚠ ddl-auto:update 对「改已存在索引 columnList」不可靠——全新数据库定义即
         // 生效，存量/生产库需手工 ALTER（本仓常态是可重建库）。
         @Index(name = "idx_sb_aid_ver", columnList = "tenant_id,activity_id,version,store_id")
 })

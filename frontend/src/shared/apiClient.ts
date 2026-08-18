@@ -13,7 +13,7 @@ export type ServiceKey = 'root' | 'marketing' | 'decision'
 //      写 /decision/v1 会落到兜底 `location /` 打到 console，而 console 的 classpath 上根本没有
 //      DecisionPlaneController（它在 activity-decision 模块），必 404。
 //    · vite dev 下另有一条独立 proxy（见 vite.config.ts）把 ^/api/decision 转到 :8082；
-//      已有的 'decision' 前缀是 Step7 教学端点 /decision/calculate 的，指向 console，撞不得。
+//      已有的 'decision' 前缀用于兼容旧规则执行端点 /decision/calculate，指向 console，撞不得。
 // TS 只校验这里有没有 decision 这个键，**不校验字符串对不对**——写错了 typecheck 与全部单测都会绿，
 // 只在真实浏览器里以 404 暴露。改这一行时请一并跑 e2e。
 const BASES: Record<ServiceKey, string> = {

@@ -74,7 +74,7 @@ rule "Electronics bulk - 1000 off 100"
 end
 
 // ============================================================
-//   accumulate 示例 3: 用 count 而不是 sum，演示函数切换
+//   accumulate 示例 3: 用 count 而不是 sum，展示函数切换
 //   场景: 购物车里有 ≥ 3 个不同的电子产品 SKU，送一句友好提示 (side-effect)
 // ============================================================
 rule "Electronics variety greeting"

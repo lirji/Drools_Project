@@ -20,7 +20,7 @@ DEPLOY_STARTED=false
 PROVISION_AUTH=false
 
 COMPOSE_CMD=()
-CORE_SERVICES=(mysql console decision gateway)
+CORE_SERVICES=(mysql xxl-job-admin console decision gateway)
 OBSERVABILITY_SERVICES=(prometheus grafana)
 
 if [[ -t 1 ]]; then
@@ -226,6 +226,83 @@ wait_for_mysql() {
   return 1
 }
 
+guard_mysql_data_volume() {
+  local container_id volume_name compose_volume_label
+  container_id="$(compose ps -q mysql 2>/dev/null || true)"
+  [[ -n "${container_id}" ]] || return 0
+
+  volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/mysql"}}{{.Name}}{{end}}{{end}}' \
+    "${container_id}" 2>/dev/null || true)"
+  [[ -n "${volume_name}" ]] || die "现有 MySQL 的 /var/lib/mysql 不是 Docker 卷，拒绝自动重建"
+  compose_volume_label="$(docker volume inspect --format '{{index .Labels "com.docker.compose.volume"}}' \
+    "${volume_name}" 2>/dev/null || true)"
+  if [[ "${compose_volume_label}" != "mysql-data" ]]; then
+    die "现有 MySQL 使用旧匿名卷 ${volume_name}。为避免重建时丢库，需先备份并迁移到 mysql-data 命名卷；本次未自动执行危险迁移"
+  fi
+}
+
+mysql_root_scalar() {
+  local query="$1"
+  compose exec -T mysql sh -ec \
+    'exec mysql --default-character-set=utf8mb4 -uroot -p"${MYSQL_ROOT_PASSWORD:?}" -Nse "$1"' \
+    mysql-root "${query}" 2>/dev/null
+}
+
+initialize_xxl_job_schema() {
+  local sql_file="${SCRIPT_DIR}/deploy/mysql-init/02-xxl-job.sql"
+  local table_count column_count
+  [[ -f "${sql_file}" ]] || die "缺少 XXL-JOB 初始化脚本：${sql_file}"
+  info "幂等初始化并校验 XXL-JOB 3.4.2 调度库…"
+  compose exec -T mysql sh -ec \
+    'exec mysql --default-character-set=utf8mb4 -uroot -p"${MYSQL_ROOT_PASSWORD:?}"' \
+    < "${sql_file}"
+
+  table_count="$(mysql_root_scalar "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='xxl_job' AND table_name IN ('xxl_job_group','xxl_job_registry','xxl_job_info','xxl_job_logglue','xxl_job_log','xxl_job_log_report','xxl_job_lock','xxl_job_user')")"
+  column_count="$(mysql_root_scalar "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='xxl_job' AND table_name IN ('xxl_job_group','xxl_job_registry','xxl_job_info','xxl_job_logglue','xxl_job_log','xxl_job_log_report','xxl_job_lock','xxl_job_user')")"
+  [[ "${table_count}" == "8" && "${column_count}" == "70" ]] \
+    || die "xxl_job 结构不是预期的 3.4.2 Schema（tables=${table_count}, columns=${column_count}）；请先备份并执行官方版本迁移"
+  success "XXL-JOB 调度库已就绪（8 张表 / 70 列）"
+}
+
+wait_for_xxl_admin() {
+  local started=${SECONDS}
+  local state
+  info "等待 XXL-JOB Admin 健康（最多 ${TIMEOUT_SECONDS} 秒）…"
+  while ((SECONDS - started < TIMEOUT_SECONDS)); do
+    state="$(container_state xxl-job-admin)"
+    if [[ "${state}" == exited || "${state}" == dead ]]; then
+      fail "XXL-JOB Admin 容器已退出"
+      return 1
+    fi
+    if [[ "${state}" == running ]] \
+      && compose exec -T xxl-job-admin curl -fsS http://localhost:8080/actuator/health \
+        >/dev/null 2>&1; then
+      success "XXL-JOB Admin 已健康"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "等待 XXL-JOB Admin 健康超时"
+  return 1
+}
+
+wait_for_xxl_job_ready() {
+  local started=${SECONDS}
+  local registry_count success_count
+  info "等待 XXL 执行器注册并完成一次活动生命周期任务（最多 ${TIMEOUT_SECONDS} 秒）…"
+  while ((SECONDS - started < TIMEOUT_SECONDS)); do
+    registry_count="$(mysql_root_scalar "SELECT COUNT(*) FROM xxl_job.xxl_job_registry WHERE registry_group='EXECUTOR' AND registry_key='activity-console-executor'" || true)"
+    success_count="$(mysql_root_scalar "SELECT COUNT(*) FROM xxl_job.xxl_job_log WHERE executor_handler='activityLifecycleSweep' AND trigger_code=200 AND handle_code=200" || true)"
+    if [[ "${registry_count:-0}" -gt 0 && "${success_count:-0}" -gt 0 ]]; then
+      success "XXL 执行器已注册，活动生命周期任务已成功执行"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "XXL 执行器未注册或任务没有成功执行"
+  return 1
+}
+
 wait_for_service_http() {
   local service="$1"
   local url="$2"
@@ -413,7 +490,7 @@ if [[ "${DRY_RUN}" == true ]]; then
     print_command npm --prefix "${SCRIPT_DIR}/frontend" run build
   fi
   if [[ "${PULL_IMAGES}" == true && "${FRONTEND_ONLY}" == false ]]; then
-    PULL_SERVICES=(mysql)
+    PULL_SERVICES=(mysql xxl-job-admin)
     if [[ "${CORE_ONLY}" == false ]]; then
       PULL_SERVICES+=("${OBSERVABILITY_SERVICES[@]}")
     fi
@@ -426,9 +503,15 @@ if [[ "${DRY_RUN}" == true ]]; then
     print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --no-deps --force-recreate gateway
   elif [[ "${SKIP_BUILD}" == false ]]; then
     print_build_plan console decision gateway
+    print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d mysql
+    printf '  初始化并校验 %q（XXL-JOB 3.4.2：8 张表 / 70 列）\n' \
+      "${SCRIPT_DIR}/deploy/mysql-init/02-xxl-job.sql"
     print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --remove-orphans "${UP_SERVICES[@]}"
   else
     info "将跳过源码构建，使用本地 activity-console、activity-decision 与 activity-frontend 镜像"
+    print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d mysql
+    printf '  初始化并校验 %q（XXL-JOB 3.4.2：8 张表 / 70 列）\n' \
+      "${SCRIPT_DIR}/deploy/mysql-init/02-xxl-job.sql"
     print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --remove-orphans "${UP_SERVICES[@]}"
   fi
   success "Dry-run 完成，未修改任何容器"
@@ -462,6 +545,8 @@ if [[ "${FRONTEND_ONLY}" == true ]]; then
   exit 0
 fi
 
+guard_mysql_data_volume
+
 if [[ "${FULL_DEPLOY}" == true ]]; then
   run_maven_package
 elif [[ "${SKIP_BUILD}" == false ]]; then
@@ -469,7 +554,7 @@ elif [[ "${SKIP_BUILD}" == false ]]; then
 fi
 
 if [[ "${PULL_IMAGES}" == true ]]; then
-  PULL_SERVICES=(mysql)
+  PULL_SERVICES=(mysql xxl-job-admin)
   if [[ "${CORE_ONLY}" == false ]]; then
     PULL_SERVICES+=("${OBSERVABILITY_SERVICES[@]}")
   fi
@@ -487,14 +572,21 @@ else
   warn "已跳过源码构建，正在使用本地已有前后端镜像"
 fi
 
-info "启动服务：${UP_SERVICES[*]}"
+info "先启动 MySQL 并准备调度库"
 DEPLOY_STARTED=true
+compose up -d mysql
+wait_for_mysql
+initialize_xxl_job_schema
+
+info "启动服务：${UP_SERVICES[*]}"
 compose up -d --remove-orphans "${UP_SERVICES[@]}"
 
 wait_for_mysql
+wait_for_xxl_admin
 wait_for_service_http console http://localhost:8080/actuator/health "console 后端"
 wait_for_service_http decision http://localhost:8080/actuator/health "decision 后端"
 wait_for_gateway
+wait_for_xxl_job_ready
 
 compose ps
 
@@ -515,4 +607,8 @@ if [[ -n "${PROMETHEUS_URL}" ]]; then
 fi
 if [[ -n "${GRAFANA_URL}" ]]; then
   printf '  Grafana：%s（默认管理员密码：admin）\n' "${GRAFANA_URL}"
+fi
+XXL_ADMIN_URL="$(published_url xxl-job-admin 8080 /)"
+if [[ -n "${XXL_ADMIN_URL}" ]]; then
+  printf '  XXL-JOB Admin：%s\n' "${XXL_ADMIN_URL}"
 fi

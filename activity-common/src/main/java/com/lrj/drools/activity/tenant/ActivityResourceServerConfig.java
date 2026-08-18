@@ -29,7 +29,7 @@ import java.util.List;
  * Casdoor 控制台与决策平面鉴权（仅 {@code activity.tenant.auth.enabled=true} 时生效）。
  *
  * <p>保护 {@code /activity-marketing/**}（控制台接口）和 {@code /decision/v1/**}（决策接口）：需带 Casdoor 验签 JWT；其余（Step1~18、
- * 静态页、actuator、h2-console）一律放行——加 Spring Security 不锁死整个 demo。验签后 {@link JwtTenantFilter}
+ * 静态页、actuator、h2-console）按配置放行。验签后 {@link JwtTenantFilter}
  * 从 token 的 {@code aud} 解析租户落进 {@link TenantContext}，接上 P0-4 的 {@code @TenantId} 隔离机制。
  *
  * <p>JWT 校验链：JWKS 验签 + {@link JwtTimestampValidator}（exp）+ {@link JwtIssuerValidator}（iss）+
@@ -83,7 +83,7 @@ public class ActivityResourceServerConfig {
 
     /**
      * 链二（@Order 2，兜底匹配其余全部）：health / actuator / Step1~18 / 静态页 / h2-console 一律放行。
-     * 加 Spring Security 不锁死整个 demo（auth 开时非控制台、非决策端点仍开放）。
+     * auth 开启时只保护控制台与决策业务路径，其余能力端点按现有边界开放。
      */
     @Bean
     @Order(2)

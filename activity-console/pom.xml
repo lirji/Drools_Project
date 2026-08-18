@@ -7,7 +7,7 @@
 
     <parent>
         <groupId>com.lrj</groupId>
-        <artifactId>drools-demo-parent</artifactId>
+        <artifactId>activity-platform-parent</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
@@ -15,8 +15,8 @@
     <name>activity-console</name>
     <description>
         控制台服务（console-svc，8081，可启动）：写平面（活动创建/编辑/上下线、artifact 冻结/预热、发布代际 bump）
-        + Step 1–18 教学端点 + legacy /activity-marketing 读端点 + 前端 SPA 托管（/ui/）。唯一 DDL 执行者。
-        依赖 activity-common(共享) + drools-lab(Step1-18)。前端产物由 -Pfrontend 构建拷入 static/ui/。
+        + Step 1–24 教学端点 + legacy /activity-marketing 读端点 + 前端 SPA 托管（/ui/）。唯一 DDL 执行者。
+        依赖 activity-common(共享) + drools-lab(Step1-24)。前端产物由 -Pfrontend 构建拷入 static/ui/。
     </description>
 
     <dependencies>
@@ -27,6 +27,10 @@
         <dependency>
             <groupId>com.lrj</groupId>
             <artifactId>drools-lab</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

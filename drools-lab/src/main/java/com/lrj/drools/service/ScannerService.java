@@ -51,7 +51,7 @@ import java.util.stream.Collectors;
  *
  * KieScanner 的"发现新版本"对 release 版本 (1.0.0) 是不触发的 (固定版本内容不可变是
  * Maven 的契约)。SNAPSHOT (1.0.0-SNAPSHOT) 允许同 GAV 内容滚动更新, scanNow() 会重新
- * 解析并比对时间戳 → 命中替换。所以教学 demo 固定用一个 SNAPSHOT GAV, 反复 install
+ * 解析并比对时间戳 → 命中替换。能力验证固定使用一个 SNAPSHOT GAV，反复 install
  * 新内容到它上面。生产里规则发版会用递增 release 版本 + KieContainer.updateToVersion()。
  */
 @Service

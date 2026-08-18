@@ -8,6 +8,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.Comment;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -36,6 +37,7 @@ import java.time.Instant;
  * 决策留痕是另一条路（结构化日志 + 指标），不要试图在热路径上写这张表。
  */
 @Entity
+@Comment("活动权益发放流水表")
 @Table(name = "activity_grant",
         uniqueConstraints = {
                 // 幂等键：同一单里同一个活动只能领一次。**这是防重复发放的唯一硬保证**，

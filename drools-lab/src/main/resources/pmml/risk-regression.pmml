@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <PMML xmlns="http://www.dmg.org/PMML-4_2" version="4.2">
-  <Header copyright="drools-demo"/>
+  <Header copyright="activity-platform"/>
   <DataDictionary numberOfFields="3">
     <DataField name="age" optype="continuous" dataType="double"/>
     <DataField name="income" optype="continuous" dataType="double"/>

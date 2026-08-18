@@ -1,11 +1,11 @@
 # 微服务化本地编排（M2.1/M2.2）—— 读写平面**物理拆分**为两个 Spring Boot 应用 + nginx 网关 + MySQL 单库双账号。
-# 三个独立镜像：activity-console(写面 + Step1-18) / activity-decision(只读决策) / activity-frontend(Vue + nginx 网关)。
+# 三个独立镜像：activity-console(写面 + Step1-24) / activity-decision(只读决策) / activity-frontend(Vue + nginx 网关)。
 # （M1.3 那版是"同一镜像按 activity.role 扮演两角色"；M2.1 后改为真物理拆分，各自独立镜像/依赖集/进程。）
 #
 #   ./deploy.sh --provision-auth
 #   浏览器开 http://localhost:8095/ui/console
 #
-# 拆分价值演示（gate：kill console 决策仍服务 / kill decision 不伤 console）：
+# 拆分验收（gate：kill console 决策仍服务 / kill decision 不伤 console）：
 #   docker compose -f deploy/docker-compose.yml stop console
 #   curl -s -XPOST http://localhost:8095/api/decision/spu-discount -H 'Content-Type: application/json' \
 #        -H 'Authorization: Bearer <valid-acme-token>' -d '{"spuIdList":[9001],"userId":1,"userTags":[],"orderAmount":200,"quantity":1}'
@@ -18,9 +18,10 @@ services:
     image: mysql:8.0
     environment:
       MYSQL_ROOT_PASSWORD: rootpass
-      MYSQL_DATABASE: drools_demo
-    ports: ["3307:3306"]
+      MYSQL_DATABASE: activity_platform
+    ports: ["127.0.0.1:3307:3306"]
     volumes:
+      - mysql-data:/var/lib/mysql
       # M2.2：首次初始化建 decision 只读账号（decision_ro，仅 SELECT）
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
@@ -28,6 +29,29 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    restart: unless-stopped
+
+  # 活动生命周期的统一调度中心。业务状态仍以 activity_platform 为准；xxl_job 库只保存任务与执行日志。
+  xxl-job-admin:
+    image: xuxueli/xxl-job-admin:3.4.2
+    environment:
+      PARAMS: >-
+        --spring.datasource.url=jdbc:mysql://mysql:3306/xxl_job?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+        --spring.datasource.username=xxl_job
+        --spring.datasource.password=xxl_job_pass
+        --xxl.job.accessToken=${DROOLS_XXL_ACCESS_TOKEN:-local-xxl-token-change-me}
+        --xxl.job.logretentiondays=7
+    ports: ["127.0.0.1:${DROOLS_XXL_ADMIN_PORT:-18088}:8080"]
+    volumes:
+      - xxl-admin-logs:/data/applogs
+    depends_on:
+      mysql: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+    restart: unless-stopped
 
   # 控制台服务：写面 + Step1~18 + 唯一 DDL 执行者。用 root（读写 + 建表）；JAR 内 SPA 仅作后备。
   console:
@@ -42,13 +66,24 @@ services:
       SERVER_PORT: "8080"          # 容器内统一 8080，nginx upstream 对齐
       DB_HOST: mysql
       DB_PORT: "3306"
-      DB_NAME: drools_demo
+      DB_NAME: activity_platform
       DB_USERNAME: root
       DB_PASSWORD: rootpass
       SPRING_JPA_HIBERNATE_DDL_AUTO: update   # console 是唯一 DDL 执行者
       ACTIVITY_TENANT_AUTH_ENABLED: "${DROOLS_AUTH_ENABLED:-true}"
       ACTIVITY_TENANT_DEV_DEFAULT_ENABLED: "${DROOLS_DEV_DEFAULT_ENABLED:-false}"
       ACTIVITY_MARKETING_FOUR_EYES_ENABLED: "${DROOLS_FOUR_EYES_ENABLED:-false}"
+      ACTIVITY_MARKETING_LIFECYCLE_SCHEDULE_MODE: "${DROOLS_LIFECYCLE_SCHEDULE_MODE:-xxl}"
+      ACTIVITY_MARKETING_LIFECYCLE_SCHEDULE_INTERVAL_MS: "${DROOLS_LIFECYCLE_SCHEDULE_INTERVAL_MS:-5000}"
+      ACTIVITY_MARKETING_LIFECYCLE_SCHEDULE_BATCH_SIZE: "${DROOLS_LIFECYCLE_SCHEDULE_BATCH_SIZE:-200}"
+      XXL_JOB_ADMIN_ADDRESSES: "http://xxl-job-admin:8080"
+      XXL_JOB_ACCESS_TOKEN: "${DROOLS_XXL_ACCESS_TOKEN:-local-xxl-token-change-me}"
+      XXL_JOB_EXECUTOR_APPNAME: "activity-console-executor"
+      # 留空时由 XXL-JOB 注册容器内唯一 IP；横向扩容时每个执行器都会得到独立地址。
+      XXL_JOB_EXECUTOR_ADDRESS: ""
+      XXL_JOB_EXECUTOR_PORT: "9999"
+      XXL_JOB_EXECUTOR_LOG_PATH: "/data/applogs/xxl-job/jobhandler"
+      XXL_JOB_EXECUTOR_LOG_RETENTION_DAYS: "7"
       ACTIVITY_TENANT_AUTH_ISSUER: "${DROOLS_CASDOOR_ISSUER:-http://localhost:8000}"
       ACTIVITY_TENANT_AUTH_JWK_SET_URI: "${DROOLS_CASDOOR_JWK_SET_URI:-http://host.docker.internal:8000/.well-known/jwks}"
       ACTIVITY_TENANT_AUTH_AUTHORIZE_ENDPOINT: "${DROOLS_CASDOOR_AUTHORIZE_ENDPOINT:-http://localhost:8000/login/oauth/authorize}"
@@ -56,8 +91,13 @@ services:
       ACTIVITY_TENANT_AUTH_REDIRECT_URI: "${DROOLS_REDIRECT_URI:-http://localhost:8095/ui/auth/callback}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    expose:
+      - "9999"                    # XXL 执行器端口仅 Docker 内网可见
+    volumes:
+      - xxl-executor-logs:/data/applogs
     depends_on:
       mysql: { condition: service_healthy }
+      xxl-job-admin: { condition: service_healthy }
     # 健康 = 已连库 + 建好 schema（actuator health 含 db 探针）。decision 据此等 console 建表完成再 validate。
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
@@ -65,6 +105,7 @@ services:
       timeout: 3s
       retries: 40
       start_period: 30s
+    restart: unless-stopped
 
   # 决策服务：只读决策热路径 + 发布代际轮询预热。**只读账号 decision_ro + ddl-auto=validate**（物理上不能写/建表）。
   decision:
@@ -79,7 +120,7 @@ services:
       SERVER_PORT: "8080"
       DB_HOST: mysql
       DB_PORT: "3306"
-      DB_NAME: drools_demo
+      DB_NAME: activity_platform
       DECISION_DB_USERNAME: decision_ro       # 只读账号（mysql-init 建）；应用层再叠 validate 双保险
       DECISION_DB_PASSWORD: decision_ro_pass
       SPRING_JPA_HIBERNATE_DDL_AUTO: validate  # 决策不碰 DDL；只读账号建表也会被 MySQL 拒
@@ -95,8 +136,9 @@ services:
     depends_on:
       mysql: { condition: service_healthy }
       console: { condition: service_healthy }  # 等 console **健康**（schema 已建），decision 才 validate 通过（service_started 不够，会撞 missing table）
+    restart: unless-stopped
 
-  # 独立前端 nginx：直接托管 Vue /ui/，并将 API / 旧演示端点代理到两个后端。
+  # 独立前端 nginx：直接托管 Vue /ui/，并将 API / 规则能力端点代理到两个后端。
   gateway:
     build:
       context: ..
@@ -126,10 +168,15 @@ services:
     image: grafana/grafana:11.2.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_AUTH_ANONYMOUS_ENABLED: "true"      # demo：免登录看板（生产勿开）
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_ENABLED:-false}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports: ["3001:3000"]
     depends_on: [prometheus]
+
+volumes:
+  mysql-data:
+  xxl-admin-logs:
+  xxl-executor-logs:

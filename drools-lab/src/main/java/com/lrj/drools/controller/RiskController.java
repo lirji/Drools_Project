@@ -20,7 +20,7 @@ public class RiskController {
         this.riskService = riskService;
     }
 
-    /** Step 4 演示: not / exists (风控 + 推荐), 不计算折扣。 */
+    /** Step 4 展示: not / exists (风控 + 推荐), 不计算折扣。 */
     @PostMapping("/risk/evaluate")
     public Cart evaluate(@RequestBody EvaluateRequest req) {
         Cart cart = new Cart(

@@ -56,7 +56,7 @@
 
 ## 和本项目的关系
 
-本 `drools-demo` 演示的恰恰是 Aviator **做不到**的那些能力——salience 调度、`accumulate` 聚合、TMS 真值维护、agenda-group 流水线、CEP 滑窗。
+本项目的规则能力实验室覆盖了 Aviator **做不到**的那些能力——salience 调度、`accumulate` 聚合、TMS 真值维护、agenda-group 流水线、CEP 滑窗。
 
 - 如果整个需求只是"算几个独立的布尔/数值表达式"，Drools 是杀鸡用牛刀，Aviator 更合适。
 - 一旦规则开始互相激活、需要工作内存，Aviator 就撑不住了，得上 Drools。

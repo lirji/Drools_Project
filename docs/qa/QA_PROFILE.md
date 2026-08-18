@@ -1,4 +1,4 @@
-# QA 环境档案 · drools-demo（活动营销多租户）
+# QA 环境档案 · Activity Rule Platform（活动营销多租户）
 
 > 首次由 /qa-test 勘察生成（2026-07-19）。人工可改，下次直接复用。
 > 能力与端点最后同步 2026-08-12（活动引擎结构性重构：**claim/release/四眼的状态码分流**、决策平面新增**快照回滚端点**、指标 `scene` 词汇表统一）。下文标注 2026-08-09 / 2026-08-10 / 2026-08-11 的数字仅作历史基线；本批最新实跑（**2026-08-12**）是 Maven **476 tests / 3 skip / BUILD SUCCESS**（common **193** 含 3 skip / drools-lab 0 / console **256** / decision **27**）+ vitest **25 文件 285 passed**。
@@ -11,7 +11,7 @@
 
 ## 技术栈 / 启动
 - Java 21 / Spring Boot 3.3.5 / Drools 8.44.2 / Maven wrapper。
-- **仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：`activity-common`(库) / `drools-lab`(库,Step1-18) / `activity-console`(app,8081,写面+Step1-18+前端`/ui/`) / `activity-decision`(app,8082,只读决策`/decision/v1`)。根 `./mvnw spring-boot:run` **已失效**（父聚合 pom 无 main）——起服务须 `-pl` 指定 app 模块。
+- **仓库形态（2026-07 · M2.1 起 = Maven 四模块）**：`activity-common`(库) / `drools-lab`(库,Step1-24) / `activity-console`(app,8081,写面+Step1-24+前端`/ui/`) / `activity-decision`(app,8082,只读决策`/decision/v1`)。根 `./mvnw spring-boot:run` **已失效**（父聚合 pom 无 main）——起服务须 `-pl` 指定 app 模块。
 - **dev/header 档（QA 常用，auth 关、dev-default 开）**：
   - 活动写面 + 台 + 旧读端点（console，8081）：`./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2`
     - ⚠️ **单起 console 会让「优惠验证」页三通道全废**（2026-08-11 起）。该页默认打**决策平面**，请求走网关前缀 `/api/decision/*`；裸 console 上没有 `DecisionPlaneController`（它在 `activity-decision` 模块），这些请求一律 **404**，页面停在红色「决策服务不可达」而拿不到任何结果卡。这不是页面 bug，是环境不全——详见下面「优惠验证屏的前置条件」。
@@ -21,8 +21,8 @@
       -Dspring-boot.run.arguments="--server.port=8099 --spring.datasource.url=jdbc:h2:mem:qadecision;DB_CLOSE_DELAY=-1;MODE=MySQL --spring.jpa.hibernate.ddl-auto=update"
     ```
   - ⚠️ **坑1**：本机 8081/8082 常被 Docker 容器占用 → 换端口：`-Dspring-boot.run.arguments="--server.port=8097"`。
-  - ⚠️ **坑2**：`h2` profile 用 **file 库**（console `./data/drools-demo` / decision `./data/decision`，单连接锁）→ **同一 file 库不能两个 app 同开**。QA 起干净实例请覆盖内存库：`--spring.datasource.url=jdbc:h2:mem:qadev;DB_CLOSE_DELAY=-1;MODE=MySQL --spring.jpa.hibernate.ddl-auto=create-drop`。
-    - **这条也会咬跑测试**：console 测试里只有 `FixedPriceAndClaimTest` 没有 `@TestPropertySource` 覆盖数据源（其余全部覆到 `jdbc:h2:mem:*`），因此它是唯一去抢 `activity-console/data/drools-demo.mv.db` 的用例。本机有 console 在跑、或上一次 `./mvnw test` 被中断留下锁，它会以 `Unable to determine Dialect without JDBC metadata` 报 9 个 error——**这条报错是症状不是原因**，真因在日志更上面的 `Database may be already in use`。处理：停掉本地 console，`rm -rf activity-console/data` 后重跑（实测清掉即绿）。
+  - ⚠️ **坑2**：`h2` profile 用 **file 库**（console `./data/activity-platform` / decision `./data/decision`，单连接锁）→ **同一 file 库不能两个 app 同开**。QA 起干净实例请覆盖内存库：`--spring.datasource.url=jdbc:h2:mem:qadev;DB_CLOSE_DELAY=-1;MODE=MySQL --spring.jpa.hibernate.ddl-auto=create-drop`。
+    - **这条也会咬跑测试**：console 测试里只有 `FixedPriceAndClaimTest` 没有 `@TestPropertySource` 覆盖数据源（其余全部覆到 `jdbc:h2:mem:*`），因此它是唯一去抢 `activity-console/data/activity-platform.mv.db` 的用例。本机有 console 在跑、或上一次 `./mvnw test` 被中断留下锁，它会以 `Unable to determine Dialect without JDBC metadata` 报 9 个 error——**这条报错是症状不是原因**，真因在日志更上面的 `Database may be already in use`。处理时先停掉本地 console，再备份或清理该测试数据目录后重跑。
   - ⚠️ **坑3（2026-08 新增）**：decision 的 `ddl-auto` 已从 `update` 改成 **`validate`**（只读平面不碰 DDL，建表由 console 独占）。按老命令直接起 decision 连空库会启动失败：`Schema-validation: missing table [activity_artifact]`。本地单起 decision 有两条路：① 加 `--spring.jpa.hibernate.ddl-auto=update` 自建空表（实测可起）；② 用 compose 整套（MySQL 库由 console 建好）。**注意 H2 file 库单进程锁，console + decision 不可能共用同一个 H2 file 库**，要两 app 共库只能走 compose 的 MySQL。
   - **前端 SPA 需先构建**：`-Pfrontend`（`./mvnw -pl activity-console -Pfrontend spring-boot:run …`）把 Vue 产物拷进 `static/ui/`，或本地 `cd frontend && npm run dev`（Vite :5173）。不构建时 `/ui/` 404、根 `/` 只是落地页。
   - **整套微服务编排**（两 app + frontend nginx 网关 host `:8095` + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）：`./deploy.sh --provision-auth` → 网关 `http://localhost:8095/ui/console`。Compose 默认 auth 开、dev-default 关。
@@ -34,9 +34,9 @@
 
 ## 入口 / 健康检查
 - 健康：`GET /actuator/health` → 200（console 8081 / decision 8082 各一个）。
-- 前端：根 `GET /` 是**构建无关落地页**（跳 `/ui/`，旧原生台 + `/assets/activity.js|css` 已于 F3 退役删除）；SPA 挂 `/ui/`，活动配置台 `/ui/console`（列表 `/ui/console/activities`、**玩法模板 `/ui/console/playbooks`**、验证 `/ui/console/validate`），18 Step 演示台 `/ui/demos`。
+- 前端：根 `GET /` 是**构建无关落地页**（跳 `/ui/`，旧原生台 + `/assets/activity.js|css` 已于 F3 退役删除）；SPA 挂 `/ui/`，活动配置台 `/ui/console`（列表 `/ui/console/activities`、**玩法模板 `/ui/console/playbooks`**、验证 `/ui/console/validate`），规则能力中心 `/ui/capabilities`。
 - 活动写面/运营验证端点（console，8081）：`/activity-marketing/*`（见 `docs/activity-marketing.md` 接口表）。2026-08 的关键增量：
-  - `POST /activity-marketing/{activityId}/status`，体 `{version,targetStatus}` — **2026-08-12 起有状态迁移表**（from × to），非法流转 400。三个活跃态（0 待上线 / 1 上线 / 2 下线）之间仍全通，含两条容易被误报成 bug 的**有意保留**：`OFFLINE → ONLINE`（下线的活动可原样重新上架，尽管它**不可编辑**——这个不对称是既有行为）、`X → X` 同态自转（批量下线勾中已下线行照样 200 并推进代际）。`targetStatus=3`（待生效）**写入口已封死** → 400（它零生产者零消费者，置成 3 的活动代际照推、却永远进不了任何读路径）；但状态 3 作为**源**仍可迁出，留给外部导入的脏数据当逃生口。四眼开启时提交人自审发布返回 **403**（不再是 409，见下）。
+  - `POST /activity-marketing/{activityId}/status`，体 `{version,targetStatus}` — 使用显式状态迁移表（from × to），非法流转 400。`targetStatus=3`（待生效）表示显式预约上线：只接受未来时间窗，预约时执行四眼校验；到开始时间由 console 调度器自动上线，结束时间后自动下线，改回 0 可取消。ONLINE 不能原地改为 3，未来切版应先编辑出新版本。`OFFLINE → ONLINE` 与 `X → X` 同态自转仍是有意保留行为。四眼开启时提交人自审发布或预约返回 **403**。
   - `POST /activity-marketing/bulk-status`，体 `{items:[{activityId,version}],targetStatus}` → 部分失败**仍是 200** + 回执 `{succeeded[],failed[{activityId,reason}]}`（别当错误断言）。**唯一例外（2026-08-12 起）**：`targetStatus` 本身非法（不在 0/1/2 内，含被封死的 3）时**进循环之前**就返回 **400**——否则几十条各失败一次、回执里全是同一句话。前端 `askBulk` 只传 1|2，所以这条只能用 curl 触发。
   - `POST /activity-marketing/{activityId}/claim?version=&quantity=&userId=&orderId=` — 秒杀库存**权威扣减**（决策只报价、这里才扣）。抢到 200；**没抢到按失败种类分流状态码（2026-08-12 起，此前恒 409）**：**400** = 缺 `activityId` / 数量非正 / 限领活动没带 `userId`；**404** = 活动不存在或当前没有上线版本、版本不存在；**409** = 余量不足或不在可用窗口、超出每人限领。**响应体一字节没变**（仍是 `{ok:false,reason}`，分流用的 `FailureKind` 标了 `@JsonIgnore` 不出参），所以旧用例若断言的是 `ok/reason` 不受影响，**断言 409 的会红——那是预期结果，不是回归**。它与 create/status 同属 `console-write-authority` 保护的写路径；该配置非空时，无 authority token 应断言 403。四个 query 参数全可选，但**行为随传不传变**：不传 `version` 打到**当前 ONLINE 版本**（不是最高版）；带 `orderId` 才幂等（幂等键 = 租户+orderId+activityId）；配了每人限领的活动不传 `userId` 直接拒。
   - `POST /activity-marketing/{activityId}/release?orderId=` — 冲正（退款/取消/超时）：归还库存并释放该用户的限领额度。**幂等**（重复释放返回 200 且不重复加库存）。**缺参/空串 `orderId` 现在是 400**（2026-08-12 起），**确实查不到发放记录才是 404**——此前两者都是 404，客服拿到 404 分不清「这一单没领过」和「调用方漏传了参数」，进而**放弃冲正**、库存与限领额度永久漏掉。完全不传 `orderId` 一直是 400（`required=true`，Spring 直接挡）。归还不判活动状态与时间窗——活动结束之后仍会有退款进来。

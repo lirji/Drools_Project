@@ -29,6 +29,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import com.lrj.drools.activity.persistence.ActivityManageEntity;
@@ -73,7 +74,7 @@ public class ActivityMarketingService {
     private final ActivityConditionRepository conditionRepo;
     private final ActivitySpuBindingRepository bindingRepo;
     /** 详情下钻时按 spuId 批量补商品名/价（{@code findAllById} = PK IN + @TenantId 自动，一页一查）。 */
-    private final DemoProductRepository demoProductRepo;
+    private final CatalogProductRepository catalogProductRepo;
     private final ActivityGiftRepository giftRepo;
     private final PoolRefRepository poolRefRepo;
     private final ActivityStrategyRepository strategyRepo;
@@ -90,13 +91,15 @@ public class ActivityMarketingService {
     private final ActivityRuleRuntimeService ruleRuntime;
     private final ActivityPoolMatchService poolMatchService;
     private final ArtifactService artifactService;
+    /** 批量操作逐条开启独立事务，避免同类自调用绕过 {@code @Transactional}。 */
+    private final TransactionTemplate transactionTemplate;
     /** 投放地域展开成 {@code userDistrictId} 取值集合时用（见 {@link #mergeDistrictCondition}）。 */
     private final DistrictQueryService districtQuery;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicInteger seq = new AtomicInteger(0);
 
-    /** P1-8 四眼开关。默认 false（不破 demo/现有测试）；开启后发布(上线)要求审批人≠提交人。 */
+    /** P1-8 四眼开关。开启后发布（上线）要求审批人不等于提交人。 */
     @Value("${activity.marketing.four-eyes-enabled:false}")
     private boolean fourEyesEnabled;
 
@@ -104,7 +107,7 @@ public class ActivityMarketingService {
                                     ActivityRuleRepository ruleRepo,
                                     ActivityConditionRepository conditionRepo,
                                     ActivitySpuBindingRepository bindingRepo,
-                                    DemoProductRepository demoProductRepo,
+                                    CatalogProductRepository catalogProductRepo,
                                     ActivityGiftRepository giftRepo,
                                     PoolRefRepository poolRefRepo,
                                     ActivityStrategyRepository strategyRepo,
@@ -117,13 +120,14 @@ public class ActivityMarketingService {
                                     ActivityRuleRuntimeService ruleRuntime,
                                     ActivityPoolMatchService poolMatchService,
                                     ArtifactService artifactService,
-                                    DistrictQueryService districtQuery) {
+                                    DistrictQueryService districtQuery,
+                                    TransactionTemplate transactionTemplate) {
         this.districtQuery = districtQuery;
         this.manageRepo = manageRepo;
         this.ruleRepo = ruleRepo;
         this.conditionRepo = conditionRepo;
         this.bindingRepo = bindingRepo;
-        this.demoProductRepo = demoProductRepo;
+        this.catalogProductRepo = catalogProductRepo;
         this.giftRepo = giftRepo;
         this.poolRefRepo = poolRefRepo;
         this.strategyRepo = strategyRepo;
@@ -136,6 +140,7 @@ public class ActivityMarketingService {
         this.ruleRuntime = ruleRuntime;
         this.poolMatchService = poolMatchService;
         this.artifactService = artifactService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     // ------------------------------------------------------------------ 创建 / 编辑
@@ -194,7 +199,7 @@ public class ActivityMarketingService {
             //   · 当前版本是草稿 → 直接顶掉（草稿不该堆积），沿用原子软删做并发保护
             if (ActivityStatus.ONLINE.code() == current.getActivityStatus()) {
                 // 线上版本要留着，只能用「目标版本号是否已被占」做并发保护。
-                // 比软删弱（非原子），但同 activityId 的并发编辑在本 demo 不是真实场景；
+                // 比软删弱（非原子）；同 activityId 的并发编辑由版本唯一约束作最后防线。
                 // 真要收紧应给 (tenant_id, activity_id, version) 加唯一约束，由 DB 兜底。
                 if (manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, version, NOT_DEL).isPresent()) {
                     throw ActivityException.versionConflict("活动版本冲突（并发编辑），请重试: " + activityId);
@@ -270,12 +275,11 @@ public class ActivityMarketingService {
 
     // ------------------------------------------------------------------ 上下线
 
-    /**
-     * 「一个活动能被置成哪些状态」的三态活跃集：{@link ActivityStatus#NORMAL} /
-     * {@link ActivityStatus#ONLINE} / {@link ActivityStatus#OFFLINE}。
-     * {@link ActivityStatus#PENDING_EFFECT} 刻意不在其中，见 {@link #resolveTargetStatus}。
-     */
-    private static final Set<ActivityStatus> LIVE_STATUSES =
+    /** 人工可写的完整状态集；PENDING_EFFECT 现在是显式“预约上线”状态。 */
+    private static final Set<ActivityStatus> WRITABLE_STATUSES = Set.of(ActivityStatus.values());
+
+    /** 已上线版本不能原地改成预约态；如需未来切版，应编辑出新版本后预约该草稿。 */
+    private static final Set<ActivityStatus> ONLINE_TARGETS =
             Set.of(ActivityStatus.NORMAL, ActivityStatus.ONLINE, ActivityStatus.OFFLINE);
 
     /**
@@ -295,14 +299,15 @@ public class ActivityMarketingService {
      *       禁掉它会让批量回执凭空多出一批「失败」，而运营的意图（让这些活动都停）其实已经达成。</li>
      * </ul>
      *
-     * <p>{@code PENDING_EFFECT} 作为<b>源</b>仍可迁出（历史/外部导入数据的逃生口，否则这种行会被永久冻住），
-     * 作为<b>目标</b>则全面封死——它没有出现在任何一个 value 里。
+     * <p>{@code PENDING_EFFECT} 是显式预约态：只有运营主动把未来开始的版本置为该状态，后台才会到点发布；
+     * 普通 {@code NORMAL} 草稿永远不会被定时任务擅自上线。正在服务的版本也不能原地变预约态，
+     * 应编辑出新版本后预约，旧版本继续服务到切版时刻。
      */
     private static final Map<ActivityStatus, Set<ActivityStatus>> ALLOWED_TRANSITIONS = Map.of(
-            ActivityStatus.NORMAL, LIVE_STATUSES,
-            ActivityStatus.ONLINE, LIVE_STATUSES,
-            ActivityStatus.OFFLINE, LIVE_STATUSES,
-            ActivityStatus.PENDING_EFFECT, LIVE_STATUSES);
+            ActivityStatus.NORMAL, WRITABLE_STATUSES,
+            ActivityStatus.ONLINE, ONLINE_TARGETS,
+            ActivityStatus.OFFLINE, WRITABLE_STATUSES,
+            ActivityStatus.PENDING_EFFECT, WRITABLE_STATUSES);
 
     /** 迁移动作：合法性判定通过之后、状态落到 row 之前执行的副作用。 */
     @FunctionalInterface
@@ -313,20 +318,29 @@ public class ActivityMarketingService {
     /**
      * 每个目标状态挂的副作用，<b>按列表顺序执行</b>（四眼要在退役旧线上版之前，否则一次被拒的发布
      * 会先把正在服务的版本退役掉）。今天只有上线有动作，此前它们是散在方法体里的两段
-     * {@code if (target == ONLINE)}。
+     * {@code if (target == ONLINE)}。预约上线同样是一次发布审批，因此在写入 PENDING_EFFECT 时完成四眼校验；
+     * 真正到点执行时后台不再伪造一个“审批人”。
      */
     private final Map<ActivityStatus, List<TransitionAction>> transitionActions = Map.of(
-            ActivityStatus.ONLINE, List.of(this::enforceFourEyesIfEnabled, this::retireOtherOnlineVersions));
+            ActivityStatus.ONLINE, List.of(this::enforceFourEyesIfEnabled, this::retireOtherOnlineVersions),
+            ActivityStatus.PENDING_EFFECT, List.of(this::validateScheduleWindow, this::enforceFourEyesIfEnabled));
 
     @Transactional(rollbackFor = Exception.class)
     public CreateResult changeStatus(String activityId, Integer version, Integer targetStatus) {
         // 对外仍可传 null，但**在这里就解析成具名的那一套**（最高未删除版 = 编辑基线同一套定义），
         // 不把「null 是什么意思」带进方法体后半段——那正是「批量下线打到草稿」那类事故的温床。
-        Integer v = (version != null) ? version : latestDraftVersion(activityId);
-        if (v == null) {
+        // 与定时任务锁同一组行，避免“运营手动下线”和“后台到点上线”互相覆盖。
+        List<ActivityManageEntity> lockedVersions = manageRepo.lockVersionsForLifecycle(activityId, NOT_DEL);
+        if (lockedVersions.isEmpty()) {
             throw new IllegalArgumentException("活动不存在: " + activityId);
         }
-        ActivityManageEntity row = manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL)
+        Integer v = version != null ? version : lockedVersions.stream()
+                .map(ActivityManageEntity::getVersion)
+                .max(Integer::compareTo)
+                .orElse(null);
+        ActivityManageEntity row = lockedVersions.stream()
+                .filter(candidate -> candidate.getVersion().equals(v))
+                .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("活动版本不存在: " + activityId + " v" + v));
 
         ActivityStatus target = resolveTargetStatus(targetStatus);
@@ -354,7 +368,8 @@ public class ActivityMarketingService {
      *
      * <p>大促前批量下线几十个活动是真实场景，而「全成功或全失败」在这里是错的语义：
      * 运营要的是「尽量都下线，然后告诉我哪几个没成功、为什么」。
-     * 所以本方法不加 {@code @Transactional}，由 {@link #changeStatus} 各自的事务边界兜底，
+     * 所以本方法不加 {@code @Transactional}，而是通过 {@link TransactionTemplate} 为每一条显式
+     * 开启独立事务；不能依赖同类内调用 {@link #changeStatus} 上的注解，因为 Spring 代理不会拦截自调用。
      * 失败逐条记进回执。
      *
      * <p>评审点名四家设计稿共同缺失的正是这个回执——只给「批量操作条」而不给部分失败反馈，
@@ -391,7 +406,8 @@ public class ActivityMarketingService {
         }
         for (BulkStatusItem item : distinct) {
             try {
-                changeStatus(item.activityId(), item.version(), targetStatus);
+                transactionTemplate.executeWithoutResult(ignored ->
+                        changeStatus(item.activityId(), item.version(), targetStatus));
                 succeeded.add(item.activityId());
             } catch (RuntimeException e) {
                 failed.add(new BulkFailure(item.activityId(), e.getMessage()));
@@ -413,19 +429,31 @@ public class ActivityMarketingService {
     /**
      * 解析并校验<b>目标</b>状态。
      *
-     * <p>{@link ActivityStatus#PENDING_EFFECT}(3) 在写入口直接拒：它是 {@code fromCode} 认可的合法码，
-     * 但全 main 源码<b>零生产者零消费者</b>——活动被置成 3 之后代际照常推进（传播是有的），
-     * 可它永远进不了任何读路径。也就是说运营看到状态变了、决策侧什么都不会发生，
-     * 而这个落差没有任何一条日志或指标会说出来。与其为一个没人实现的状态立法，不如在入口封口。
+     * <p>{@link ActivityStatus#PENDING_EFFECT}(3) 表示“已审批、等待 activityStartTime 自动发布”。
+     * 具体时间窗校验由 {@link #validateScheduleWindow} 完成。
      */
     private static ActivityStatus resolveTargetStatus(Integer targetStatus) {
         ActivityStatus target = ActivityStatus.fromCode(targetStatus);
         if (target == null) throw new IllegalArgumentException("目标状态非法: " + targetStatus);
-        if (!LIVE_STATUSES.contains(target)) {
-            throw new IllegalArgumentException("目标状态非法: " + targetStatus
-                    + "（待生效(3) 尚未实现：置成该状态的活动进不了任何读路径，代际却照常推进）");
+        if (!WRITABLE_STATUSES.contains(target)) {
+            throw new IllegalArgumentException("目标状态非法: " + targetStatus);
         }
         return target;
+    }
+
+    /** 预约上线只接受未来窗口；已经到点的活动应直接上线，避免等待下一轮调度。 */
+    private void validateScheduleWindow(ActivityManageEntity row) {
+        Instant start = row.getActivityStartTime();
+        Instant end = row.getActivityEndTime();
+        Instant now = Instant.now();
+        if (start == null || end == null || !start.isBefore(end)) {
+            throw new IllegalArgumentException("定时上线需要合法的开始/结束时间: "
+                    + row.getActivityId() + " v" + row.getVersion());
+        }
+        if (!start.isAfter(now)) {
+            throw new IllegalArgumentException("活动开始时间已到，不能预约上线；请直接上线: "
+                    + row.getActivityId() + " v" + row.getVersion());
+        }
     }
 
     /** 解析<b>当前</b>状态（迁移表的 from 侧）。 */
@@ -548,11 +576,11 @@ public class ActivityMarketingService {
         Page<ActivitySpuBindingEntity> pageResult = bindingRepo.pageStoreBindings(activityId, v, storeId, pageable);
         List<Long> spuIds = pageResult.getContent().stream()
                 .map(ActivitySpuBindingEntity::getSpuId).collect(Collectors.toList());
-        Map<Long, DemoProductEntity> byId = spuIds.isEmpty() ? Map.of()
-                : demoProductRepo.findAllById(spuIds).stream()
-                    .collect(Collectors.toMap(DemoProductEntity::getSpuId, p -> p, (a, b) -> a));
+        Map<Long, CatalogProductEntity> byId = spuIds.isEmpty() ? Map.of()
+                : catalogProductRepo.findAllById(spuIds).stream()
+                    .collect(Collectors.toMap(CatalogProductEntity::getSpuId, p -> p, (a, b) -> a));
         List<SpuBindingRow> items = pageResult.getContent().stream().map(b -> {
-            DemoProductEntity p = byId.get(b.getSpuId());
+            CatalogProductEntity p = byId.get(b.getSpuId());
             return new SpuBindingRow(b.getSpuId(), p != null ? p.getSpuName() : null,
                     p != null ? p.getPrice() : null, b.getBindSource(), b.getEffective(), b.getPoolId());
         }).collect(Collectors.toList());
@@ -569,7 +597,7 @@ public class ActivityMarketingService {
     /** 店铺聚合行。{@code storeId} 可空（null = 未指定门店桶）。 */
     public record StoreBindingView(Integer storeId, long spuCount, long effectiveCount) {}
 
-    /** 下钻明细一行。{@code spuName}/{@code price} 可空（demo_product 里查不到该 spu 时回退）。 */
+    /** 下钻明细一行。{@code spuName}/{@code price} 可空（catalog_product 里查不到该 spu 时回退）。 */
     public record SpuBindingRow(Long spuId, String spuName, BigDecimal price,
                                 Integer bindSource, Integer effective, Long poolId) {}
 
@@ -817,7 +845,7 @@ public class ActivityMarketingService {
         if (type != ActivityType.RED_PACKAGE && type != ActivityType.BUY_AND_GET
                 && type != ActivityType.ADD_ON_PURCHASE) {
             throw new IllegalArgumentException(
-                    "demo 仅支持红包(1) / 买赠(5) / 加价购(6)，收到: " + req.activityType());
+                    "当前版本仅支持红包(1) / 买赠(5) / 加价购(6)，收到: " + req.activityType());
         }
         if (req.activityStartTime() == null || req.activityEndTime() == null) {
             throw new IllegalArgumentException("活动开始/结束时间必填");

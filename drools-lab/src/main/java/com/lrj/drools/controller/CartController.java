@@ -20,7 +20,7 @@ public class CartController {
         this.cartService = cartService;
     }
 
-    /** Step 3 演示: accumulate (按品类聚合) + modify (动态升金卡)。 */
+    /** Step 3 展示: accumulate (按品类聚合) + modify (动态升金卡)。 */
     @PostMapping("/cart/checkout")
     public Cart checkout(@RequestBody CheckoutRequest req) {
         Cart cart = new Cart(

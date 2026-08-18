@@ -35,7 +35,7 @@ public class RuleSchemaRegistry {
 
     private static final Map<String, SchemaField> DEFAULT_SCHEMA = buildDefaultSchema();
 
-    /** 按 (tenant, bizLine) 的字段 schema 覆盖表。为空时所有租户共享 {@link #DEFAULT_SCHEMA}（demo 默认）。 */
+    /** 按 (tenant, bizLine) 的字段 schema 覆盖表。为空时所有租户共享 {@link #DEFAULT_SCHEMA}。 */
     private final Map<String, Map<String, SchemaField>> overrides = new ConcurrentHashMap<>();
 
     /**

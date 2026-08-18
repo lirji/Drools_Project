@@ -3,7 +3,7 @@ package com.lrj.drools.activity.domain;
 /**
  * 活动类型。取值对齐来源项目 {@code ActivityTypeEnums}（mall-common）。
  *
- * 本 demo（收敛移植）首期只打通 {@link #RED_PACKAGE} 与 {@link #BUY_AND_GET} 两种；
+ * 当前版本首期打通 {@link #RED_PACKAGE}、{@link #BUY_AND_GET} 与 {@link #ADD_ON_PURCHASE}；
  * COUPONS / CPS / RIGHT_COUPON 保留枚举位但不实现链路。
  */
 public enum ActivityType {

@@ -65,14 +65,6 @@ try {
   await page.waitForSelector('[data-testid="validate-result"]', { timeout: 15000 })
   ok('平板 768：优惠验证可执行并展示决策结果')
 
-  // 规则能力详情：二级菜单与工作区在 768 下纵向布局，仍可直接执行。
-  await page.goto(`${BASE}/ui/demos/discount-calculate`)
-  await page.waitForSelector('[data-testid="demo-panel-discount-calculate"]', { timeout: 10000 })
-  const demoOverflow = await page.evaluate(() => document.body.scrollWidth - window.innerWidth)
-  demoOverflow <= 4 ? ok(`平板规则能力详情无横向溢出（body 溢出 ${demoOverflow}px）`) : no(`平板规则能力详情横向溢出 ${demoOverflow}px`)
-  await page.locator('[data-testid="demo-run"]').click()
-  await page.waitForSelector('[data-testid="demo-status"]', { timeout: 15000 })
-  ok('平板 768：规则能力可执行并展示响应')
 } catch (e) {
   no(`平板 smoke 异常: ${e.message}`)
   await page.screenshot({ path: `${process.env.SHOTDIR || '.'}/e2e-tablet-fail.png` }).catch(() => {})

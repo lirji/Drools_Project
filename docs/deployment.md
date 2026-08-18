@@ -5,15 +5,15 @@
 > 漏掉 `npm run build` 时 Docker 发现 dist 未变会复用镜像层——构建 exit 0、镜像时间戳不动、页面还是旧的。
 > 只重建 `console` 更是完全无效：前端不在 console 的 JAR 里。
 
-> 本仓库 M2.1 起是 Maven 四模块、两个独立 Spring Boot 应用。本文收敛「更像生产」的本地整套编排（`deploy/`）：两 app + nginx 网关 + MySQL 单库双账号 + Prometheus/Grafana。设计缘由见 `docs/plans/prod-arch-refactor-0719-1330/`。
+> 本仓库 M2.1 起是 Maven 四模块、两个独立 Spring Boot 应用。本文收敛「更像生产」的本地整套编排（`deploy/`）：两 app + nginx 网关 + MySQL + XXL-JOB + Prometheus/Grafana。设计缘由见 `docs/plans/prod-arch-refactor-0719-1330/`。
 
 ## 模块与应用
 
 | 模块 | 类型 | 端口 | 职责 | 依赖 |
 | ---- | ---- | ---- | ---- | ---- |
 | `activity-common` | 库 | — | 活动引擎共享内核（domain/engine/persistence/tenant + `ActivityQueryService`）；drools 只引 KieHelper 核心 | — |
-| `drools-lab` | 库 | — | Step 1–18 教学 + 重 drools 依赖（kie-ci/kie-dmn/decisiontables/xml-support） | — |
-| `activity-console` | 应用 | 8081 | 写平面 + Step 1–18 + 前端 `/ui/` + **唯一 DDL 执行者** | common + drools-lab |
+| `drools-lab` | 库 | — | Step 1–24 教学 + 重 drools 依赖（kie-ci/kie-dmn/decisiontables/xml-support） | — |
+| `activity-console` | 应用 | 8081 | 写平面 + Step 1–24 + 前端 `/ui/` + **唯一 DDL 执行者** | common + drools-lab |
 | `activity-decision` | 应用 | 8082 | 只读决策热路径 `/decision/v1/*` + 发布代际轮询预热 | 仅 common（更轻，甩掉 kie-ci/dmn） |
 
 两 app 主类 `ConsoleApplication` / `DecisionApplication` 都在根包 `com.lrj.drools`；decision 的 classpath 上无写平面 bean、无 `DroolsConfig`，**结构上就写不了**。可执行 jar：decision ~67MB vs console ~104MB（依赖甩除实证）。
@@ -21,13 +21,13 @@
 ## 本地单机起（不走容器）
 
 ```bash
-# console（写面 + Step1-18 + 台）；-Pfrontend 顺带把 Vue SPA 构建拷进 static/ui/
+# console（写面 + Step1-24 + 台）；-Pfrontend 顺带把 Vue SPA 构建拷进 static/ui/
 ./mvnw -pl activity-console -Pfrontend spring-boot:run -Dspring-boot.run.profiles=h2   # http://localhost:8081/ui/
 # decision（只读 /decision/v1）
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2             # http://localhost:8082/decision/v1/spu-discount
 ```
 
-h2 profile 用 file 库（console `./data/drools-demo`、decision `./data/decision`）；同一 file 库不能两 app 同开，需要时覆盖内存库（见 `docs/qa/QA_PROFILE.md`）。
+h2 profile 用 file 库（console `./data/activity-platform`、decision `./data/decision`）；同一 file 库不能两 app 同开，需要时覆盖内存库（见 `docs/qa/QA_PROFILE.md`）。
 
 > **decision 对着空库起不来是预期行为**（2026-08 起）：`activity-decision/src/main/resources/application.yml` 的 `ddl-auto` 已由 `update` 收敛为 `validate`（只读平面不碰 DDL，见「单库双账号」一节）。空 `./data/decision` 直接起会失败并报 `Schema-validation: missing table [activity_artifact]`。只想单机验证结构时，用 dev-only 环境变量覆盖，**不要改仓库里的值**（`DecisionDdlGuardTest` 会红）：
 >
@@ -50,14 +50,52 @@ h2 profile 用 file 库（console `./data/drools-demo`、decision `./data/decisi
 
 | 服务 | 镜像 | 宿主端口 | 说明 |
 | ---- | ---- | ---- | ---- |
-| `mysql` | mysql:8.0 | 3307→3306 | 单库 `drools_demo`；`mysql-init/` 首启建 decision 只读账号 |
-| `console` | activity-console（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；healthcheck `/actuator/health` |
+| `mysql` | mysql:8.0 | 127.0.0.1:3307→3306 | 业务库 `activity_platform` + 独立调度库 `xxl_job`；数据保存在 `mysql-data` 命名卷 |
+| `xxl-job-admin` | xuxueli/xxl-job-admin:3.4.2 | **127.0.0.1:18088**→8080 | 调度控制台、执行日志、失败重试和人工触发；不保存活动业务状态；可用 `DROOLS_XXL_ADMIN_PORT` 覆盖 |
+| `console` | activity-console（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；另在 Docker 内网开放 XXL 执行器端口 9999 |
 | `decision` | activity-decision（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
 | `gateway` | **`activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095）。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
 | `prometheus` | prom/prometheus | 9090 | 抓 console + decision 的 `/actuator/prometheus` |
 | `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
 
 **镜像构建**：单个 `deploy/Dockerfile`，一个 build 阶段构建整个 reactor，运行阶段 `ARG MODULE` 选装某 app 的 jar；compose 用不同 `--build-arg MODULE` 出两镜像（build 阶段共享层缓存）。`.dockerignore` 排除 `node_modules`/`target`/`deploy`/`docs` 等，保持上下文精简、避免无谓 rebuild。
+
+### XXL-JOB 活动生命周期任务
+
+Docker 默认设置 `activity.marketing.lifecycle-schedule.mode=xxl`，由 XXL-JOB 每 5 秒触发一次
+`activityLifecycleSweep`。本机直接运行默认是 `local`（Spring `@Scheduled`），`off` 完全关闭；模式互斥，
+不能同时开两个触发器。XXL 只负责触发、日志、重试和告警，活动状态的事实来源仍是
+`activity_platform.activity_manage`，多租户扫描、逐活动事务、悲观锁与发布代际推进都留在 console。
+
+首次创建 MySQL 容器时，`deploy/mysql-init/02-xxl-job.sql` 会建立独立 `xxl_job` 库、账号、执行器组和
+唯一的“活动生命周期定时上下线”任务，不导入官方 Sample/Demo 数据。已有 MySQL 容器不会重新执行
+`docker-entrypoint-initdb.d`，升级时需幂等执行一次：
+
+```bash
+docker compose -f deploy/docker-compose.yml exec -T mysql \
+  mysql --default-character-set=utf8mb4 -uroot -prootpass \
+  < deploy/mysql-init/02-xxl-job.sql
+```
+
+正常使用 `./deploy.sh` 时，这一步已自动幂等执行，并会核对 3.4.2 的 8 张表 / 70 列；旧版或残缺的
+`xxl_job` Schema 会 fail-fast，不能把 `CREATE TABLE IF NOT EXISTS` 当成版本升级。历史版本若使用匿名 MySQL
+卷，部署脚本也会拒绝自动重建，必须先备份并迁移到 `mysql-data` 命名卷，避免整库丢失。
+
+控制台地址为 `http://localhost:18088/`，本地初始账号是 `admin / xxl-admin-2026`。管理端口和
+MySQL 端口默认只绑定宿主机回环地址；该密码与 Compose 默认 AccessToken 仍只用于本地编排，正式环境必须
+替换 `DROOLS_XXL_ACCESS_TOKEN`、管理账号密码和数据库凭据。执行器 9999 端口只在服务内网开放，地址由每个
+容器自动注册，横向扩容时不会把多个实例折叠成同一地址。任务使用 `FAILOVER + DISCARD_LATER`，不使用广播：
+一次 Handler 已经扫描全部租户，而补偿扫描天然幂等；上一轮未完成时丢弃后续触发可避免队列持续积压。
+批量结果只要有一项失败，Handler 就抛错让 XXL 正确记录失败并执行重试。
+
+| 环境变量 | Docker 默认值 | 用途 |
+| --- | --- | --- |
+| `DROOLS_LIFECYCLE_SCHEDULE_MODE` | `xxl` | `local` / `xxl` / `off` 三选一 |
+| `DROOLS_LIFECYCLE_SCHEDULE_BATCH_SIZE` | `200` | 单租户单轮最多处理的活动数 |
+| `DROOLS_XXL_ACCESS_TOKEN` | `local-xxl-token-change-me` | Admin 与执行器双向校验 Token，正式环境必须覆盖 |
+
+decision 的 `GenerationPollScheduler` 仍保留进程内 Spring 调度：它预热的是每个 decision 实例自己的本地
+快照，改成只路由到一个执行器会漏掉其它实例；除非未来明确使用分片广播，否则不要迁移这项任务。
 
 > ⚠️ **改了代码要重建对的镜像，重建错的那个是彻底的无事发生**（与 `docs/qa/QA_PROFILE.md` 同源，两边要一致）：
 >
@@ -80,7 +118,7 @@ Compose 对 console 与 decision 同时启用 JWT resource server；控制台路
 
 生产环境应把浏览器可见的 issuer/authorize/token/redirect 全部覆盖为同一套 HTTPS 公网域名；JWK URI 可以使用容器内部可达地址，但 issuer 校验值必须与 token 中的 `iss` 完全一致。
 
-> **`console-write-authority` 现在也管到决策平面**（2026-08）：配了 `activity.tenant.auth.console-write-authority` 时，要求该权限的 POST 白名单是 `create` / `*/status` / `bulk-status` / `*/claim` / `*/release` **加上 `/decision/v1/snapshot/rollback`**——快照回滚不写数据库，但它是运营级动作（切指针即改变这条业务线每次决策发出去的钱），所以用同一个权限守（`ActivityResourceServerConfig`）。**demo 默认这个值为空 = 整张白名单不生效**，届时任何验签通过的 token（包括只做决策的 M2M token）都能按下回滚；生产必须配上。新增写端点时**必须同步补这张表**——它是按路径模式逐条列的，漏一条就是敞口。
+> **`console-write-authority` 现在也管到决策平面**（2026-08）：配了 `activity.tenant.auth.console-write-authority` 时，要求该权限的 POST 白名单是 `create` / `*/status` / `bulk-status` / `*/claim` / `*/release` **加上 `/decision/v1/snapshot/rollback`**——快照回滚不写数据库，但它是运营级动作（切指针即改变这条业务线每次决策发出去的钱），所以用同一个权限守（`ActivityResourceServerConfig`）。配置文件中的空值仅供本地开发；正式环境必须配置，否则任何验签通过的 token（包括只做决策的 M2M token）都能执行回滚。新增写端点时**必须同步补这张表**——它是按路径模式逐条列的，漏一条就是敞口。
 
 最小验收：
 
@@ -107,7 +145,7 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 | ---- | ---- | ---- |
 | `/api/decision/*` | `decision:8080/decision/v1/*` | 决策热路径。rewrite 是 `(.*)` 通配且保留 query string，故决策平面新增端点（`addon/options`、`addon/quote?activityId=&item=`、`GET metrics`、`GET by-activity`、`GET snapshot?activityId=`、`POST snapshot/rollback?bizLine=`）**无需改网关**即可用。⚠ 最后那条是**这个前缀后面唯一的写动作**（切内存快照指针，立刻改变这条业务线每次决策实际发出的钱），auth 档下与 `create`/`status`/`claim`/`release` 共用 `console-write-authority`，见「Casdoor 认证档」一节。2026-08 起它从「为将来预留的路由」变成**页面硬依赖**：控制台优惠验证页默认打决策平面，前端 `apiClient` 的 `decision` service base 就写死成 `/api/decision`（`frontend/src/shared/apiClient.ts`）。**nginx 里没有 `location /decision/`**，所以谁把 base 改成后端真实路径 `/decision/v1` 都会落到兜底 `location /` 打到 console——而 console 的 classpath 上根本没有 `DecisionPlaneController`（它在 activity-decision 模块），结果是干净的 404，不是报错 |
 | `/api/console/*` | `console:8080/activity-marketing/*` | 控制台写面/查询。**至今没有调用方**——前端一直直连 `/activity-marketing/*`（`apiClient` 的 `marketing` base），走的是下面那条兜底路由。这条留着是给「console 也搬到网关前缀后面」用的，改它不会影响现有页面，也别以为改它就能改到前端实际走的那条 |
-| `/`（其余） | `console:8080` | SPA `/ui/`、Step 1–18、静态落地页 |
+| `/`（其余） | `console:8080` | SPA `/ui/`、Step 1–24、静态落地页 |
 
 网关**不在网关终结鉴权**（各服务自证 JWKS），只做 header 透传。三条路由都显式 `proxy_set_header` 了 `Authorization` 与 `X-Tenant-Id`，`/api/console/` 与兜底 `/` 另外显式带上 `X-Actor`：
 
@@ -132,19 +170,19 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 ## 单库双账号（`deploy/mysql-init/01-decision-readonly-user.sql`）
 
 - **console** 用 `root`：读写 + **独占 DDL**（`ddl-auto=update` 建表）。
-- **decision** 用 `decision_ro`：`GRANT SELECT ON drools_demo.*`，应用层再叠 `ddl-auto=validate` 双保险。
+- **decision** 用 `decision_ro`：`GRANT SELECT ON activity_platform.*`，应用层再叠 `ddl-auto=validate` 双保险。
 - 物理只读实证：`decision_ro` `SELECT` 成功，`CREATE TABLE` / `INSERT` 均被 MySQL 拒（`ERROR 1142 command denied`）——比只靠应用层 `validate` 更硬。
 - 时序：`mysql-init` 首启建只读账号 → console 建表（healthy）→ decision 才 `validate` 通过（故 decision `depends_on: console service_healthy`，`service_started` 不够会撞 `missing table`）。
 - **应用侧 2026-08 才补齐**：decision 的 `application.yml` 此前遗留 `ddl-auto: update`（注释写着要改 validate、值没改），只靠 compose 的 `SPRING_JPA_HIBERNATE_DDL_AUTO=validate` 盖住——这条边界当时**只由部署编排保证、应用自身不保证**，按文档化的本地 `./mvnw -pl activity-decision spring-boot:run` 起就带着 DDL 权限跑。现已改 `validate`，并由 `DecisionDdlGuardTest` 钉死（直接读源文件而非 Spring 环境：环境值会被 profile / 环境变量覆盖，那测的是「本机这次怎么跑」，要钉的是「仓库里写的是什么」）。
 - **只读边界 2026-08 再加一层：类型级（编译期）**。决策取数层 `DecisionDataLoader` 与快照构建器 `DecisionSnapshotBuilder` 现在注入的是六个 `*ReadRepository`（Manage / Rule / Condition / Gift / SpuBinding / Strategy），它们继承 `Repository<T, ID>` 而**不是** `JpaRepository`——`save` / `delete` / `flush` **在类型上根本不存在**。此前「decision 写不了库」全部押在本节这两道**运行期**保证上（只读账号 + `ddl-auto=validate`），也就是说读路径上手滑一次 `save(...)` 能编译通过、能跑绿**全部单测**（测试库是可写的 H2），只在生产的只读连接上炸。同批还把 `ActivityPoolMatchService`（含三处 `bindingRepo.save`）从 `activity-common` 上浮到 `activity-console`：它是不折不扣的写路径，留在共享库里意味着这个 `@Service` 也会在只读的 decision 进程里被实例化。`@TenantId` 判别式过滤由 Hibernate 在 SQL 层加，与仓库接口继承谁无关（`DecisionTenantHeaderTest` 守这条）。
 - **生产 MySQL 的排序规则会悄悄放宽快照桶归属——判据不能下推给 SQL**：MySQL 8 默认 `utf8mb4_0900_ai_ci` 是**大小写 + 重音不敏感**的（5.7 的 `general_ci` 还额外忽略尾随空格），所以 `where biz_line = 'retail'` 会把 `Retail` / `RETAIL` 的在线活动一并收进 `retail` 桶——**这改变的是「谁在快照里 = 谁能被发钱」**，且不报错、不回退。2026-08 把 bizLine 过滤下推到 SQL（消 N+1）时因此**保留了 Java 侧 `equals` 精确比对**，看着冗余，删不得：SQL 下推只负责省传输量，判据仍在 Java。全部快照测试跑在 H2 上（字符串比较默认大小写敏感），这个差异在既有测试里**永远照不出来**，故由 `SnapshotBizLineCollationTest` 用 `IGNORECASE=TRUE` 的 H2 JDBC URL 复现生产排序规则钉住——那条 URL 本身是断言的一部分，改它等于关掉这道门禁。
-- **加列同样受这条启动顺序约束**：本轮新增列 `activity_rule.red_package_max_discount`（折扣型封顶减免）由 console 的 `ddl-auto=update` 建；老库升级时 decision 在该列建好前 `validate` 会失败。现有的 `depends_on: console service_healthy` 已覆盖这种「老库加新列」的冷启，无需改只读授权（`GRANT SELECT ON drools_demo.*` 是库级通配，新表新列自动可读）。
+- **加列同样受这条启动顺序约束**：本轮新增列 `activity_rule.red_package_max_discount`（折扣型封顶减免）由 console 的 `ddl-auto=update` 建；老库升级时 decision 在该列建好前 `validate` 会失败。现有的 `depends_on: console service_healthy` 已覆盖这种「老库加新列」的冷启，无需改只读授权（`GRANT SELECT ON activity_platform.*` 是库级通配，新表新列自动可读）。
 - **加表也一样，而且更容易被漏判**：本轮新增的是**整张表** `activity_grant`（claim 幂等的发放流水，`ActivityGrantEntity`）。它虽然只被 console 的写平面用到，但 `@Entity` 定义在 `activity-common`，而 decision 的 `@EntityScan("com.lrj.drools")`（`DecisionApplication.java:21`）会把它一起扫进来 —— 于是 decision 的 `validate` **同样要求这张表已存在**。老库不经 console 直接拉起 decision 会报 `Schema-validation: missing table [activity_grant]`，这不是只读授权不够（`GRANT SELECT` 是库级通配），是建表还没发生；靠的仍是 `depends_on: console service_healthy` 这条时序。别因为「decision 又不发券」就以为它不关心这张表。
 
 ## 观测（Prometheus + Grafana）
 
 - 两 app 各自暴露 `/actuator/prometheus`（micrometer）；Prometheus 抓两个 target（job `activity-console` / `activity-decision`）。
-- Grafana 面板 **Activity Services · console / decision**：HTTP 速率/时延、JVM heap、NonHeap(Metaspace = KieBase 缓存足迹)、CPU、线程——按 `application` tag 区分 `drools-demo`(console) / `drools-decision`(decision)。数据源 + 面板由 `deploy/grafana/provisioning` 自动装配。
+- Grafana 面板 **Activity Services · console / decision**：HTTP 速率/时延、JVM heap、NonHeap(Metaspace = KieBase 缓存足迹)、CPU、线程——按 `application` tag 区分 `activity-console` / `activity-decision`。数据源 + 面板由 `deploy/grafana/provisioning` 自动装配。
 - **决策链路自有指标**（2026-08 新增，`activity-common` 的 `DecisionMetrics`）：埋点在共享的 `ActivityQueryService` 上，故 console（legacy 读端点 / 试算）与 decision（热路径）**会出现同名序列**（谁被调用谁有量），靠 `job` / `application` tag 区分。`source` / `duration` / `candidates` / `hit` / `amount` / `reject` 这几条的 `scene` 取值现在只出自 `DecisionScene` 枚举（通道 `spu-discount` / `gifts` / `addon`，外加**阶段**常量 `benefit`），`reason` 只出自 `RejectReason` 枚举——都是编译期封闭集合，标签基数不可能被调用方撑爆。⚠ **`activity_decision_fallback_total` 与 `activity_rule_fire_ceiling_total` 不在这次收敛里**：`DecisionMetrics` 仍保留 `fallback(String, String)`（其 javadoc 自标 TODO(R4·契约变更，独立提交)）与 `fireCeiling(String)` 两个裸 String 重载，生产上由 `ActivityRuleRuntimeService:230/254` 传 `RuleScene.name()`——`safeRun` 是买赠 DRL 的唯一执行路径，所以这两条序列上还会出现 `ELIGIBILITY` / `LADDER` / `GIFT` 这套与 `DecisionScene` 对不上的词汇，拿 `scene` 把它们跟上面几条 join 会落空。这次收敛顺带**改掉了 `activity_decision_source_total` 的 scene 取值**（见该行，是一次有意的契约变更）：
 
 | Prometheus 序列 | 标签 | 用途 |
@@ -175,9 +213,16 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 | ---- | :--: | :--: | ---- |
 | 两服务都在 | 200 | 200 | 正常 |
 | `stop console` | **200** | 504 | 决策独立存活（发布传播靠代际轮询，非进程内直调） |
-| `stop decision` | 502 | **200** | console + Step 1–18 独立存活 |
+| `stop decision` | 502 | **200** | console + Step 1–24 独立存活 |
 
 ## 发布代际轮询预热（M1.4，跨进程 warm）
+
+console 还运行活动生命周期编排：`activity.marketing.lifecycle-schedule.mode=local` 时由 Spring 按
+`interval-ms`（默认 5000ms）触发，`mode=xxl` 时由 `activityLifecycleSweep` Handler 触发；二者都跨租户扫描
+PENDING_EFFECT 到期上线和 ONLINE 过期下线，`batch-size` 控制单租户单轮上限。它只运行在有写权限的
+console，decision 仍保持只读。
+每次真实状态变化都会在同事务内推进发布代际，所以 decision 在下一轮代际轮询后切到新快照。
+多实例 console 可同时开启：同一活动的所有版本在转换事务中使用悲观写锁，重复执行幂等。
 
 console **任何活动状态变化**（上线 / 下线 / 回待上线）都在同一个事务里 bump `(tenant,bizLine)` 发布代际（`activity_generation` 表，**非 `@TenantId`**——跨租户信号，供无上下文的后台 poller `findAll` 扫）；decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact。物理拆分后进程内直调已移除，发布预热唯一路径即此轮询。
 
@@ -209,7 +254,7 @@ curl -i -X POST 'http://localhost:8095/api/decision/snapshot/rollback?bizLine=re
 - **下一次代际推进会把它盖掉**。回滚是止血，真正的修复仍是在 console 侧下线/改配置再发布一代。
 - **没有上一代时返回 409**（响应里 `rolledBack:false` + `hint`），而不是假装成功。常见于「刚重启、只发布过一代」，以及「上一次推进是兜底重建（`refresh`，按设计不占回滚槽位）」。
 
-## 生产化尾项（本 demo 未做）
+## 上线前待接入项
 
 - decision 独立只读账号已示范；生产按最小权限收紧 + 独立 CI/独立扩缩容。
 - 网关/限流/灰度/审核队列等运营面 UI 未做（后端端点未就绪，诚实空态）。决策指标是例外：`GET /api/decision/metrics` · `/by-activity` **后端已就绪**，缺的是工作台那块面板本身——`frontend/src/console/pages/ListView.vue` 的说明卡已如实写成「端点已经存在、缺的是这块面板」，不再把它们记成「待建接口」。接之前要先想清楚：优惠验证页的流量也会打进这两个端点，直接渲染成「这个活动花了多少预算」等于拿自己造的验证流量记账。

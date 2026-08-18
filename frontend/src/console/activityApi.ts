@@ -91,7 +91,7 @@ export function changeStatus(id: string, version: number, targetStatus: number):
 }
 
 /**
- * 批量上下线。**部分失败一律 200**——它是正常结果不是错误，回执由调用方渲染。
+ * 批量状态变更。**部分失败一律 200**——它是正常结果不是错误，回执由调用方渲染。
  * items 必须带显式 version（见 {@link BulkStatusItem}）。
  */
 export function bulkChangeStatus(items: BulkStatusItem[], targetStatus: number): Promise<ApiResult<BulkStatusResult>> {

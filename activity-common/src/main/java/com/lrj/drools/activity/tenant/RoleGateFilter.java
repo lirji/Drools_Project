@@ -14,7 +14,7 @@ import java.io.IOException;
 
 /**
  * M2 角色门控：让**同一个 artifact** 按 {@code activity.role} 扮演「决策服务」或「控制台服务」，无需先做 Maven 物理拆分
- * 即可演示微服务化的核心价值——读写平面独立部署、独立生命周期（决策 D1 的低风险落地路径）。
+ * 即可展示微服务化的核心价值——读写平面独立部署、独立生命周期（决策 D1 的低风险落地路径）。
  *
  * <ul>
  *   <li>{@code all}（默认）：不装此 filter（{@link ConditionalOnProperty}），全端点开放——本地开发与 104 测试行为不变；</li>
@@ -24,7 +24,7 @@ import java.io.IOException;
  * </ul>
  *
  * <p>compose 里 nginx 网关把 {@code /api/decision/*}→decision 实例、{@code /api/console/*}+{@code /ui/*}→console 实例，
- * 于是「kill 掉 console 实例，决策 API 仍正确服务」可当场演示（拆分价值验收）。这不是安全边界（同 artifact），
+ * 于是「kill 掉 console 实例，决策 API 仍正确服务」可当场展示（拆分价值验收）。这不是安全边界（同 artifact），
  * 是**部署角色边界**；真安全隔离仍靠 Casdoor 验签 + {@code @TenantId}。
  *
  * <p>只在 {@code activity.role} 被显式设置时注册（{@link ConditionalOnProperty}）——默认不设=无此 filter，

@@ -2,7 +2,7 @@
 /**
  * 应用外壳（重设计）：组合 AppLayout + SidebarNav + TopBar + <router-view> + ToastHost。
  * - 持有抽屉开合状态；汉堡开、scrim/Esc/路由跳转关；<768 抽屉打开时锁 body 滚动。
- * - 承接 ConsoleShell 的「401 途中失效 → 兜底跳 login」watch（上提后同时覆盖 demos 区，属登出重定向的行为扩面）。
+ * - 承接 ConsoleShell 的「401 途中失效 → 兜底跳 login」watch。
  * 登录/回调页不套本壳（由 App.vue 分流）。
  */
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'

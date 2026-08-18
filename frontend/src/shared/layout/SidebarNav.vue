@@ -1,15 +1,11 @@
 <script setup lang="ts">
 /**
- * 全局主导航（UX 重设计）：收编原 App.vue 顶部 nav（活动控制台/规则能力中心）+ ConsoleShell 三 tab（列表/新建/验证）为单一持久左侧栏。
- * 「一眼可懂」增强：每项加图标 + 一句说明；active 态＝soft 填充 + 左 3px accent 条。
- * testid 逐字保留：nav-console / nav-demos / tab-list / tab-new / tab-validate。规则能力目录（DemoNav）
- * 进入 demos 区时在本侧栏内展示完整目录，右侧内容区只展示能力首页或在线调用面板。
- * nav-home 入口在 Phase C 随 /home 路由注册后加入（避免指向未注册路由）。
+ * 全局主导航：概览 + 活动控制台的持久左侧栏。
+ * 每项包含图标与简短说明，active 态使用 soft 填充和左侧强调条。
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from '@/shared/ui/Icon.vue'
-import DemoNav from '@/demos/DemoNav.vue'
 
 const route = useRoute()
 const emit = defineEmits<{ (e: 'navigate'): void }>()
@@ -24,7 +20,6 @@ const consoleTab = computed(() => {
   return ''
 })
 const inConsole = computed(() => typeof route.path === 'string' && route.path.startsWith('/console'))
-const inDemos = computed(() => typeof route.path === 'string' && route.path.startsWith('/demos'))
 const inHome = computed(() => route.name === 'home')
 </script>
 
@@ -39,7 +34,7 @@ const inHome = computed(() => route.name === 'home')
         @click="emit('navigate')"
       >
         <span class="ic"><Icon name="home" :size="18" /></span>
-        <span class="txt"><span class="label">概览</span><span class="desc">两大区域 · 最近活动</span></span>
+        <span class="txt"><span class="label">概览</span><span class="desc">活动运营 · 最近活动</span></span>
       </router-link>
     </div>
 
@@ -95,26 +90,6 @@ const inHome = computed(() => route.name === 'home')
       </div>
     </div>
 
-    <div class="section">
-      <router-link
-        class="group-link"
-        :class="{ current: inDemos }"
-        :to="{ name: 'demos' }"
-        data-testid="nav-demos"
-        @click="emit('navigate')"
-      >规则能力中心</router-link>
-      <div v-if="!inDemos" class="items">
-        <router-link
-          class="nav-item item"
-          :to="{ name: 'demos' }"
-          @click="emit('navigate')"
-        >
-          <span class="ic"><Icon name="flask" :size="18" /></span>
-          <span class="txt"><span class="label">能力目录</span><span class="desc">规则场景 · 在线验证</span></span>
-        </router-link>
-      </div>
-      <DemoNav v-else embedded @navigate="emit('navigate')" />
-    </div>
   </nav>
 </template>
 

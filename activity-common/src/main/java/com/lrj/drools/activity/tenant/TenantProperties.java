@@ -11,7 +11,7 @@ import java.util.Map;
  *
  * <p><b>dev-only 默认租户</b>：本地开发/手点前端时请求常常不带 {@code X-Tenant-Id}，
  * 若一律 fail-closed 会很难用。{@link #devDefaultEnabled} 开启后，无租户上下文时回落到
- * {@link #devDefault}，让 demo 单租户开箱即用。
+ * {@link #devDefault}，供本地单租户开发使用。
  *
  * <p><b>默认 fail-closed</b>：{@link #devDefaultEnabled} 默认 {@code false}——
  * 即生产（不显式打开）严格拒绝无租户请求。仅 {@code application.yml}（dev-run）与测试显式置 true。
@@ -61,14 +61,14 @@ public class TenantProperties {
     /**
      * P1-13 每租户限流（{@code activity.tenant.quota.*}）。
      *
-     * <p><b>demo 切片</b>：**进程内** per-tenant token bucket——只在本实例范围限流。默认 {@code enabled=false}（不改 demo 行为）。
+     * <p><b>当前实现</b>：进程内 per-tenant token bucket，只在本实例范围限流。默认 {@code enabled=false}。
      * <p><b>生产</b>：无状态多实例下须换 **Redis token bucket**（如 Bucket4j+Redis / Redisson）或网关层限流，否则 N 实例总配额 = N×单实例。
      * 且必须**计入延迟预算**（每请求多一次 Redis 往返）并**显式定义 Redis 宕机时的开/闭**（fail-open=放行保可用 / fail-closed=拒绝保配额）。
-     * 本 demo 进程内实现天然 fail-open（无外部依赖），生产选型见 Track B 收尾 doc。
+     * 进程内实现天然 fail-open（无外部依赖），多实例正式环境应使用共享限流组件。
      */
     public static class Quota {
 
-        /** 是否启用每租户限流。默认 false（不改 demo）；dev/压测显式开。 */
+        /** 是否启用每租户限流。默认 false；本地或压测环境可显式开启。 */
         private boolean enabled = false;
 
         /** 每租户稳态 QPS（令牌补充速率）。 */
@@ -115,7 +115,7 @@ public class TenantProperties {
         private long jwksOutageTtlMs = 3_600_000;
 
         /**
-         * 控制台写端点（create / status / claim）所需权限（P1-k 决策/控制台分权）。空=仅需 authenticated（默认，不破坏 demo）。
+         * 控制台写端点（create / status / claim）所需权限（P1-k 决策/控制台分权）。空表示仅需 authenticated。
          * 设为某 scope/角色（如 {@code SCOPE_activity.write} 或 {@code activity-admin}）后，纯决策 M2M token（无此权限）
          * 便无法调运营写接口——前提是 M2M 应用按最小权限发 scope。决策读端点（spu-discount/gifts）不受此限。
          */

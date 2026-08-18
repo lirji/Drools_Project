@@ -1,6 +1,6 @@
-// Step 4 规则: not / exists 演示。
+// Step 4 规则: not / exists 展示。
 //
-// 本文件演示三种否定/存在判断:
+// 本文件展示三种否定/存在判断:
 //
 //   1) `not Pattern from collection`     — Java 集合上的"缺这种东西"
 //   2) `exists Pattern from collection`  — Java 集合上的"至少有一个"，跟普通 pattern

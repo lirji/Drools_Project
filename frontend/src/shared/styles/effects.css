@@ -1,9 +1,9 @@
 /* 效果层 —— 全站共享的关键帧与效果 utility（视觉换代 0809，步骤 3）
  *
  * 为什么单独一层：换代前全仓 9 个 @keyframes 里有 3 组是逐字重复的
- *   spin ×5（LoginView / DemoPanel / EditorView / ListView / ValidateView）
- *   shimmer ×2（Skeleton / DemoPanel）
- *   pulse 与 breathe 逐字相同（ValidateView / DemoPanel）
+ *   spin（LoginView / EditorView / ListView / ValidateView）
+ *   shimmer（Skeleton）
+ *   pulse（ValidateView）
  * 各页各写各的，改一个动效要翻五个文件。
  *
  * **Vue scoped CSS 只重写"定义在同一个 scoped 块里"的 @keyframes 名**；
@@ -29,7 +29,7 @@
 /* 脉冲环：只用于「在跑 / 生效中」这类**有信息量**的状态，禁止当装饰铺开。 */
 @keyframes ping { to { box-shadow: 0 0 0 10px transparent; } }
 
-/* 呼吸：ValidateView 的 pulse 与 DemoPanel 的 breathe 逐字相同，收敛成一个。 */
+/* 呼吸：统一供需要强调运行状态的页面复用。 */
 @keyframes breathe { to { transform: scale(1.06); box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 8%, transparent); } }
 
 /* 入场：位移 + 淡入。配合 .u-stagger 做编排。 */

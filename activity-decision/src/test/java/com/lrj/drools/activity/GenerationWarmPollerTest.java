@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.jpa.hibernate.ddl-auto=create-drop",
         // 关掉 @Scheduled 调度，手动调 warmDueGenerations 做确定性断言；GenerationWarmService 仍在容器里。
         "activity.marketing.generation-poll.enabled=false",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 class GenerationWarmPollerTest {
 

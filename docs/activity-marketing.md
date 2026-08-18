@@ -1,6 +1,6 @@
 # 活动营销模块（`com.lrj.drools.activity`）
 
-从 `autolife/mall-shop` 的活动营销部分**收敛移植**进本 demo 的一份可运行副本，用来在本项目前端走一遍"活动创建 → 制定规则 → 上线 → 验证优惠"的完整流程，探索服务端/前端怎么改造。**不是生产代码**，是学习/探索脚手架。
+本模块承载活动规则平台的营销业务能力，覆盖“活动创建 → 制定规则 → 上线 → 优惠决策”的完整流程。初始领域模型参考了 `autolife/mall-shop` 的活动营销设计，当前代码已按本项目的读写平面、租户隔离和规则执行架构持续演进；上线前仍需结合实际业务完成容量、安全与运维验收。
 
 > 规划与实施全过程（Codex 规划 → Claude 跨模型复核 → 分阶段实施 → /frontend-plan）见 `docs/plans/activity-marketing-port-0712-1917/`：`FINAL_PLAN.md` / `FRONTEND_PLAN.md` / `IMPLEMENTATION_PROGRESS.md`。
 >
@@ -30,7 +30,7 @@
 > `ActivityRuleRuntimeService` 零交互」。`DroolsBenefitGoldenSetTest` 的 `@TestPropertySource` 里仍写着那两个 `=false`，
 > **那两行现在没有任何读取方**，留着只是历史注记。
 
-外加**商品池自动圈选**：规则驱动圈选 `demo_product` 并物化进绑定表（`bind_source=AUTO`，按目标态 diff 幂等刷新）。
+外加**商品池自动圈选**：规则驱动圈选 `catalog_product` 并物化进绑定表（`bind_source=AUTO`，按目标态 diff 幂等刷新）。
 
 **纯 Drools，不引 QLExpress**：来源用 QLExpress 跑资格表达式，这里先翻译成 Drools LHS 约束；P1-3 之后默认连表达式引擎那步也省了——`activity_condition.condition_tree_json` 里本来就存着结构化 AST，直接解释树比「树 → 串 → 再解析串」少一层翻译、零新依赖、零转义面。
 
@@ -74,10 +74,10 @@
 
 ## 跑起来
 
-> **M2.1 起是 Maven 四模块**（`activity-common` 共享库：domain/engine/persistence/tenant + 只读查询服务 / `drools-lab` Step1–18 教学 / `activity-console` 写平面 app:8081 / `activity-decision` 只读决策 app:8082）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main），起服务要 `-pl` 指定 app 模块。拆分详情见下节「决策平面拆分」。
+> **M2.1 起是 Maven 四模块**（`activity-common` 共享库：domain/engine/persistence/tenant + 只读查询服务 / `drools-lab` Step1–24 教学 / `activity-console` 写平面 app:8081 / `activity-decision` 只读决策 app:8082）。根 `./mvnw spring-boot:run` **不再可用**（父是聚合 pom，无 main），起服务要 `-pl` 指定 app 模块。拆分详情见下节「决策平面拆分」。
 
 ```bash
-# 控制台写平面（活动创建/编辑/上下线 + 前端 /ui/ + Step1–18），默认 8081；H2 profile 免装 MySQL
+# 控制台写平面（活动创建/编辑/上下线 + 前端 /ui/ + Step1–24），默认 8081；H2 profile 免装 MySQL
 ./mvnw -pl activity-console spring-boot:run -Dspring-boot.run.profiles=h2
 # 只读决策热路径（/decision/v1/* + 发布代际轮询预热），默认 8082
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
@@ -85,7 +85,7 @@
 ./mvnw -pl activity-console -Pfrontend spring-boot:run
 ```
 
-浏览器打开 `http://localhost:8081/ui/`（根 `/` 是构建无关落地页，跳 `/ui/`；旧原生演示台已于 F3 退役）→ 活动配置台 `/ui/console/activities`，即可用报表式表单创建活动、拖出资格条件树、上线，在「优惠验证」页 `/ui/console/validate` 查命中。
+浏览器打开 `http://localhost:8081/ui/`（根 `/` 是构建无关落地页，跳 `/ui/`；旧原生控制台已于 F3 退役）→ 活动配置台 `/ui/console/activities`，即可用报表式表单创建活动、拖出资格条件树、上线，并在「优惠验证」页 `/ui/console/validate` 检查命中结果。
 
 浏览器里还有 `/ui/console/playbooks`「玩法模板目录」：12 张玩法卡给已有能力起名字并预填编辑器（满 X 减 Y / 第二件半价 / 限时秒杀 / 加价购…），当前均可创建。`/ui/console/validate` 从这 12 份 playbook 直接派生验证场景，并额外提供 random 场景；页面按 discount / gifts / addon 三通道调用真实接口，展示结构化结果与 trace，而不是只打印原始 JSON。场景不指定活动、不强制命中；第 N 件折只编辑订单行，`spuIdList / orderAmount / quantity / lines` 从行项唯一导出。该页**默认打决策平面**（`/api/decision/*`），并可切「控制台走库」或「两条都打对拍」——此前它固定打 console 的 legacy 读端点，而 console 进程里 store 恒空、必然走库，于是「用来自证优惠有没有生效的工具」恰好是唯一照不到快照侧问题（陈旧快照、绑定收窄、轮询延迟）的那条路。页面另带物料来源徽章（`provenance` + 落后几代）、逐活动明细（含被淘汰候选与原因）与快照探针；**「决策服务不可达」与「决策未命中」是两种状态**，401/403 单独判为「可达但未授权」而不降级回走库（降级只会掩盖权限配置问题）。
 
@@ -93,7 +93,8 @@
 - `activity.marketing.rule-engine.enabled`（默认 true）：false 时仍先跑共享资格，再用 `BenefitEvaluator` 安全重算六种形态。合并策略取 `Materials.strategy()`——它随物料从**同一个来源**出来（快照桶里的 / 走库查出来的），`STACK / PRIORITY / MAX`（以及同类的 MUTEX）原样保留，不会统一退化成 MAX。开关关闭或空决策都不能退回只认固定金额的算法。
   > ~~`java-benefit-eval` / `java-eligibility-eval`~~ **已删除**：主源码里再没有这两个 `@Value` 绑定点，配置里写了也没有任何读取方（Spring 不会报错，只是没人读）。它们从来不是灰度/回滚机制，现在连「配置兼容」这层壳也不留了。
 - `activity.marketing.snapshot.max-age-ms`（默认 **60000**，≤0 关闭）：decision 侧快照的**兜底重建阈值**——轮询器每轮扫完代际后，把年龄超过它的快照按数据库真相重建一遍（见下节「发布代际轮询预热」）。⚠️ **两份 `application.yml` 里都没有这个 key，默认值只在 `GenerationWarmService` 的 `@Value` 里**；想改必须自己加。
-- `activity.marketing.seed-demo-data`（默认 true）：启动时种入 4 个 demo 商品 + 商品池（poolId=1，圈电子类 100~200 元），让商品池自动圈选在浏览器可演示；测试中不开，不污染断言。
+- `activity.marketing.lifecycle-schedule.mode`（默认 **local**）：`local` 由 Spring `@Scheduled` 按 `interval-ms` 扫描，`xxl` 由 XXL-JOB 的 `activityLifecycleSweep` Handler 触发，`off` 完全关闭；三种模式互斥。Docker 默认使用 `xxl`，本机直接启动默认使用 `local`。只有显式置为 `PENDING_EFFECT(3)` 的未来版本才会自动上线；ONLINE 版本在结束时间之后自动下线。`batch-size` 控制每个租户每轮最多处理的活动数，普通 NORMAL 草稿永远不会被后台自动发布。
+- `activity.marketing.seed-catalog-data`（默认 **false**）：仅供本地开发或验收环境按需开启；启动时写入 4 个目录商品和商品池（poolId=1，圈电子类 100~200 元），便于验证自动圈选。正式环境应由商品主数据同步链路供数，不应开启该选项。
 - `activity.tenant.dev-default-enabled`（默认 **false**，`application.yml` dev-run 显式开为 true）：多租户开关，见下节「多租户隔离」。本地开着时不带 `X-Tenant-Id` 也能跑（回落单租户 `__dev__`），下面的 curl 示例照常工作。
 
 ## REST 接口（全部在 `/activity-marketing`）
@@ -101,8 +102,8 @@
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | POST | `/create` | 创建/编辑（带 `activityId` 即编辑，version+1；`requestId` 幂等）。入参含 `userInventory`（每人限领份数，null/≤0 = 不限）。返回体新增 `warnings[]` |
-| POST | `/{id}/status` | 上下线 `{version,targetStatus}`（0 待上线/1 上线/2 下线）。**非法流转直接拒**（迁移表 from×to）；`targetStatus=3`（待生效）写入口封死——它无生产者也无消费者，置成该状态的活动进不了任何读路径。四眼开启时提交人自审返回 **403**（不是 409，见下） |
-| POST | `/bulk-status` | **批量**上下线 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}`。部分失败仍是 200；但 `targetStatus` 本身非法时**进循环前**就返回 400（否则几十条各失败一次） |
+| POST | `/{id}/status` | 状态变更 `{version,targetStatus}`：0 待上线、1 立即上线、2 下线、3 **预约上线**。预约只接受未来开始的合法时间窗，到 `activityStartTime` 自动上线，超过 `activityEndTime` 自动下线；改回 0 即取消预约。四眼开启时，立即上线和预约上线都要求审批人≠提交人，失败返回 **403** |
+| POST | `/bulk-status` | **批量**状态变更 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}`。部分失败仍是 200；但 `targetStatus` 本身非法时**进循环前**就返回 400（否则几十条各失败一次） |
 | POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=&userId=&orderId=`）：抢到 200；没抢到按失败种类分流——**400**（缺 activityId / 数量非正 / 限领活动没带 `userId`）、**404**（活动或版本不存在）、**409**（余量不足、不在可用窗口、超出每人限领）。`orderId` 是幂等键的一半（**不传就退化成不幂等**）；auth 档受已配置的 `console-write-authority` 保护 |
 | POST | `/{id}/release?orderId=` | **冲正**：把发放记录置 RELEASED 并归还库存与限领额度。幂等（重复释放不重复加库存）。缺参/空 `orderId` 返回 **400**，确实没有对应发放记录才 **404**。同受 `console-write-authority` 保护——不设防的话反复调它就能把限量活动的库存刷到任意大 |
 | GET | `/grants?orderId=` | 按单查发放记录（客服「这一单用了哪些优惠」的数据源） |
@@ -119,11 +120,12 @@
 
 几条容易踩的语义：
 
-- **错误响应体的形状**：`{"error":"<中文说明>","code":"<机器可读分类>"}`。`error` 字段名与改造前逐字一致（前端 `apiClient` 的 `errMsg` 读的就是它），`code` 是 2026-08 新增的**纯附加**分量，取值来自 `ActivityErrorCode`（`INVALID_ARGUMENT` / `FOUR_EYES_REQUIRED` / `VERSION_CONFLICT` / `DUPLICATE_REQUEST` / `STATE_CONFLICT` / `INTERNAL`），**状态码由这张表决定，不再由「抛的是哪个 JDK 异常」决定**。四眼失败从 409 改判 403 就是这么发生的：它说的是「不该由你来做」，不是「重试可能会成」。映射收在 `ActivityExceptionAdvice`（`basePackages` 只圈 `com.lrj.drools.activity.controller`，不误伤 classpath 上 drools-lab 的 Step 1–18 controller）。<br>⚠️ console 侧**刻意没有** `IllegalStateException → 409` 的兜底：advice 的作用域是整个 controller 包，而那些 `catch` 只挂在 create / status 上——提成兜底等于宣布 `list` / `grants` / `preview` 上任何 ISE（`Optional.get`、懒加载、bean 状态错）都是「状态冲突」，于是写平面的 bug 变成不计错误预算的 4xx。真正需要 409 的路径都已由 `ActivityException` 分类承载。
-- **批量接口的 `version` 必须显式传**。P0-4 之后线上版与草稿**并存**（见下），只给 id 就会落到「最高未删除版本」= 那个还没发布的草稿，于是「批量下线 23 个」把 23 个草稿置成下线、**正在发钱的线上版一个都没停**，回执还报全部成功。工作台按它在列表里看到的那一行传版本。逐条捕获异常、互不影响，部分失败是正常结果（200 + `failed[]`，只有 `targetStatus` 本身非法才整请求 400）；但**单条并不原子**——`bulkChangeStatus` 自身无 `@Transactional`，循环里是同类自调用 `changeStatus(...)`，代理式 AOP 下 `changeStatus` 上的事务注解不生效，「退役其它 ONLINE 版本 → 保存本行 → 推代际」中途失败会留下半成品状态。
+- **错误响应体的形状**：`{"error":"<中文说明>","code":"<机器可读分类>"}`。`error` 字段名与改造前逐字一致（前端 `apiClient` 的 `errMsg` 读的就是它），`code` 是 2026-08 新增的**纯附加**分量，取值来自 `ActivityErrorCode`（`INVALID_ARGUMENT` / `FOUR_EYES_REQUIRED` / `VERSION_CONFLICT` / `DUPLICATE_REQUEST` / `STATE_CONFLICT` / `INTERNAL`），**状态码由这张表决定，不再由「抛的是哪个 JDK 异常」决定**。四眼失败从 409 改判 403 就是这么发生的：它说的是「不该由你来做」，不是「重试可能会成」。映射收在 `ActivityExceptionAdvice`（`basePackages` 只圈 `com.lrj.drools.activity.controller`，不误伤 classpath 上 drools-lab 的 Step 1–24 controller）。<br>⚠️ console 侧**刻意没有** `IllegalStateException → 409` 的兜底：advice 的作用域是整个 controller 包，而那些 `catch` 只挂在 create / status 上——提成兜底等于宣布 `list` / `grants` / `preview` 上任何 ISE（`Optional.get`、懒加载、bean 状态错）都是「状态冲突」，于是写平面的 bug 变成不计错误预算的 4xx。真正需要 409 的路径都已由 `ActivityException` 分类承载。
+- **批量接口的 `version` 必须显式传**。P0-4 之后线上版与草稿**并存**（见下），只给 id 就会落到「最高未删除版本」= 那个还没发布的草稿，于是「批量下线 23 个」把 23 个草稿置成下线、**正在发钱的线上版一个都没停**，回执还报全部成功。工作台按它在列表里看到的那一行传版本。逐条捕获异常、互不影响，部分失败是正常结果（200 + `failed[]`，只有 `targetStatus` 本身非法才整请求 400）。每一项由 `TransactionTemplate` 显式开启独立事务，避免同类自调用绕过 `@Transactional`；单项内的锁定版本、状态切换和代际推进要么一起提交，要么一起回滚。
 - **编辑不再下线正在服务的版本**（P0-4）：当前版本已上线时保留它继续服务、另建 v+1 草稿；当前版本还是草稿时直接顶掉。发布草稿时在同一事务里把该活动其它仍 ONLINE 的版本退役 = **原子指针切换**。
+- **定时上线不是“时间到了就扫所有草稿”**：运营必须先把目标版本置为 3，预约时完成时间窗和四眼校验。无论触发源是本地 Spring 还是 XXL-JOB，后台都调用同一个生命周期编排服务：按租户扫描并对同一活动的所有版本加悲观写锁；到点时发布最高的到期预约版、退役旧 ONLINE 版和更低预约版。结束边界与决策一致为闭区间——恰好等于结束时间仍可命中，只有 `end < now` 才自动下线。分页按 `activityId` 保存续扫游标并在末尾回卷，某一页的永久故障活动不会饿死后面的正常活动。重复扫描、XXL 失败重试和多 console 实例并发执行都保持幂等；单活动失败会让 XXL 任务整体标记失败，避免控制台显示“假成功”。
 - **`inventory` 是声明式的**：字段存得下，**决策链路不读取、不扣减**。create 返回的 `warnings[]` 会把这一点明说（沉默最危险：运营以为配了就生效）。真要限量走 `/{id}/claim`。
-- **`claim` 才是权威扣减**：`decrementInventory` 把「判余量」和「减一」压进同一条 `UPDATE ... WHERE inventory >= :n`，靠数据库对同一行的串行化防超发；**不能改成先查后减**（check-then-act 竞态，低并发测不出、大促必现）。谓词里另含活动状态与时间窗——否则已下线/未开始/已结束的版本库存都能被扣干净。它与 create/status/release 同属写端点：当 `activity.tenant.auth.console-write-authority` 非空时，token 必须具备该 authority，否则 403；默认空值仅为 demo 兼容。决策接口只报价，**不能拿决策成功当作抢到了**。
+- **`claim` 才是权威扣减**：`decrementInventory` 把「判余量」和「减一」压进同一条 `UPDATE ... WHERE inventory >= :n`，靠数据库对同一行的串行化防超发；**不能改成先查后减**（check-then-act 竞态，低并发测不出、大促必现）。谓词里另含活动状态与时间窗——否则已下线/未开始/已结束的版本库存都能被扣干净。它与 create/status/release 同属写端点：当 `activity.tenant.auth.console-write-authority` 非空时，token 必须具备该 authority，否则 403；配置文件中的空值仅用于本地开发，正式环境必须配置。决策接口只报价，**不能拿决策成功当作抢到了**。
 - **`claim` 现在幂等，靠的是先插流水再扣库存**（`activity_grant`，唯一约束 `tenant+order_id+activity_id`）：命中已有流水直接返回**首次结果**、不再扣减。**顺序不能反**——唯一约束必须在任何扣减发生之前就拦住并发的同一单重复提交；反过来（先扣后插）要靠事务边界一路不出错才能救回库存。扣减失败会把刚插的流水**删掉**：留着一条 HELD 却没有对应扣减的记录，在对账上就是「有账无货」，还会永久占掉该用户的限领额度、并让这一单再也 claim 不了（幂等分支会命中它）。
 - **不传 `version` 时 `claim` 解析成当前 ONLINE 版本**（不是最高版本）。此前取最高未删除版本 = **草稿**，而决策发的是最高 ONLINE 版本——防超发的闸门装在了另一行数据上：线上版本库存一件没少、草稿的库存被扣干净。<br>这两套定义现在**具名化**在 `ActivityVersionResolver` 里，是「当前是哪一版」的唯一出口：`latestDraftVersion()`（最高未删除版 = 编辑基线 / 详情 / `changeStatus` 的缺省，P0-4 之后通常是**草稿**）与 `currentOnlineVersion()`（最高 ONLINE 版 = 正在发钱的那一版 = `claim` 的缺省，也是决策侧 `DecisionDataLoader` 认的那一版）。**两者互斥，调用点必须显式选一个**；活动只有一版且已上线时两者恰好相等，那是巧合不是同义词。
 - **发放台账（claim / release / grants）已从 `ActivityMarketingService` 拆到独立的 `GrantService`**。`ActivityMarketingService` 保留同名委派方法（含旧三参 `claimInventory` 签名），**REST 路径与语义一字未变**；两者之间零共享状态，唯一的公共知识是上面那两条版本定义（各自注入 `ActivityVersionResolver`）。`ClaimResult` 另加了一个标了 `@JsonIgnore` 的 `FailureKind`（`BAD_REQUEST` / `NOT_FOUND` / `OUT_OF_STOCK` / `PER_USER_LIMIT`）——它**只用于服务端分流状态码，响应体一字节没变**（`ok` / `reason` 原样保留）。controller 侧的映射是**不写 `default` 的 switch 表达式**：新增一种失败种类而漏了映射就是编译失败；旧的三参 `ClaimResult` 构造器（未标注种类）沿用历史行为 409。
@@ -165,7 +167,7 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 
 | 应用 | 端口 | 承载 | Maven 依赖 |
 | ---- | ---- | ---- | ---- |
-| `activity-console` | 8081 | 写平面（create/status/幂等/四眼）+ Step1–18 教学 + 前端 `/ui/` | `activity-common` + `drools-lab`（全量，含 kie-ci/dmn/decisiontables） |
+| `activity-console` | 8081 | 写平面（create/status/幂等/四眼）+ Step1–24 教学 + 前端 `/ui/` | `activity-common` + `drools-lab`（全量，含 kie-ci/dmn/decisiontables） |
 | `activity-decision` | 8082 | 只读决策热路径 `/decision/v1/*` + 发布代际轮询预热 | 仅 `activity-common`（甩掉 `drools-lab` 带来的 kie-ci/dmn/decisiontables 与全部写面依赖，更轻） |
 
 **`/decision/v1` 是决策热路径将来物理拆出去的稳定契约**——`DecisionPlaneController` 复用与控制台**同一份** `ActivityQueryService`（与 `/activity-marketing/spu-discount` 走同一代码，金额一致）；旧 `/activity-marketing/*` 路径保留、不弃用，前端与旧脚本不受影响。
@@ -202,12 +204,12 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 
 **加价购为什么必须两阶段**：卡点不在算钱而在交互形状——既有链路是「一次调用返回最终优惠」，加价购必须先列清单、等用户挑一个、再二次定价。第一阶段与红包、买赠复用 `DecisionEligibilityService` 的请求上下文与 fail-closed 资格判断；第二阶段**不发 quoteToken、不读客户端传来的价格**，只接受「哪个活动的哪个换购品」，并重新跑资格、重新读取当前选项与价格，失效或伪造返回 409。数据上复用 `activity_gift` 承载换购品，`giftName` 是品名、`absoluteAmount` 是**加价金额**（不是赠品价值）；加价金额 ≤0 的选项直接排除（那不是加价购）。console 别名沿用同一服务与既有租户/JWT 边界。两阶段都只查询/报价、不会调用 `claim` 或占库存；秒杀验证也只是试算，只有显式调用写平面的 `/{id}/claim` 才会扣库存。
 
-- **角色门控**（`RoleGateFilter`，靠 `activity.role`，仅显式设置该属性时才装配）：`decision` 只放行 `/decision/v1/**` + `/actuator/**`；`console` 屏蔽 `/decision/v1/**`、放行写面 + Step1–18 + SPA；`all`（默认，本地/测试）全开。这是**部署角色边界**而非安全边界（同一份代码），真隔离仍靠 Casdoor 验签 + `@TenantId`。
+- **角色门控**（`RoleGateFilter`，靠 `activity.role`，仅显式设置该属性时才装配）：`decision` 只放行 `/decision/v1/**` + `/actuator/**`；`console` 屏蔽 `/decision/v1/**`、放行写面 + Step1–24 + SPA；`all`（默认，本地/测试）全开。这是**部署角色边界**而非安全边界（同一份代码），真隔离仍靠 Casdoor 验签 + `@TenantId`。
 - **发布代际轮询预热（M1.4）+ 代际快照包（P1-1）**：console 的**任何活动状态变化**（上线 / 下线 / 回待上线）都在同一事务里 bump `(tenant,bizLine)` 代际——只在上线时发的后果是**下线传播不出去**，decision 的快照继续按原配置发钱。`bizLine` 为空时跳过 bump（但状态照常落库）：`activity_generation.biz_line` 是 NOT NULL，插 null 会在同事务里抛约束违例、把刚写下的状态一起回滚，「下线传播不出去」会升级成「下线根本做不到」；而没有 bizLine 的活动本来就进不了任何快照，也就没有代际可传播。decision 后台按 `activity.marketing.generation-poll.interval-ms`（默认 3000ms）轮询，见代际增长即走**三步、切指针在最后**：① 构建决策快照 → ② 预热该 `(tenant,bizLine)` 的全部 ACTIVE artifact → ③ 全部成功才 `publish` 切指针。<br>**publish 排在最后是 2026-08 修的**：此前是「先 publish、再查 ACTIVE artifact、再预热」，中间任何一步抛异常都会被轮询器吞掉且**不更新 `lastSeen`**——于是一次半完成的推进已经被记成一次发布（占掉了回滚槽位），下一轮还会对同一代际再来一遍。现在三步共享同一个失败边界：要么整体推进，要么整体留在上一代等下轮重试。「先建好快照再切指针」这条更早的约束当然仍成立。
 - **`bizLine` 为空的孤儿活动现在会在构建期吵**：每次构建真实桶时数一次「有多少已上线活动的 `bizLine` 为空」，落 WARN 日志 + 计数器 `activity.decision.snapshot.orphan`。这类活动进不了任何桶（构建期按 bizLine **精确匹配**），而决策侧 `provenance` 三个值全绿、回退率/耗时/命中数全都不动——此前只有诊断端点 `GET /decision/v1/snapshot?activityId=` 照得出来，而那要求排查的人**已经怀疑到某个具体活动头上**。绝对值没有意义（每次构建按当时库存量 `increment(n)`），能用的是 `rate(...) > 0`：数据修干净后立刻停。观测失败不会拖垮构建。
 - **快照兜底重建**：轮询器每轮扫完代际后，把年龄超过 `activity.marketing.snapshot.max-age-ms`（默认 60s）的快照按数据库真相重建一遍。它守的不是某个已知 bug，而是「信号漏发」这**一整类**故障（bump 因异常没提交、轮询线程被拖死后恢复、构建抛异常导致 lastSeen 没更新……都表现为快照静默过期而决策照常成功）——代际信号依赖每个写入口都记得发信号，那是一条要人持续维护的纪律，本仓库已经在它上面失手过一次（下线不 bump）。有了兜底，后果从**永久**降为**一轮**。它走 `DecisionSnapshotStore.refresh` 而**不是** `publish`：这不是一次发布，不能占用回滚槽位，否则 `rollback` 会退到几十秒前的自己 = 等于没回滚；代际号也保持不变。
 - **decision 不碰 DDL**：`activity-decision/application.yml` 的 `ddl-auto` 已从 `update` 改回 **`validate`**（此前只有 compose 的环境变量盖住它，按文档化的 `./mvnw -pl activity-decision spring-boot:run` 本地起会带 DDL 权限跑），并由 `DecisionDdlGuardTest` 钉死防漂回。建表仍由 console 独占。
-- **网关**（`deploy/docker-compose.yml`：mysql + console + decision + nginx）：nginx 把 `/api/decision/*`→decision、`/api/console/*`→console、`/ui/*` 及其余→console；host 端口 **8095**（`http://localhost:8095/ui/console`）。`docker compose stop console` 后 `/api/decision/*` 仍可决策，可当场演示拆分价值。
+- **网关**（`deploy/docker-compose.yml`：mysql + console + decision + nginx）：nginx 把 `/api/decision/*`→decision、`/api/console/*`→console、`/ui/*` 及其余→console；host 端口 **8095**（`http://localhost:8095/ui/console`）。`docker compose stop console` 后 `/api/decision/*` 仍可决策，可当场展示拆分价值。
 
 ### 取数：快照优先，回落批量查库
 
@@ -332,7 +334,7 @@ curl localhost:8081/activity-marketing/list -H 'X-Tenant-Id: globex'  # []
 
 ## 来源字段映射（收敛，非 1:1）
 
-| 本 demo | 来源（mall-shop / mall-common） | 取舍 |
+| 当前平台实现 | 来源（mall-shop / mall-common） | 取舍 |
 | ---- | ---- | ---- |
 | `ActivityManageEntity` (activity_manage) | `ActivityAdminPlatformManage` | 去掉合伙人/审核/权益系统 id 等 |
 | `ActivityRuleEntity` (activity_rule) | `ActivityDynamicRules` | 保留红包/阶梯字段；本仓库新增 `red_package_max_discount`（折扣型封顶），`red_package_amount_unit` 由自由文本收成受控判别位 |
@@ -341,14 +343,14 @@ curl localhost:8081/activity-marketing/list -H 'X-Tenant-Id: globex'  # []
 | `ActivityStrategyEntity` | `ActivityRuleStrategy` | bizLine 级合并策略 |
 | `ActivityGiftEntity` | `BuyAndGetConfig.GiftConfig`（来源存 extraData JSON） | 拆成结构化行；加价购复用该表，`absoluteAmount` 改读作**加价金额** |
 | `ProductPool*/PoolRef` | `ActivityProductPool(Item/Rule)/ActivityPoolRef` | 圈选维度简化为 价格/类目/标签 |
-| `DemoProductEntity` (demo_product) | 真实商品/车辆表 | **替身表**，仅供圈选演示 |
+| `CatalogProductEntity` (catalog_product) | 真实商品/车辆表 | 平台内商品目录；正式接入主数据后可替换为同步表或查询适配器 |
 | `RuleSchemaRegistry` + `SchemaField` | `activity_rule_field_dict` 表 | 内置白名单（原 `RuleField` 枚举），按 (tenant,bizLine) 解析、单租户 stub |
 
 facts（`ActivityCandidate/ActivityRuleContext/ActivityRuleResult/GiftResult`）与来源 `engine/fact/*` 对齐。
 
 **决策入参（`SpuDiscountRequest`）新增两个字段，都是纯增量**（老调用方走兼容构造，行为一个字节不变）：
 
-- `storeId`——条件白名单里一直有「店铺」，但决策入参没有这个键，于是**配了 `storeId` 条件的活动永远不命中**，且因为 fail-closed 是「静默不发」而不是报错。写侧其实完整建模了店铺（`DemoProductEntity` / `ActivitySpuBindingEntity` / 编辑器的「店铺ID」列），只有入参漏了，故补入参而不是删白名单。语义是「这一单来自哪个门店」，不是「活动绑在哪个店」。
+- `storeId`——条件白名单里一直有「店铺」，但决策入参没有这个键，于是**配了 `storeId` 条件的活动永远不命中**，且因为 fail-closed 是「静默不发」而不是报错。写侧其实完整建模了店铺（`CatalogProductEntity` / `ActivitySpuBindingEntity` / 编辑器的「店铺ID」列），只有入参漏了，故补入参而不是删白名单。语义是「这一单来自哪个门店」，不是「活动绑在哪个店」。
 - `lines: [{spuId, unitPrice, quantity}]`——「第 N 件折」必需的逐行单价。整单金额 ÷ 件数是均价，拿均价当第二件的价去打折，在混着贵重与便宜商品的车里会**静默算错钱**。不传 `lines` 时该形态返回 null（不适用），而不是拿均价瞎算。按行不按件：算「第 N 件」只需 (单价, 件数)。
 
 请求维度 → 属性袋的映射收敛成**一张表** `DecisionEligibilityService.requestAttributes()`；`ActivityQueryService` 的兼容入口只委托给它。红包、买赠、加价购都复用这份上下文与候选淘汰，并由 `DecisionContextFieldsTest` 钉死不变量「白名单里的每个 key 都必须在这里有来源」——此前是手写 `putAttr` 与 `RuleSchemaRegistry` 白名单两处独立维护，两个方向都漏过。当前白名单 6 个字段：`orderAmount` / `quantity` / `userDistrictId` / `userTags` / `spuId` / `storeId`；`userId`、`orderLines` 与 `randomSeedSpu` 三个入袋但**不进白名单**（运营写不出、也不该能写「第 3 行单价 > 100」或「随机种子 = X」这种条件）。`randomSeedSpu` 是随机红包种子专用的那个标量（= `spuIdList` 第一件），见上「随机红包是确定性随机」。

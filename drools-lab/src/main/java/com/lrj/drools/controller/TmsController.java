@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Step 12: Truth Maintenance System 演示入口。
+ * Step 12: Truth Maintenance System 展示入口。
  *
  * 单端点 POST /tms/compare:
  *   - 请求体指定传感器名 + "超阈值的高读数" + "回落后的低读数"

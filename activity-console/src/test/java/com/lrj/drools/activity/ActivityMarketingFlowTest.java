@@ -5,8 +5,8 @@ import com.lrj.drools.activity.domain.ActivityStatus;
 import com.lrj.drools.activity.domain.ConditionNode;
 import com.lrj.drools.activity.domain.DecisionMode;
 import com.lrj.drools.activity.domain.SpuDiscountRequest;
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
 import com.lrj.drools.activity.persistence.ProductPoolEntity;
 import com.lrj.drools.activity.persistence.ProductPoolRepository;
 import com.lrj.drools.activity.persistence.ProductPoolRuleEntity;
@@ -43,13 +43,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:acttest;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "activity.marketing.rule-engine.enabled=true",
-        "activity.marketing.seed-demo-data=false"
+        "activity.marketing.seed-catalog-data=false"
 })
 class ActivityMarketingFlowTest {
 
     @Autowired ActivityMarketingService marketing;
     @Autowired ActivityQueryService query;
-    @Autowired DemoProductRepository demoProductRepo;
+    @Autowired CatalogProductRepository catalogProductRepo;
     @Autowired ProductPoolRepository poolRepo;
     @Autowired ProductPoolRuleRepository poolRuleRepo;
 
@@ -144,9 +144,9 @@ class ActivityMarketingFlowTest {
     /** 商品池自动圈选：规则圈中的商品自动绑定，查询命中。 */
     @Test
     void poolAutoBind() {
-        // demo 商品：价格 120、类目 electronics、在架
-        demoProductRepo.save(new DemoProductEntity(6001L, 1, "耳机", "electronics", new BigDecimal("120"), "hot", 1));
-        demoProductRepo.save(new DemoProductEntity(6002L, 1, "沙发", "furniture", new BigDecimal("120"), "hot", 1));
+        // 目录商品：价格 120、类目 electronics、在架
+        catalogProductRepo.save(new CatalogProductEntity(6001L, 1, "耳机", "electronics", new BigDecimal("120"), "hot", 1));
+        catalogProductRepo.save(new CatalogProductEntity(6002L, 1, "沙发", "furniture", new BigDecimal("120"), "hot", 1));
 
         // 池：类目 electronics + 价格 [100,200]
         ProductPoolEntity pool = new ProductPoolEntity();

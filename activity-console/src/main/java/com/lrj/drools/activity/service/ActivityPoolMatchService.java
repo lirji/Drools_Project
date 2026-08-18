@@ -2,8 +2,8 @@ package com.lrj.drools.activity.service;
 
 import com.lrj.drools.activity.persistence.ActivitySpuBindingEntity;
 import com.lrj.drools.activity.persistence.ActivitySpuBindingRepository;
-import com.lrj.drools.activity.persistence.DemoProductEntity;
-import com.lrj.drools.activity.persistence.DemoProductRepository;
+import com.lrj.drools.activity.persistence.CatalogProductEntity;
+import com.lrj.drools.activity.persistence.CatalogProductRepository;
 import com.lrj.drools.activity.persistence.PoolRefEntity;
 import com.lrj.drools.activity.persistence.PoolRefRepository;
 import com.lrj.drools.activity.persistence.ProductPoolRuleEntity;
@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 /**
  * 商品池圈选 + 自动绑定物化。收敛自来源 {@code ActivityPoolMatchService} + {@code ActivityAutoBindRefreshService}。
  *
- * 来源用 SQL 打真实商品/车辆表；demo 用内存过滤 {@code demo_product}（数据集小）。
+ * 当前实现以内存过滤 {@code catalog_product}；目录规模扩大后应下推到商品查询服务。
  * 成员资格 = 价格区间 + 类目 + 标签（稳定维度）；{@code effective} 随 {@code on_shelf} 翻转。
  * 绑定刷新按"目标态 diff"（幂等，可重复执行）。
  *
@@ -44,25 +44,25 @@ public class ActivityPoolMatchService {
 
     private final ProductPoolRuleRepository poolRuleRepo;
     private final PoolRefRepository poolRefRepo;
-    private final DemoProductRepository demoProductRepo;
+    private final CatalogProductRepository catalogProductRepo;
     private final ActivitySpuBindingRepository bindingRepo;
 
     public ActivityPoolMatchService(ProductPoolRuleRepository poolRuleRepo,
                                     PoolRefRepository poolRefRepo,
-                                    DemoProductRepository demoProductRepo,
+                                    CatalogProductRepository catalogProductRepo,
                                     ActivitySpuBindingRepository bindingRepo) {
         this.poolRuleRepo = poolRuleRepo;
         this.poolRefRepo = poolRefRepo;
-        this.demoProductRepo = demoProductRepo;
+        this.catalogProductRepo = catalogProductRepo;
         this.bindingRepo = bindingRepo;
     }
 
     /** 按池规则圈选命中商品（返回全部成员，含下架，effective 由调用方按 on_shelf 定）。 */
-    public List<DemoProductEntity> matchByRule(ProductPoolRuleEntity rule) {
+    public List<CatalogProductEntity> matchByRule(ProductPoolRuleEntity rule) {
         if (rule == null) return List.of();
         Set<String> categories = csvToSet(rule.getCategories());
         Set<String> tags = csvToSet(rule.getTags());
-        return demoProductRepo.findAll().stream()
+        return catalogProductRepo.findAll().stream()
                 .filter(p -> priceInRange(p.getPrice(), rule.getMinPrice(), rule.getMaxPrice()))
                 .filter(p -> categories.isEmpty() || categories.contains(p.getCategory()))
                 .filter(p -> tags.isEmpty() || overlaps(csvToSet(p.getTags()), tags))
@@ -88,7 +88,7 @@ public class ActivityPoolMatchService {
                     .findFirstByPoolIdAndEnabledAndIsDel(ref.getPoolId(), EFFECTIVE, NOT_DEL)
                     .orElse(null);
             if (rule == null) continue; // 池停用/无规则 → 该池不贡献成员
-            for (DemoProductEntity p : matchByRule(rule)) {
+            for (CatalogProductEntity p : matchByRule(rule)) {
                 target.putIfAbsent(p.getSpuId(), new Target(
                         p.getStoreId(),
                         (p.getOnShelf() != null && p.getOnShelf() == 0) ? INEFFECTIVE : EFFECTIVE,

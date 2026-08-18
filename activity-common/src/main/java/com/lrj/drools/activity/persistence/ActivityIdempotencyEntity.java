@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.TenantId;
 
 import java.time.Instant;
@@ -23,6 +24,7 @@ import java.time.Instant;
  * 顺序重放（客户端超时重试的常见场景）由顶部查表命中短路。租户维度由 {@link TenantId} 机制自动隔离。
  */
 @Entity
+@Comment("活动请求幂等记录表")
 @Table(name = "activity_idempotency",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_idem_tenant_request", columnNames = {"tenant_id", "request_id"})

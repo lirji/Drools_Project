@@ -1,6 +1,6 @@
 # M2.3 · Prometheus 抓取两服务的 /actuator/prometheus（micrometer 暴露）。
 # console 与 decision 各自独立进程、各自指标端点——grafana 按 application tag 区分
-# （console=drools-demo / decision=drools-decision，见各自 application.yml 的 metrics.tags.application）。
+# （console=activity-console / decision=activity-decision，见各自 application.yml 的 metrics.tags.application）。
 global:
   scrape_interval: 10s
   evaluation_interval: 10s

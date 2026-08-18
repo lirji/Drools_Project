@@ -1,10 +1,10 @@
 package com.lrj.drools.domain;
 
 /**
- * Step 12: TMS (Truth Maintenance System) 演示用的传感器 fact。
+ * Step 12: TMS (Truth Maintenance System) 展示用的传感器 fact。
  *
  * 设计动机:
- *   - mutable POJO (不是 record), 因为 demo 要 `modify($sensor) { setValue(...) }`
+ *   - mutable POJO（不是 record），因为规则能力需要 `modify($sensor) { setValue(...) }`
  *     来推进"前提变化"。record 不可变, modify 不出来。
  *   - LHS 看 value 字段; 规则在 value 超阈值时衍生出一个 Alert fact。
  *     Step 12 的核心对比:

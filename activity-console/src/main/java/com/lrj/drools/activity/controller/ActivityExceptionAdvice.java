@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 一个 500，带着完整的 message。也就是说「参数非法返回 400」这条约定，实际只在抄到的地方成立。
  *
  * <p><b>scope 收得很紧</b>：{@code basePackages} 只圈本包。console 的 classpath 上还挂着
- * drools-lab 的 Step 1–18 教学 controller（{@code com.lrj.drools.controller}），
+ * drools-lab 的 Step 1–24 教学 controller（{@code com.lrj.drools.controller}），
  * 全局 advice 会把它们的错误行为一起改掉——那是本次改造范围之外的十六个端点。
  *
  * <p><b>与 controller 里现存 catch 的关系</b>：那些 {@code catch} 迁移期<b>原样保留</b>，

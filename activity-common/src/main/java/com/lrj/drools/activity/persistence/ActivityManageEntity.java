@@ -7,18 +7,20 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 
 /**
- * 活动基础层。收敛自来源 {@code ActivityAdminPlatformManage}（去掉合伙人/审核/权益系统 id 等 demo 无关列）。
+ * 活动基础层。收敛自来源 {@code ActivityAdminPlatformManage}，保留本平台决策与运营所需字段。
  *
  * 版本化：同一 {@code activityId} 可有多行，靠 {@code version} 区分；编辑时旧行 {@code isDel=1}，新行 version+1。
  * 主键用自增代理键（因为一个 activityId 对应多版本行），(activityId, version, isDel) 是逻辑键。
  */
 @Entity
+@Comment("活动基础信息及版本表")
 @Table(name = "activity_manage",
         // 生产硬化(P1-15)：热点索引一律以 tenant_id 打头(判别式多租户下每条查询都带 tenant 谓词)。
         indexes = {

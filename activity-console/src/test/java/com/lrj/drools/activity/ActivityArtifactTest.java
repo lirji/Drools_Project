@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
         "spring.datasource.url=jdbc:h2:mem:artifact;DB_CLOSE_DELAY=-1;MODE=MySQL",
         "spring.jpa.hibernate.ddl-auto=create-drop",
         "activity.marketing.rule-engine.enabled=true",
-        "activity.marketing.seed-demo-data=false",
+        "activity.marketing.seed-catalog-data=false",
         "activity.tenant.dev-default-enabled=true"
 })
 class ActivityArtifactTest {

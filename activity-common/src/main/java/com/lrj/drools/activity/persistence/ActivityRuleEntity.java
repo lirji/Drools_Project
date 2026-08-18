@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.Comment;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -18,6 +19,7 @@ import java.math.BigDecimal;
  * {@code redPackageRangeAmount} 既存随机红包区间，也存 LADDER 阶梯分档 JSON（长文本，用 LONGVARCHAR）。
  */
 @Entity
+@Comment("活动权益规则配置表")
 @Table(name = "activity_rule", indexes = {
         @Index(name = "idx_ar_aid_ver_del", columnList = "tenant_id,activity_id,version,is_del")
 })

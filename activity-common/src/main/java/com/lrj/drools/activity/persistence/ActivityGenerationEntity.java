@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.Comment;
 
 import java.time.Instant;
 
@@ -24,6 +25,7 @@ import java.time.Instant;
  * 无分布式事务、artifact 不可变兜底，延迟期语义安全（decision 慢一个轮询周期看到新代际，期间用旧 warm 或首请求冷编译）。
  */
 @Entity
+@Comment("活动发布代际表")
 @Table(name = "activity_generation",
         uniqueConstraints = {
                 @UniqueConstraint(name = "uk_gen_tenant_biz", columnNames = {"tenant_id", "biz_line"})

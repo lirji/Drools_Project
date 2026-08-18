@@ -11,7 +11,7 @@
 //   1) Java 类上加 @org.kie.api.definition.type.Role(Role.Type.EVENT)
 //   2) DRL 里 `declare ClassName @role(event) @timestamp(field) end`
 //
-// 本 demo 用方式 2 — 不污染 Java 类, 元数据集中在规则文件里。
+// 当前能力用方式 2——不污染 Java 类，元数据集中在规则文件里。
 //
 // ───────────────────────── stream mode + pseudo clock ─────────────────────────
 //
