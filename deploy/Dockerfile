@@ -1,7 +1,7 @@
 # M2.2 多模块物理拆分：一个 build 阶段构建整个 reactor，运行阶段按 MODULE 选装某个 app 的可执行 jar。
 # compose 用同一 Dockerfile 以不同 --build-arg MODULE 产出 console / decision 两个镜像（build 阶段共享层缓存）。
-#   docker build -f deploy/Dockerfile --build-arg MODULE=activity-console -t activity-console:latest ..
-#   docker build -f deploy/Dockerfile --build-arg MODULE=activity-decision -t activity-decision:latest ..
+#   docker build -f deploy/Dockerfile --build-arg MODULE=activity-console -t drools-platform/activity-console:latest ..
+#   docker build -f deploy/Dockerfile --build-arg MODULE=activity-decision -t drools-platform/activity-decision:latest ..
 
 # ---- 构建阶段（构建全部 4 模块；-Pfrontend 在容器内下载 node 并 build 前端进 console 的 static/ui）----
 FROM maven:3.9-eclipse-temurin-21 AS build

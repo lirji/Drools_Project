@@ -29,7 +29,7 @@
     - **切 header 档**（跑 `e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual` 这些走 `tenant-chip` 的脚本必须切，否则被登录守卫弹走）：
       `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
       聚焦 `e2e:validate` 还要加 `DROOLS_FOUR_EYES_ENABLED=true`；脚本先断言 AUTHOR 自审发布返回 **403**（**2026-08-12 起，此前是 409**——四眼拒绝是「不该由你来做」，不是「冲突、重试可能会成」；旧 409 纯属实现细节泄漏：写平面用 `IllegalStateException` 表达它、controller 把所有 ISE 一律映射成 409），再由 APPROVER 发布成功，未开四眼时会正常失败而不是假绿。<br>⚠️ 这条断言**不在 `./mvnw test` 与 `vitest` 的闸门里**（e2e 需要真链路），整轮重构没有照出它，是人工核对时发现并改的——你自己写的四眼用例若还断言 409，请一并改成 403。
-    - ⚠️ **改了代码要重建对的镜像**：前端 `/ui/` 由 **gateway 镜像**托管（`activity-frontend`），不在 console 的 JAR 里 → 改前端要 `--build gateway`；改后端要 `--build console decision`（**decision 是独立镜像，只重建 console 时它仍是旧代码**，新决策端点会 404）。
+    - ⚠️ **改了代码要重建对的镜像**：前端 `/ui/` 由 **gateway 镜像**托管（`drools-platform/activity-frontend`），不在 console 的 JAR 里 → 改前端要 `--build gateway`；改后端要 `--build console decision`（**decision 是独立镜像，只重建 console 时它仍是旧代码**，新决策端点会 404）。
 - **Casdoor 档（auth 开，console + decision API 端到端）**：本机 Casdoor `:8000` 启动后用 `./deploy.sh --provision-auth` 幂等登记 8095 callback；真实浏览器回归为 `BASE=http://localhost:8095 npm --prefix frontend run e2e:oidc`。
 
 ## 入口 / 健康检查

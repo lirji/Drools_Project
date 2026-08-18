@@ -1,6 +1,6 @@
 # Offline/local rollout path: reuse an existing runtime image and replace only the host-built executable JAR.
 # The regular deploy/Dockerfile remains the clean, reproducible multi-stage build used by CI/release builds.
-ARG BASE_IMAGE=activity-console:latest
+ARG BASE_IMAGE=drools-platform/activity-console:latest
 FROM ${BASE_IMAGE}
 
 ARG MODULE=activity-console

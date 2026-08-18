@@ -1,5 +1,6 @@
 # 微服务化本地编排（M2.1/M2.2）—— 读写平面**物理拆分**为两个 Spring Boot 应用 + nginx 网关 + MySQL 单库双账号。
-# 三个独立镜像：activity-console(写面 + Step1-24) / activity-decision(只读决策) / activity-frontend(Vue + nginx 网关)。
+# 三个独立镜像：drools-platform/activity-console(写面 + Step1-24) /
+# drools-platform/activity-decision(只读决策) / drools-platform/activity-frontend(Vue + nginx 网关)。
 # （M1.3 那版是"同一镜像按 activity.role 扮演两角色"；M2.1 后改为真物理拆分，各自独立镜像/依赖集/进程。）
 #
 #   ./deploy.sh --provision-auth
@@ -13,6 +14,8 @@
 #
 # auth 档（Casdoor）：本编排默认启用 OIDC/JWT；可临时用 DROOLS_AUTH_ENABLED=false 回到 header-only dev 档。
 # 浏览器访问 localhost:8000，容器拉 JWKS 走 host.docker.internal；生产请用环境变量覆盖为真实 HTTPS 域名。
+name: drools-platform
+
 services:
   mysql:
     image: mysql:8.0
@@ -60,7 +63,7 @@ services:
       dockerfile: deploy/Dockerfile
       args:
         MODULE: activity-console
-    image: activity-console:latest
+    image: drools-platform/activity-console:latest
     environment:
       SPRING_PROFILES_ACTIVE: mysql
       SERVER_PORT: "8080"          # 容器内统一 8080，nginx upstream 对齐
@@ -114,7 +117,7 @@ services:
       dockerfile: deploy/Dockerfile
       args:
         MODULE: activity-decision
-    image: activity-decision:latest
+    image: drools-platform/activity-decision:latest
     environment:
       SPRING_PROFILES_ACTIVE: mysql
       SERVER_PORT: "8080"
@@ -143,7 +146,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
-    image: activity-frontend:latest
+    image: drools-platform/activity-frontend:latest
     ports: ["8095:80"]   # 8090 常被本机其它服务占用，用 8095；网关内部仍 :80
     depends_on:
       console: { condition: service_healthy }

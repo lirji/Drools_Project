@@ -228,7 +228,9 @@ wait_for_mysql() {
 
 guard_mysql_data_volume() {
   local container_id volume_name compose_volume_label
-  container_id="$(compose ps -q mysql 2>/dev/null || true)"
+  # `compose ps -q` 只返回运行中容器。MySQL 已停止时仍必须检查其数据卷，
+  # 否则后续 `compose up` 可能把历史匿名卷静默切换成空的命名卷。
+  container_id="$(compose ps -aq mysql 2>/dev/null || true)"
   [[ -n "${container_id}" ]] || return 0
 
   volume_name="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/mysql"}}{{.Name}}{{end}}{{end}}' \
@@ -508,7 +510,7 @@ if [[ "${DRY_RUN}" == true ]]; then
       "${SCRIPT_DIR}/deploy/mysql-init/02-xxl-job.sql"
     print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d --remove-orphans "${UP_SERVICES[@]}"
   else
-    info "将跳过源码构建，使用本地 activity-console、activity-decision 与 activity-frontend 镜像"
+    info "将跳过源码构建，使用本地 drools-platform 镜像"
     print_command "${COMPOSE_CMD[@]}" -f "${COMPOSE_FILE}" up -d mysql
     printf '  初始化并校验 %q（XXL-JOB 3.4.2：8 张表 / 70 列）\n' \
       "${SCRIPT_DIR}/deploy/mysql-init/02-xxl-job.sql"
@@ -566,9 +568,12 @@ if [[ "${SKIP_BUILD}" == false ]]; then
   info "构建前端与后端镜像…"
   run_with_retry "构建前后端镜像" build_images console decision gateway
 else
-  docker image inspect activity-console:latest >/dev/null 2>&1 || die "本地缺少 activity-console:latest，无法跳过构建"
-  docker image inspect activity-decision:latest >/dev/null 2>&1 || die "本地缺少 activity-decision:latest，无法跳过构建"
-  docker image inspect activity-frontend:latest >/dev/null 2>&1 || die "本地缺少 activity-frontend:latest，无法跳过构建"
+  docker image inspect drools-platform/activity-console:latest >/dev/null 2>&1 \
+    || die "本地缺少 drools-platform/activity-console:latest，无法跳过构建"
+  docker image inspect drools-platform/activity-decision:latest >/dev/null 2>&1 \
+    || die "本地缺少 drools-platform/activity-decision:latest，无法跳过构建"
+  docker image inspect drools-platform/activity-frontend:latest >/dev/null 2>&1 \
+    || die "本地缺少 drools-platform/activity-frontend:latest，无法跳过构建"
   warn "已跳过源码构建，正在使用本地已有前后端镜像"
 fi
 

@@ -48,13 +48,15 @@ h2 profile 用 file 库（console `./data/activity-platform`、decision `./data/
 
 服务与宿主端口：
 
+Compose 项目名在 `deploy/docker-compose.yml` 中固定为 `drools-platform`，Docker Desktop 会将本项目容器归组到该名称下，不再使用目录名 `deploy`。
+
 | 服务 | 镜像 | 宿主端口 | 说明 |
 | ---- | ---- | ---- | ---- |
 | `mysql` | mysql:8.0 | 127.0.0.1:3307→3306 | 业务库 `activity_platform` + 独立调度库 `xxl_job`；数据保存在 `mysql-data` 命名卷 |
 | `xxl-job-admin` | xuxueli/xxl-job-admin:3.4.2 | **127.0.0.1:18088**→8080 | 调度控制台、执行日志、失败重试和人工触发；不保存活动业务状态；可用 `DROOLS_XXL_ADMIN_PORT` 覆盖 |
-| `console` | activity-console（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；另在 Docker 内网开放 XXL 执行器端口 9999 |
-| `decision` | activity-decision（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
-| `gateway` | **`activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095）。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
+| `console` | `drools-platform/activity-console:latest`（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；另在 Docker 内网开放 XXL 执行器端口 9999 |
+| `decision` | `drools-platform/activity-decision:latest`（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
+| `gateway` | **`drools-platform/activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095）。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
 | `prometheus` | prom/prometheus | 9090 | 抓 console + decision 的 `/actuator/prometheus` |
 | `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
 
