@@ -2,7 +2,10 @@ package com.lrj.drools.activity;
 
 import com.lrj.drools.activity.domain.ActivityCreateRequest;
 import com.lrj.drools.activity.domain.ActivityStatus;
+import com.lrj.drools.activity.engine.BenefitMath;
 import com.lrj.drools.activity.persistence.ActivityGrantEntity;
+import com.lrj.drools.activity.persistence.ActivityGrantEntryEntity;
+import com.lrj.drools.activity.persistence.ActivityGrantEntryRepository;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
 import com.lrj.drools.activity.service.ActivityMarketingService;
 import com.lrj.drools.activity.service.ActivityMarketingService.CreateResult;
@@ -16,16 +19,27 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.ConnectionCallback;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
+import java.io.File;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -57,6 +71,8 @@ class GrantLedgerTest {
 
     @Autowired ActivityMarketingService marketing;
     @Autowired ActivityManageRepository manageRepo;
+    @Autowired ActivityGrantEntryRepository entryRepo;
+    @Autowired JdbcTemplate jdbc;
 
     @BeforeEach
     void bindTenant() { TenantContext.set("__dev__"); }
@@ -271,10 +287,269 @@ class GrantLedgerTest {
         }
     }
 
+    @Nested
+    @DisplayName("确认发放（支付回调）与分录台账")
+    class ConfirmAndLedger {
+
+        @Test
+        @DisplayName("confirm 一笔 HELD → CONFIRMED，落 amount/decisionId，并追加 +ISSUE 分录")
+        void confirmHeldWritesIssueEntry() {
+            CreateResult a = onlineFlash("确认券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+
+            ClaimResult r = marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), "DEC-1");
+
+            assertTrue(r.ok());
+            assertFalse(r.replay());
+            ActivityGrantEntity g = onlyGrant(order);
+            assertEquals(ActivityGrantEntity.CONFIRMED, g.getState(), "支付回调应把发放确认");
+            assertEquals(0, new BigDecimal("9.90").compareTo(g.getAmount()), "确认金额首次落在 grant.amount 上");
+            assertEquals("DEC-1", g.getDecisionId());
+
+            List<ActivityGrantEntryEntity> entries = entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo());
+            assertEquals(1, entries.size(), "确认发放追加且只追加一条分录");
+            ActivityGrantEntryEntity issue = entries.get(0);
+            assertEquals(ActivityGrantEntryEntity.ISSUE, issue.getEntryType());
+            assertEquals(990L, issue.getAmountMinor(), "+amount×100，带正号");
+            assertEquals(order, issue.getOrderId());
+            assertEquals(a.activityId(), issue.getActivityId());
+            assertEquals("CNY", issue.getCurrency(), "未配币种兜底 CNY");
+        }
+
+        @Test
+        @DisplayName("confirm 幂等：重复回调 replay=true，不重复追分录、不覆盖首次金额")
+        void confirmIsIdempotentAndDoesNotOverwrite() {
+            CreateResult a = onlineFlash("幂等确认券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), "DEC-1");
+
+            // 携带**不同**金额的迟到重复回调：以首次为准，不覆盖。
+            ClaimResult again = marketing.confirmGrant(a.activityId(), order, new BigDecimal("20.00"), "DEC-2");
+
+            assertTrue(again.ok());
+            assertTrue(again.replay(), "第二次必须标记成重放");
+            ActivityGrantEntity g = onlyGrant(order);
+            assertEquals(0, new BigDecimal("9.90").compareTo(g.getAmount()), "first-write-wins：金额不被第二次覆盖");
+            List<ActivityGrantEntryEntity> entries = entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo());
+            assertEquals(1, entries.size(), "重复回调不能重复追分录（uk_entry_grant_type 兜底）");
+            assertEquals(990L, entries.get(0).getAmountMinor(), "分录金额仍是首次的 +990");
+        }
+
+        @Test
+        @DisplayName("confirm 未 claim 的订单 → NOT_FOUND，不凭空建账")
+        void confirmUnknownOrderIsNotFound() {
+            CreateResult a = onlineFlash("未领确认券", 100, null);
+            String order = nextOrder(); // 从未 claim
+
+            ClaimResult r = marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), null);
+
+            assertFalse(r.ok());
+            assertTrue(marketing.grantsOfOrder(order).isEmpty(), "未 claim 的订单不凭空产生发放记录");
+        }
+
+        @Test
+        @DisplayName("confirm 亚分金额（scale>2）→ 拒绝，grant 仍 HELD、无分录")
+        void confirmSubCentAmountIsRejected() {
+            CreateResult a = onlineFlash("亚分券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+
+            ClaimResult r = marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.999"), null);
+
+            assertFalse(r.ok(), "亚分金额必须 fail-fast，不静默截断");
+            ActivityGrantEntity g = onlyGrant(order);
+            assertEquals(ActivityGrantEntity.HELD, g.getState(), "拒绝的确认不能改变状态");
+            assertTrue(entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo()).isEmpty(), "拒绝的确认不留分录");
+        }
+
+        @Test
+        @DisplayName("退款先到、支付回调迟到：confirm 一笔已 RELEASED → STATE_CONFLICT，绝不改回 CONFIRMED")
+        void confirmAfterReleaseIsStateConflict() {
+            CreateResult a = onlineFlash("迟到回调券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), null);
+            marketing.releaseGrant(order, a.activityId());
+
+            ClaimResult late = marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), null);
+
+            assertFalse(late.ok(), "已释放的发放不能再确认");
+            assertEquals(ActivityGrantEntity.RELEASED, onlyGrant(order).getState(), "绝不 RELEASED→CONFIRMED");
+        }
+    }
+
+    @Nested
+    @DisplayName("退款冲正分录（追加式红蓝字）")
+    class ReversalLedger {
+
+        @Test
+        @DisplayName("CONFIRMED→RELEASED 追加 −REVERSAL 分录，与 ISSUE 符号对称、组内守恒对平")
+        void releaseConfirmedAppendsSymmetricReversal() {
+            CreateResult a = onlineFlash("可退确认券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), null);
+
+            marketing.releaseGrant(order, a.activityId());
+
+            ActivityGrantEntity g = onlyGrant(order);
+            List<ActivityGrantEntryEntity> entries = entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo());
+            assertEquals(2, entries.size(), "退已确认的发放 = ISSUE + REVERSAL 两条分录");
+            assertEquals(ActivityGrantEntryEntity.ISSUE, entries.get(0).getEntryType());
+            assertEquals(ActivityGrantEntryEntity.REVERSAL, entries.get(1).getEntryType());
+            assertEquals(990L, entries.get(0).getAmountMinor());
+            assertEquals(-990L, entries.get(1).getAmountMinor(), "取负已存 ISSUE 分额，符号对称");
+            long sum = entries.stream().mapToLong(ActivityGrantEntryEntity::getAmountMinor).sum();
+            assertEquals(0L, sum, "按 grant_no 分组守恒对平——追加式台账的核心收益");
+            assertEquals(0, new BigDecimal("9.90").compareTo(g.getAmount()),
+                    "amount(元) 只记发放幅值，永不带冲正符号");
+        }
+
+        @Test
+        @DisplayName("HELD→RELEASED（未付即取消）不写任何分录，但仍还库存")
+        void releaseHeldWritesNoEntry() {
+            CreateResult a = onlineFlash("未付取消券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            assertEquals(99, inventoryOf(a.activityId(), a.version()));
+
+            ClaimResult rel = marketing.releaseGrant(order, a.activityId());
+
+            assertTrue(rel.ok());
+            ActivityGrantEntity g = onlyGrant(order);
+            assertTrue(entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo()).isEmpty(),
+                    "从未确认发放的释放不该凭空产生冲正分录");
+            assertEquals(100, inventoryOf(a.activityId(), a.version()), "未付取消仍要还库存");
+        }
+    }
+
+    @Nested
+    @DisplayName("发放号与币种")
+    class GrantNoAndCurrency {
+
+        @Test
+        @DisplayName("claim 即生成非空、且各单互不相同的 grant_no")
+        void claimGeneratesUniqueGrantNo() {
+            CreateResult a = onlineFlash("发放号券", 100, null);
+            String o1 = nextOrder();
+            String o2 = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", o1);
+            marketing.claimInventory(a.activityId(), null, 1, "u2", o2);
+
+            String g1 = onlyGrant(o1).getGrantNo();
+            String g2 = onlyGrant(o2).getGrantNo();
+            assertNotNull(g1);
+            assertNotNull(g2);
+            assertNotEquals(g1, g2, "grant_no 必须全局唯一（issue_id/match_key）");
+        }
+
+        @Test
+        @DisplayName("claim 时 state=HELD 不产生任何分录（HELD 占用天然不进对账）")
+        void heldClaimHasNoEntry() {
+            CreateResult a = onlineFlash("占用券", 100, null);
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            assertTrue(entryRepo.findByGrantNoOrderByIdAsc(onlyGrant(order).getGrantNo()).isEmpty());
+        }
+
+        @Test
+        @DisplayName("活动配了币种 → grant 与分录继承（大写归一）；未配 → 兜底 CNY")
+        void currencyInheritedFromActivity() {
+            // 活动配 usd（小写），写入口归一大写。
+            CreateResult a = marketing.create(flashReqWithCurrency("美元券", nextSpu(), "usd"));
+            marketing.changeStatus(a.activityId(), a.version(), ActivityStatus.ONLINE.code());
+            String order = nextOrder();
+            marketing.claimInventory(a.activityId(), null, 1, "u1", order);
+            marketing.confirmGrant(a.activityId(), order, new BigDecimal("9.90"), null);
+
+            ActivityGrantEntity g = onlyGrant(order);
+            assertEquals("USD", g.getCurrency(), "grant 继承活动币种并大写");
+            assertEquals("USD", entryRepo.findByGrantNoOrderByIdAsc(g.getGrantNo()).get(0).getCurrency(),
+                    "分录继承 grant 币种");
+        }
+    }
+
+    @Nested
+    @DisplayName("金额换算 toMinorExact fail-fast")
+    class MoneyConversion {
+
+        @Test
+        @DisplayName("2 位内精确换算；亚分 / 溢出抛 ArithmeticException")
+        void toMinorExactIsFailFast() {
+            assertEquals(990L, BenefitMath.toMinorExact(new BigDecimal("9.90")));
+            assertEquals(990L, BenefitMath.toMinorExact(new BigDecimal("9.9")));
+            assertEquals(0L, BenefitMath.toMinorExact(new BigDecimal("0.00")));
+            assertThrows(ArithmeticException.class,
+                    () -> BenefitMath.toMinorExact(new BigDecimal("9.999")), "亚分必须 fail-fast");
+            assertThrows(ArithmeticException.class,
+                    () -> BenefitMath.toMinorExact(new BigDecimal("1E30")), "溢出 long 必须 fail-fast");
+        }
+    }
+
+    @Nested
+    @DisplayName("recon 对账视图别名契约")
+    class ReconViewContract {
+
+        /**
+         * {@code recon_src_marketing} 视图只存在于一次性迁移脚本里（ddl-auto 从不建视图），其 9 列别名投影
+         * 必须严格对齐 recon {@code MarketingThreeWayScenario.marketingLikeDescriptor}。这里对 H2 fixture
+         * 执行<b>真实迁移脚本里的视图 DDL</b> 再断言投影列名：drools 侧改源列名 → 视图引用旧列名建视图即失败；
+         * 改别名 / 脚本漂移 → 断言的列名集合不符。跨仓（recon）改描述符仍需人工同步，这条把别名钉成契约。
+         */
+        @Test
+        @DisplayName("对 H2 执行迁移脚本的视图 DDL，投影列名严格对齐 recon 营销侧描述符")
+        void viewAliasProjectionMatchesReconDescriptor() throws Exception {
+            jdbc.execute(loadReconViewDdl());
+
+            Set<String> projected = jdbc.execute((ConnectionCallback<Set<String>>) con -> {
+                try (Statement st = con.createStatement();
+                     ResultSet rs = st.executeQuery("SELECT * FROM recon_src_marketing WHERE 1=0")) {
+                    ResultSetMetaData md = rs.getMetaData();
+                    Set<String> names = new HashSet<>();
+                    for (int i = 1; i <= md.getColumnCount(); i++) {
+                        names.add(md.getColumnLabel(i).toLowerCase());
+                    }
+                    return names;
+                }
+            });
+
+            assertEquals(
+                    Set.of("id", "issue_id", "order_no", "ccy", "amount_minor",
+                            "entry_type", "biz_status", "biz_time", "posting_time"),
+                    projected,
+                    "视图别名必须严格对齐 recon MarketingThreeWayScenario.marketingLikeDescriptor");
+        }
+    }
+
     // ---- helpers ----
+
+    /** 从仓库根一次性迁移脚本抽出 recon_src_marketing 视图 DDL（不含结尾分号）。 */
+    private static String loadReconViewDdl() throws Exception {
+        File sql = null;
+        for (File d = new File(System.getProperty("user.dir")).getAbsoluteFile(); d != null; d = d.getParentFile()) {
+            File f = new File(d, "deploy/mysql-grant-recon-onboarding.sql");
+            if (f.isFile()) { sql = f; break; }
+        }
+        assertNotNull(sql, "找不到 deploy/mysql-grant-recon-onboarding.sql（视图 DDL 无 CI 覆盖）");
+        String text = Files.readString(sql.toPath());
+        int start = text.indexOf("CREATE OR REPLACE VIEW");
+        assertTrue(start >= 0, "迁移脚本缺 recon_src_marketing 视图 DDL");
+        int end = text.indexOf(';', start);
+        assertTrue(end > start, "视图 DDL 未以分号结束");
+        return text.substring(start, end);
+    }
 
     private static long nextSpu() { return SPU.incrementAndGet(); }
     private static String nextOrder() { return "ORD" + ORDER.incrementAndGet(); }
+
+    /** 取某订单唯一的发放记录（本测试每单只 claim 一次）。 */
+    private ActivityGrantEntity onlyGrant(String order) {
+        List<ActivityGrantEntity> grants = marketing.grantsOfOrder(order);
+        assertEquals(1, grants.size(), "该订单应恰有一条发放记录");
+        return grants.get(0);
+    }
 
     private int inventoryOf(String activityId, Integer version) {
         return manageRepo.findFirstByActivityIdAndVersionAndIsDel(activityId, version, 0)
@@ -302,5 +577,16 @@ class GrantLedgerTest {
                 1, new BigDecimal("9.9"), "价", null, "MAX",
                 null, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null,
                 null, userInventory);
+    }
+
+    /** 带活动级币种的一口价活动（走 24 参 canonical 构造，末位 currency）。 */
+    private ActivityCreateRequest flashReqWithCurrency(String name, long spu, String currency) {
+        long now = System.currentTimeMillis();
+        return new ActivityCreateRequest(
+                null, null, name, "grant-biz", 1, name,
+                now - 3_600_000L, now + 3_600_000L, 1, null, 1, 100,
+                1, new BigDecimal("9.9"), "价", null, "MAX",
+                null, List.of(new ActivityCreateRequest.SpuBinding(1, spu)), null, null,
+                null, null, currency);
     }
 }

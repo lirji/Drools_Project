@@ -147,10 +147,28 @@ public class ActivityMarketingController {
     }
 
     /**
+     * <b>确认发放（支付成功回调）</b>——HELD→CONFIRMED，并向分录台账追加一条 ISSUE 分录（营销发放对账起账点）。
+     *
+     * <p>幂等硬保证 = CAS {@code WHERE state='HELD'}：重复回调返回 200 且 {@code replay=true}，
+     * 不重复追分录、不覆盖首次金额。状态码分流（{@link #claimStatus}）：
+     * 缺参 / 金额非正 / 亚分溢出 400；未 claim 的订单 404；已 RELEASED 的迟到回调 409（STATE_CONFLICT）。
+     *
+     * <p>{@code amount} 由回调携带（元），系统只做 {@code >0} 与精确换算校验，不重跑决策、不强校验等于报价；
+     * {@code decisionId} 作报价↔发放锚点，可选。<b>调用方须是租户上下文已就绪的内部服务</b>（见 GrantService.confirmGrant）。
+     */
+    @PostMapping("/{activityId}/confirm")
+    public ResponseEntity<?> confirm(@PathVariable("activityId") String activityId,
+                                     @RequestParam("orderId") String orderId,
+                                     @RequestParam("amount") java.math.BigDecimal amount,
+                                     @RequestParam(value = "decisionId", required = false) String decisionId) {
+        return respond(marketing.confirmGrant(activityId, orderId, amount, decisionId));
+    }
+
+    /**
      * 释放已发放的份额并归还库存——退款 / 取消 / 超时的冲正入口。
      *
      * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，用户的每人限领额度也一并作废。
-     * 幂等：重复释放返回 200 且不重复加库存。
+     * 幂等：重复释放返回 200 且不重复加库存。对已 CONFIRMED 的发放，同时向分录台账追加 REVERSAL 冲正分录。
      *
      * <p>状态码与 claim 走同一张映射表：<b>缺参是 400、真的查无此单才是 404</b>。
      * 此前两者都返回 404，客服拿到 404 无法区分「这一单确实没领过」和「调用方漏传了 orderId」。
@@ -184,7 +202,7 @@ public class ActivityMarketingController {
         return switch (kind) {
             case BAD_REQUEST -> 400;
             case NOT_FOUND -> 404;
-            case OUT_OF_STOCK, PER_USER_LIMIT -> 409;
+            case OUT_OF_STOCK, PER_USER_LIMIT, STATE_CONFLICT -> 409;
         };
     }
 

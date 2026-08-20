@@ -43,7 +43,11 @@ import java.time.Instant;
                 // 幂等键：同一单里同一个活动只能领一次。**这是防重复发放的唯一硬保证**，
                 // 不能靠应用层「先查再插」——那是 check-then-act，低并发测不出、大促必现。
                 @UniqueConstraint(name = "uk_grant_tenant_order_activity",
-                        columnNames = {"tenant_id", "order_id", "activity_id"})
+                        columnNames = {"tenant_id", "order_id", "activity_id"}),
+                // 发放号全局唯一（**跨租户单列**，不含 tenant_id）：它是分录台账与 recon 的 issue_id/match_key，
+                // 账务/渠道侧按同一 grant_no join，必须全局不撞。唯一性功能上由 claim 生成的 UUID 保证，
+                // 这条约束是最后兜底。⚠️ 生产靠显式迁移建，不依赖 ddl-auto:update（对既有表补 uk 不可靠）。
+                @UniqueConstraint(name = "uk_grant_no", columnNames = {"grant_no"})
         },
         indexes = {
                 // 每人限领的计数路径
@@ -93,6 +97,23 @@ public class ActivityGrantEntity extends TenantScopedEntity {
     @Column(name = "decision_id", length = 64)
     private String decisionId;
 
+    /**
+     * 发放号——claim 时生成的全局唯一 UUID（{@code uk_grant_no}）。它是<b>分录台账与 recon 对账的
+     * {@code issue_id}/match_key</b>：一笔发放的 ISSUE/REVERSAL 分录都挂在它上面，账务/渠道侧按它 join。
+     *
+     * <p><b>新列追加在子类字段末尾</b>（保 {@code EntityJsonOrderTest} 的身份前缀不变）。
+     * 不带 orderId 的旧三参 claim 不落流水 → 无 grant_no → 天然不进对账（既有可接受行为）。
+     */
+    @Column(name = "grant_no", length = 64)
+    private String grantNo;
+
+    /**
+     * 币种——claim 从活动（{@code activity_manage.currency}）继承，兜底 CNY。分录继承本列。
+     * 对账按币种分桶，空币种会让 recon 分桶异常，故写入口与 claim 双兜底。
+     */
+    @Column(name = "currency", length = 8)
+    private String currency;
+
     public ActivityGrantEntity() {}
 
     public ActivityGrantEntity(String activityId, Integer version, String userId, String orderId,
@@ -136,4 +157,10 @@ public class ActivityGrantEntity extends TenantScopedEntity {
 
     public String getDecisionId() { return decisionId; }
     public void setDecisionId(String decisionId) { this.decisionId = decisionId; }
+
+    public String getGrantNo() { return grantNo; }
+    public void setGrantNo(String grantNo) { this.grantNo = grantNo; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
 }

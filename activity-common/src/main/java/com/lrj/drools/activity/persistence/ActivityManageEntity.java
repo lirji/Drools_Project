@@ -104,6 +104,14 @@ public class ActivityManageEntity extends SoftDeletableTenantEntity {
     @Column(name = "submitted_by", length = 128)
     private String submittedBy;
 
+    /**
+     * 活动级币种（发放对账按币种分桶）。写入口 {@code saveManage} 归一：blank→CNY、大写。
+     * claim 时被 {@code activity_grant.currency} 继承；存量行由迁移脚本一次性回填 CNY。
+     * <p>新列追加在子类字段末尾，保 {@code EntityJsonOrderTest} 身份前缀常绿。
+     */
+    @Column(name = "currency", length = 8)
+    private String currency;
+
     public ActivityManageEntity() {}
 
     public Long getId() { return id; }
@@ -155,4 +163,7 @@ public class ActivityManageEntity extends SoftDeletableTenantEntity {
 
     public String getSubmittedBy() { return submittedBy; }
     public void setSubmittedBy(String submittedBy) { this.submittedBy = submittedBy; }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
 }

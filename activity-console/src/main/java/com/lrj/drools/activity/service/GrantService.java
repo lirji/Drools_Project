@@ -1,15 +1,29 @@
 package com.lrj.drools.activity.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lrj.drools.activity.config.GrantOutboxProperties;
+import com.lrj.drools.activity.engine.BenefitMath;
 import com.lrj.drools.activity.persistence.ActivityGrantEntity;
+import com.lrj.drools.activity.persistence.ActivityGrantEntryEntity;
+import com.lrj.drools.activity.persistence.ActivityGrantEntryRepository;
+import com.lrj.drools.activity.persistence.ActivityGrantOutboxEntity;
+import com.lrj.drools.activity.persistence.ActivityGrantOutboxRepository;
 import com.lrj.drools.activity.persistence.ActivityGrantRepository;
 import com.lrj.drools.activity.persistence.ActivityManageEntity;
 import com.lrj.drools.activity.persistence.ActivityManageRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * <b>发放台账</b>：抢占库存（claim）/ 冲正（release）/ 按单查发放记录。
@@ -26,18 +40,35 @@ import java.util.List;
 @Service
 public class GrantService {
 
+    private static final Logger log = LoggerFactory.getLogger(GrantService.class);
+
     private static final int NOT_DEL = 0;
+
+    /** 币种兜底：活动/发放没显式配币种时按人民币记账，避免 recon 按币种分桶时空币种异常。 */
+    private static final String DEFAULT_CURRENCY = "CNY";
 
     private final ActivityManageRepository manageRepo;
     private final ActivityGrantRepository grantRepo;
+    private final ActivityGrantEntryRepository grantEntryRepo;
+    private final ActivityGrantOutboxRepository grantOutboxRepo;
     private final ActivityVersionResolver versions;
+    private final GrantOutboxProperties outboxProps;
+    private final ObjectMapper objectMapper;
 
     public GrantService(ActivityManageRepository manageRepo,
                         ActivityGrantRepository grantRepo,
-                        ActivityVersionResolver versions) {
+                        ActivityGrantEntryRepository grantEntryRepo,
+                        ActivityGrantOutboxRepository grantOutboxRepo,
+                        ActivityVersionResolver versions,
+                        GrantOutboxProperties outboxProps,
+                        ObjectMapper objectMapper) {
         this.manageRepo = manageRepo;
         this.grantRepo = grantRepo;
+        this.grantEntryRepo = grantEntryRepo;
+        this.grantOutboxRepo = grantOutboxRepo;
         this.versions = versions;
+        this.outboxProps = outboxProps;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -51,14 +82,19 @@ public class GrantService {
      * 状态码已经把这个信息表达出去了，加字段等于给已经稳定的 JSON 契约再开一个面。
      */
     public enum FailureKind {
-        /** 入参本身不成立（缺 activityId / 数量非正 / 限领活动没带 userId）。 */
+        /** 入参本身不成立（缺 activityId / 数量非正 / 限领活动没带 userId / confirm 金额非正或亚分溢出）。 */
         BAD_REQUEST,
-        /** 活动、版本或发放记录不存在。 */
+        /** 活动、版本或发放记录不存在（含 confirm 收到未 claim 订单的支付回调）。 */
         NOT_FOUND,
         /** 余量不足或活动不在可用窗口——原子 UPDATE 更新了 0 行。 */
         OUT_OF_STOCK,
         /** 超出每人限领。 */
-        PER_USER_LIMIT
+        PER_USER_LIMIT,
+        /**
+         * 状态机冲突：目标迁移与当前状态不相容且重试也不会成功（如 confirm 一笔已 RELEASED 的发放）。
+         * 与 {@code OUT_OF_STOCK} 同为 409 但语义不同——后者重试可能成，这个换多少次都不成。
+         */
+        STATE_CONFLICT
     }
 
     /**
@@ -178,6 +214,10 @@ public class GrantService {
         if (order != null) {
             grant = new ActivityGrantEntity(activityId, v, user, order, n,
                     null, ActivityGrantEntity.HELD, null, now);
+            // 发放对账地基：claim 即生成全局唯一发放号（recon 的 issue_id/match_key）+ 继承活动币种。
+            // amount/amount_minor/entry_type 留空——发放金额到 confirm 才落，分录到 confirm/release 才追加。
+            grant.setGrantNo(UUID.randomUUID().toString());
+            grant.setCurrency(coalesceCurrency(row.getCurrency()));
             grantRepo.saveAndFlush(grant);
         }
 
@@ -206,10 +246,97 @@ public class GrantService {
     }
 
     /**
+     * <b>确认发放（支付成功回调）</b>——HELD→CONFIRMED，并向分录台账追加一条 ISSUE 分录（{@code +amount×100}）。
+     * 这是营销发放对账的<b>起账点</b>：从这一刻起，这笔发放才对 recon 可见（有 amount_minor 的分录）。
+     *
+     * <p><b>幂等硬保证 = CAS {@code WHERE state='HELD'}</b>（{@link ActivityGrantRepository#confirmIfHeld}）：
+     * <ul>
+     *   <li>{@code affected==1} → 首次确认，同事务追 ISSUE 分录（{@code uk_entry_grant_type} 兜底防重）；</li>
+     *   <li>{@code affected==0} → 回读一次<b>仅用于响应分流</b>（非 check-then-act）：
+     *       无行 → {@code NOT_FOUND}（收到未 claim 订单的回调，不凭空建账）；
+     *       已 {@code CONFIRMED} → 幂等重放（{@code replay=true}，<b>不覆盖金额、不重复追分录</b>，first-write-wins）；
+     *       已 {@code RELEASED} → {@code STATE_CONFLICT}（退款先于迟到回调，<b>绝不 RELEASED→CONFIRMED</b>）。</li>
+     * </ul>
+     *
+     * <p><b>金额来源</b>：{@code amount}（元）由回调携带，drools 不重跑决策、不强校验 {@code amount==报价}
+     * （decision 是无状态只读平面，无报价表可回查；实体注释已明确「记的是发放，可能≠报价」）。
+     * 系统只对 amount 做 {@code >0} 与 {@link BenefitMath#toMinorExact 精确换算}（亚分/溢出 fail-fast→400）校验。
+     *
+     * <p><b>租户上下文</b>：confirm 与 claim/release 走同一条鉴权链，{@code @TenantId} 为 CAS 自动追加租户谓词、
+     * 为分录 insert 自动落租户值——因此调用方必须是租户上下文已就绪的内部服务（订单/支付适配层），非匿名 webhook。
+     *
+     * @param decisionId 报价↔发放锚点（可选）；只落行不强校验
+     */
+    @Transactional
+    public ClaimResult confirmGrant(String activityId, String orderId, BigDecimal amount, String decisionId) {
+        String order = blankToNull(orderId);
+        if (order == null || activityId == null || activityId.isBlank()) {
+            return ClaimResult.fail(FailureKind.BAD_REQUEST, activityId, null, "缺 orderId 或 activityId");
+        }
+        if (amount == null || amount.signum() <= 0) {
+            return ClaimResult.fail(FailureKind.BAD_REQUEST, activityId, null, "确认金额必须为正");
+        }
+        // 亚分（scale>2）/ 溢出 fail-fast → 400，绝不静默截断/四舍五入（记的是既定金额，亚分即脏输入）。
+        long minor;
+        try {
+            minor = BenefitMath.toMinorExact(amount);
+        } catch (ArithmeticException e) {
+            return ClaimResult.fail(FailureKind.BAD_REQUEST, activityId, null,
+                    "金额精度非法（最多 2 位小数）或超出可记范围: " + amount);
+        }
+
+        Instant now = Instant.now();
+        int affected = grantRepo.confirmIfHeld(order, activityId, amount, decisionId, now);
+        if (affected == 1) {
+            // 首次确认：回读拿 grant_no/currency（CAS 的 clearAutomatically 保证读到 CONFIRMED 新态），追 ISSUE 分录。
+            ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElseThrow();
+            // 存量兜底：本特性上线前的 HELD 行 grant_no 可能为 NULL（ddl-auto 加的是可空列）。迁移回填前的
+            // 迟到回调若把 NULL 传给分录表（grant_no NOT NULL）会 DataIntegrityViolation→500 卡死确认——
+            // 这里惰性补一个 UUID（与 claim 同源），dirty checking 同事务落库，既解卡死又不依赖迁移先跑。
+            String grantNo = g.getGrantNo();
+            if (grantNo == null) {
+                grantNo = UUID.randomUUID().toString();
+                g.setGrantNo(grantNo);
+            }
+            grantEntryRepo.saveAndFlush(new ActivityGrantEntryEntity(
+                    grantNo, order, activityId, ActivityGrantEntryEntity.ISSUE,
+                    minor, coalesceCurrency(g.getCurrency()), now, now));
+            // 同事务写发放传播 outbox（GRANT_ISSUED，+X）：发放状态 + 分录 + 事件原子落库，杜绝「发了钱但事件丢」。
+            // 首次确认由 CAS 保证只发生一次，故此处至多入队一条；门控关时不写（对既有零影响）。
+            enqueueGrantEvent(ActivityGrantOutboxEntity.EVENT_GRANT_ISSUED, ActivityGrantEntryEntity.ISSUE,
+                    grantNo, order, activityId, minor, coalesceCurrency(g.getCurrency()), now);
+            return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(), null, false, g.getId());
+        }
+
+        // affected==0：回读仅用于响应分流，不改写任何状态。
+        ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElse(null);
+        if (g == null) {
+            return ClaimResult.fail(FailureKind.NOT_FOUND, activityId, null,
+                    "没有对应的 HELD 发放记录（未 claim 的订单不凭空建账）");
+        }
+        if (ActivityGrantEntity.CONFIRMED.equals(g.getState())) {
+            // 幂等重放：不覆盖首次金额、不重复追分录（first-write-wins）。
+            // 但迟到回调携带**不同**金额时，静默丢弃会让这笔金额矛盾无迹可寻——留一条 warn 供 recon 归因。
+            if (g.getAmount() != null && g.getAmount().compareTo(amount) != 0) {
+                log.warn("[grant] confirm 重放金额不一致 order={} activity={} 保留={} 丢弃={}",
+                        order, activityId, g.getAmount(), amount);
+            }
+            return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(), "已确认", true, g.getId());
+        }
+        // RELEASED（退款先于迟到回调）→ 冲突；绝不把已冲正的发放改回已确认。
+        return ClaimResult.fail(FailureKind.STATE_CONFLICT, activityId, g.getVersion(),
+                "发放已释放，不能再确认（RELEASED→CONFIRMED 被拒）");
+    }
+
+    /**
      * 释放已发放的份额并归还库存——退款 / 取消 / 超时的冲正入口。
      *
      * <p>此前这条路径完全不存在：订单取消后库存永久蒸发，且用户的「每人限领」额度也一并作废。
-     * 幂等：已经 RELEASED 的记录直接返回成功，不会重复加库存。
+     * 幂等：已经 RELEASED 的记录直接返回成功，不会重复加库存、不会重复追分录。
+     *
+     * <p><b>分录台账（追加式）</b>：只有 {@code CONFIRMED→RELEASED} 才是真冲正——追加一条 REVERSAL 分录，
+     * 金额 = <b>取负已存 ISSUE 分额</b>（不用 {@code -amount×100} 重算，杜绝漂移、天然避开 amount 为 null）。
+     * {@code HELD→RELEASED}（未付即取消）从未 ISSUE、无分录，绝不凭空产生一笔没有对应发放的冲正。
      */
     @Transactional
     public ClaimResult releaseGrant(String orderId, String activityId) {
@@ -218,20 +345,100 @@ public class GrantService {
             // 缺参 ≠ 查无此单：前者补上参数就能成功，后者换多少次都不会成功。
             return ClaimResult.fail(FailureKind.BAD_REQUEST, activityId, null, "缺 orderId 或 activityId");
         }
-        ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElse(null);
-        if (g == null) return ClaimResult.fail(FailureKind.NOT_FOUND, activityId, null, "没有对应的发放记录");
-        if (ActivityGrantEntity.RELEASED.equals(g.getState())) {
-            // 幂等：重复释放不重复加库存
+        // 状态迁移走 CAS（复刻 confirmIfHeld），不再「读快照→算 wasConfirmed→save 全行」——
+        // 老路径与并发 confirmGrant 有丢失更新竞态，且两个并发 release 会各自还一次库存。
+        // 先试 HELD 再试 CONFIRMED：状态机无回边（HELD→CONFIRMED→RELEASED），两次 CAS 都落空即已 RELEASED。
+        Instant now = Instant.now();
+        boolean wasConfirmed;
+        if (grantRepo.releaseIfHeld(order, activityId, now) == 1) {
+            wasConfirmed = false;
+        } else if (grantRepo.releaseIfConfirmed(order, activityId, now) == 1) {
+            wasConfirmed = true;
+        } else {
+            ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElse(null);
+            if (g == null) return ClaimResult.fail(FailureKind.NOT_FOUND, activityId, null, "没有对应的发放记录");
+            // 本次 CAS 未命中 → 已被（并发或先前的）释放置为 RELEASED：幂等重放，不重复加库存、不重复追分录。
             return new ClaimResult(true, activityId, g.getVersion(), 0, "已释放", true, g.getId());
         }
 
-        Instant now = Instant.now();
-        g.setState(ActivityGrantEntity.RELEASED);
-        g.setModifiedStime(now);
-        grantRepo.save(g);
+        // CAS 已原子置 RELEASED；回读仅取 version/quantity/grant_no（数据用途，非状态决策）。
+        ActivityGrantEntity g = grantRepo.findFirstByOrderIdAndActivityId(order, activityId).orElseThrow();
+        if (wasConfirmed) {
+            appendReversalIfIssued(g, now);
+        }
         // 归还不判活动状态与时间窗：活动结束之后仍可能有退款进来（见 incrementInventory 的说明）
         manageRepo.incrementInventory(activityId, g.getVersion(), g.getQuantity(), now);
         return new ClaimResult(true, activityId, g.getVersion(), g.getQuantity(), null, false, g.getId());
+    }
+
+    /**
+     * 对已确认发放追加 REVERSAL 冲正分录——金额取负已存 ISSUE 分额（不重算）。
+     *
+     * <p>null 守卫：{@code grant_no} 为空（旧三参 claim 的历史遗留）或找不到 ISSUE 分录、或其分额为空时，
+     * <b>不追加</b>——没有对应 ISSUE 就不该产生凭空的冲正，宁可不写也不写一笔孤儿 REVERSAL。
+     * {@code uk_entry_grant_type} 保证 REVERSAL 至多一条（release 幂等已在上游拦重复释放）。
+     */
+    private void appendReversalIfIssued(ActivityGrantEntity g, Instant now) {
+        String grantNo = g.getGrantNo();
+        if (grantNo == null) return;
+        ActivityGrantEntryEntity issue =
+                grantEntryRepo.findFirstByGrantNoAndEntryType(grantNo, ActivityGrantEntryEntity.ISSUE).orElse(null);
+        if (issue == null || issue.getAmountMinor() == null) return;
+        long reversalMinor = -issue.getAmountMinor();
+        String currency = coalesceCurrency(issue.getCurrency());
+        grantEntryRepo.saveAndFlush(new ActivityGrantEntryEntity(
+                grantNo, issue.getOrderId(), g.getActivityId(), ActivityGrantEntryEntity.REVERSAL,
+                reversalMinor, currency, now, now));
+        // 存量 cutover 兜底：若这笔发放在门控关时确认（写了 ISSUE 分录，但没写 GRANT_ISSUED 事件），翻开关后
+        // 再 release，只发 GRANT_REVERSED 会给下游一条无对应 +X 发放的孤儿冲正，按 grant_no 三方 join 永久对不平。
+        // 故在写 REVERSED 前先按幂等补发对应 GRANT_ISSUED（+X，用已存 ISSUE 分额重建）：正常路径 confirm 已入队，
+        // (grant_no,event_type) 软查重使其为 no-op；仅 cutover 缺口才真正补发，使下游 +X/−X 成对、净额为零。
+        enqueueGrantEvent(ActivityGrantOutboxEntity.EVENT_GRANT_ISSUED, ActivityGrantEntryEntity.ISSUE,
+                grantNo, issue.getOrderId(), g.getActivityId(), issue.getAmountMinor(), currency, now);
+        // 同事务写发放传播 outbox（GRANT_REVERSED，−X）：只有真追了 REVERSAL 分录才发事件，绝不产生没有对应
+        // 冲正的孤儿事件。HELD→RELEASED 从不进这里（无 ISSUE），故天然不写。CONFIRMED→RELEASED 由 CAS 保证一次。
+        enqueueGrantEvent(ActivityGrantOutboxEntity.EVENT_GRANT_REVERSED, ActivityGrantEntryEntity.REVERSAL,
+                grantNo, issue.getOrderId(), g.getActivityId(), reversalMinor, currency, now);
+    }
+
+    /**
+     * 同事务把一条发放事件追加进 {@code activity_grant_outbox}（PENDING）。门控关时直接返回（对既有零影响）。
+     *
+     * <p><b>幂等</b>：先按 {@code (grant_no, event_type)} 软查重（唯一约束是硬兜底）——confirm/release 的首次
+     * 写点由 CAS 保证只发生一次，这层软查重是防御性的，避免任何重复路径在同事务内触发唯一键异常污染外层事务
+     * （PostgreSQL 上会毒化整个事务）。payload 即下游消费的事件全文 JSON，带幂等键 {@code grant_no:event_type}。
+     */
+    private void enqueueGrantEvent(String eventType, String entryType, String grantNo, String orderId,
+                                   String activityId, long amountMinor, String currency, Instant now) {
+        if (!outboxProps.isEnabled()) return;
+        if (grantOutboxRepo.findFirstByGrantNoAndEventType(grantNo, eventType).isPresent()) {
+            return; // 幂等重放：事件已入队，不重复写（uk 兜底）。
+        }
+        String payload = buildEventPayload(eventType, entryType, grantNo, orderId, activityId,
+                amountMinor, currency, now);
+        grantOutboxRepo.save(new ActivityGrantOutboxEntity(
+                grantNo, orderId, activityId, eventType, entryType, amountMinor, currency, payload, now));
+    }
+
+    /** 构造事件全文 JSON（供下游按 grant_no 落 issue_id 消费；键序稳定用 LinkedHashMap）。 */
+    private String buildEventPayload(String eventType, String entryType, String grantNo, String orderId,
+                                     String activityId, long amountMinor, String currency, Instant now) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("idempotencyKey", grantNo + ":" + eventType);
+        body.put("grantNo", grantNo);
+        body.put("orderId", orderId);
+        body.put("activityId", activityId);
+        body.put("eventType", eventType);
+        body.put("entryType", entryType);
+        body.put("amountMinor", amountMinor);
+        body.put("currency", currency);
+        body.put("bizTime", now.toString());
+        try {
+            return objectMapper.writeValueAsString(body);
+        } catch (JsonProcessingException e) {
+            // 简单 map 序列化理论上不会失败；万一失败则连发放一起回滚（原子性优先于「发了但事件无载荷」）。
+            throw new IllegalStateException("发放事件 payload 序列化失败 grantNo=" + grantNo, e);
+        }
     }
 
     /** 某订单上的全部发放记录。客服「这一单用了哪些优惠」的数据源。 */
@@ -242,5 +449,10 @@ public class GrantService {
 
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /** 币种兜底：空/空白 → CNY（分录 amount_minor 与 recon 分桶都要求非空币种）。 */
+    private static String coalesceCurrency(String ccy) {
+        return blankToNull(ccy) == null ? DEFAULT_CURRENCY : ccy;
     }
 }

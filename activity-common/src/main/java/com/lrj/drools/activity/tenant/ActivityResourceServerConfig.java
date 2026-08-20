@@ -64,6 +64,9 @@ public class ActivityResourceServerConfig {
                                         "/activity-marketing/*/status",
                                         "/activity-marketing/bulk-status",
                                         "/activity-marketing/*/claim",
+                                        // confirm 会**确认发放并落金额**（写 amount + 追 ISSUE 分录，进对账账本）——
+                                        // 不设防的话，纯决策 M2M token 就能确认任意订单的发放 = 越权改账。
+                                        "/activity-marketing/*/confirm",
                                         // release 会**把库存加回去**并解除该用户的限领占用——
                                         // 不设防的话，反复调它就能把一个限量活动的库存刷到任意大。
                                         "/activity-marketing/*/release",

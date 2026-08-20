@@ -121,6 +121,8 @@ export interface ActivityCreateRequest {
   spuBindings: Array<{ storeId: number | null; spuId: number | null }> | null
   poolRefs: number[] | null
   gifts: unknown[] | null
+  /** 活动级币种（发放对账 ccy）；缺省 = null → 后端 CNY 兜底。 */
+  currency: string | null
 }
 
 /** create 响应 */

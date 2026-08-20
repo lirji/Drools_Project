@@ -75,6 +75,7 @@ interface Draft {
   gifts: Array<Record<string, unknown>>
   spu: Array<{ storeId: number | string; spuId: number | string }>
   pool: Array<{ poolId: number | string }>
+  currency: string
   tree: GroupNode
 }
 
@@ -86,6 +87,7 @@ function newDraft(): Draft {
     startLocal: toLocalInput(Date.now() - 3600000), endLocal: toLocalInput(Date.now() + 7 * 86400000),
     districtIds: '', amount: '', maxDiscount: '', rangeMin: '', rangeMax: '', nth: 2, strategy: 'MAX',
     ladder: [], gifts: [], spu: [{ storeId: 1, spuId: '' }], pool: [{ poolId: '' }],
+    currency: 'CNY',
     tree: emptyGroup(),
   }
 }
@@ -497,6 +499,7 @@ async function loadForEdit(id: string, signal?: AbortSignal): Promise<void> {
   dr.activityId = id
   dr.requestId = uuid() // 编辑必须新铸 requestId，否则被幂等短路
   dr.activityType = m.activityType; dr.name = m.activityName; dr.bizLine = m.bizLine || ''
+  dr.currency = m.currency || 'CNY'
   dr.rule = m.activityRule || ''; dr.priority = m.priority; dr.inventory = m.inventory
   dr.areaType = m.activityAreaType || 1; dr.districtIds = m.districtIds || ''
   dr.startLocal = isoToLocal(m.activityStartTime); dr.endLocal = isoToLocal(m.activityEndTime)
@@ -573,6 +576,7 @@ async function submit(): Promise<void> {
     // 买赠与加价购共用 activity_gift 承载，但 absoluteAmount 的含义不同：
     // 买赠 = 赠品价值，加价购 = **加多少钱换购**（决策侧 AddOnPurchaseService 读的就是它）
     gifts: dr.activityType === 5 || dr.activityType === 6 ? dr.gifts : null,
+    currency: dr.currency || null,
   }
   try {
     submitCtrl?.abort()
@@ -661,6 +665,13 @@ onBeforeRouteLeave(async () => {
           <div class="fg">
             <label>活动名称 *<input v-model="dr.name" :placeholder="appliedPlaybook || ''" data-testid="form-name" /></label>
             <label>业务线 (bizLine)<input v-model="dr.bizLine" placeholder="如 mall" /></label>
+            <label>币种 (currency)
+              <select v-model="dr.currency" data-testid="form-currency">
+                <option value="CNY">CNY 人民币</option>
+                <option value="USD">USD 美元</option>
+                <option value="HKD">HKD 港币</option>
+              </select>
+            </label>
             <label class="full">活动类型
               <Segmented
                 :model-value="dr.activityType"

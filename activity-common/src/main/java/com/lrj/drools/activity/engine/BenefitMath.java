@@ -32,6 +32,27 @@ public final class BenefitMath {
     private BenefitMath() {}
 
     /**
+     * 元（{@link BigDecimal}）→ 带符号最小单位（分，{@code long}）的<b>精确</b>换算——发放对账落分额用。
+     *
+     * <p><b>刻意区别于本类的 {@link #MONEY_ROUNDING}（向下取整）</b>：那是「算减免」的 fail-closed
+     * （多算的钱宁可不发）；这里是「记一笔<b>既定</b>金额」，出现亚分（scale&gt;2）或溢出只可能是脏输入，
+     * 必须 <b>fail-fast</b> 而不是静默截断/四舍五入——悄悄改钱比报错危险得多。
+     *
+     * <p>{@code movePointRight(2)} 把元移成分，{@code setScale(0, UNNECESSARY)} 在还有小数位时抛
+     * {@link ArithmeticException}（拦亚分），{@code longValueExact()} 在超出 long 时抛
+     * {@link ArithmeticException}（拦溢出）。调用方（confirm）捕获它 → 400，不入库。
+     *
+     * @param yuan 金额（元）。非 null；符号透传（本方法不判正负，正负校验在 confirm 入口做）
+     * @return 带符号分额
+     * @throws ArithmeticException scale&gt;2（亚分）或超出 {@code long} 范围（溢出）
+     */
+    public static long toMinorExact(BigDecimal yuan) {
+        return yuan.movePointRight(MONEY_SCALE)
+                .setScale(0, RoundingMode.UNNECESSARY)
+                .longValueExact();
+    }
+
+    /**
      * 按折数算减免额：{@code 减免 = 订单金额 × (10 − 折数) / 10}，向下取整到分，再按封顶截断。
      *
      * <p><b>返回 null 表示「算不出来」，调用方必须当成「本活动不给优惠」而不是「减 0 元」</b>——

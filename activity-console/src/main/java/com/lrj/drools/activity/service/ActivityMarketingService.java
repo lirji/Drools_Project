@@ -1011,6 +1011,8 @@ public class ActivityMarketingService {
         // 空白 requestId 归一成 null（ISSUE-05）：表示"不启用幂等"，多次普通创建不因空白键互撞。
         m.setRequestId(version == 1 ? blankToNull(req.requestId()) : null);
         m.setSubmittedBy(ActorContext.get()); // P1-8：记录本版本提交人（发布时校验四眼）
+        // 活动级币种（发放对账按币种分桶）：blank→CNY、大写归一。claim 时被 grant.currency 继承。
+        m.setCurrency(normalizeCcy(req.currency()));
         m.setIsDel(NOT_DEL);
         m.setCreatedStime(now);
         m.setModifiedStime(now);
@@ -1030,6 +1032,12 @@ public class ActivityMarketingService {
 
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s;
+    }
+
+    /** 活动币种归一：null/blank → CNY，否则去空格 + 大写（发放对账按币种分桶，兜底见 DESIGN §4）。 */
+    private static String normalizeCcy(String ccy) {
+        String c = blankToNull(ccy);
+        return c == null ? "CNY" : c.trim().toUpperCase();
     }
 
     private void saveRule(ActivityCreateRequest req, String activityId, int version, Instant now) {
@@ -1240,6 +1248,12 @@ public class ActivityMarketingService {
     /** 委派 {@link GrantService#claimInventory(String, Integer, Integer)}（旧三参签名）。 */
     public GrantService.ClaimResult claimInventory(String activityId, Integer version, Integer quantity) {
         return grants.claimInventory(activityId, version, quantity);
+    }
+
+    /** 委派 {@link GrantService#confirmGrant}（支付回调确认发放，追加 ISSUE 分录）。 */
+    public GrantService.ClaimResult confirmGrant(String activityId, String orderId,
+                                                 java.math.BigDecimal amount, String decisionId) {
+        return grants.confirmGrant(activityId, orderId, amount, decisionId);
     }
 
     /** 委派 {@link GrantService#releaseGrant}。 */

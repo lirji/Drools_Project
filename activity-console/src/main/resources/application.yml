@@ -18,6 +18,14 @@ spring:
     open-in-view: false
     show-sql: false
 
+  # 调度线程池 >1：发放传播中继(GrantOutboxRelay)在下游 webhook 慢/宕时会同步阻塞其调度线程。默认单线程
+  # 调度器会让它与活动生命周期上下线(ActivityLifecycleScheduler)抢同一根线程，把「下游可用性」耦合进
+  # 「活动定时上/下线的及时性」。给调度器多于 1 根线程即可解耦（两个 @Scheduled 各得一线程）。
+  task:
+    scheduling:
+      pool:
+        size: 2
+
 # Step 15: Actuator + Prometheus 指标暴露。
 #   GET /actuator/prometheus  → Prometheus 抓取端点 (文本格式)
 #   GET /actuator/metrics/drools.rules.fired → 单个指标的 JSON 视图 (调试用)
@@ -77,6 +85,23 @@ activity:
     #    console 侧约 33 个不同的 @TestPropertySource 组合 ≈ 20s。要省掉就照 seed-catalog-data 的老办法,
     #    在各测试的 @TestPropertySource 里逐个加 seed-district-data=false。
     seed-district-data: true
+  # grant_no 跨系统传播 · transactional outbox（推模式）。发放确认/冲正时同事务写带 grant_no 的事件到
+  #   activity_grant_outbox，中继异步经可插拔 dispatcher 推给下游账务/渠道系统，使其按 grant_no(=recon issue_id) 三方 join。
+  #   ⚠️ 默认关（enabled=false）：既有部署零感知——不写 outbox、不调度中继。开启后才写事件并推送。
+  #   webhook-url 为空 → LoggingGrantEventDispatcher（只记日志不真发）；非空 → @Primary WebhookGrantEventDispatcher。
+  #   relay-mode: local(Spring @Scheduled) / xxl(XXL-JOB grantOutboxRelaySweep) / 其它值=不自动调度（仅手动/测试触发）。
+  #   投递语义至少一次：下游须按 (grant_no,event_type) 幂等消费（payload 带该幂等键）。
+  grant-outbox:
+    enabled: ${ACTIVITY_GRANT_OUTBOX_ENABLED:false}
+    relay-mode: ${ACTIVITY_GRANT_OUTBOX_RELAY_MODE:local}
+    relay-interval-ms: 5000
+    relay-initial-delay-ms: 5000
+    poll-batch-size: 200
+    max-attempt: 5
+    webhook-url: ${ACTIVITY_GRANT_OUTBOX_WEBHOOK_URL:}
+    webhook-header-name: ${ACTIVITY_GRANT_OUTBOX_WEBHOOK_HEADER_NAME:}
+    webhook-header-value: ${ACTIVITY_GRANT_OUTBOX_WEBHOOK_HEADER_VALUE:}
+    webhook-timeout-ms: 3000
   # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
   # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
   #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地开发, **不是 fail-closed**。

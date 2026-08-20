@@ -51,9 +51,39 @@ public record ActivityCreateRequest(
          * 配了它的活动，claim 必须带 {@code userId}，否则一律拒绝——
          * 无从判断是不是同一个人时放行，等于这条限制不存在。
          */
-        Integer userInventory
+        Integer userInventory,
+
+        /**
+         * 活动级币种（发放对账按币种分桶）。null / blank = 兜底 CNY（写入口 {@code saveManage} 归一为大写）。
+         *
+         * <p>末尾追加分量：前端活动配币种是后续 frontend-plan 的事，本次后端先落地并兜底 CNY，
+         * 存量与旧调用方按 null 走默认，不阻塞对账地基。
+         */
+        String currency
 ) {
-    /** 兼容 22 参构造（带封顶、不带每人限领）。 */
+    /**
+     * 兼容 23 参构造（带每人限领、不带币种）——这是加 currency 之前的 canonical 签名。
+     *
+     * <p>加字段用附加构造而不是改所有调用点：这个 record 被二十多处按位置构造，
+     * 逐个补 {@code null} 只会制造一大片与本次「营销发放对账」无关的 diff，
+     * 真正在动账的几行会淹没在里面。currency 缺省 = null → 走 CNY 兜底。
+     */
+    public ActivityCreateRequest(
+            String requestId, String activityId, String activityName, String bizLine,
+            Integer activityType, String activityRule, Long activityStartTime, Long activityEndTime,
+            Integer activityAreaType, String districtIds, Integer priority, Integer inventory,
+            Integer redPackageTakeType, BigDecimal redPackageAmount, String redPackageAmountUnit,
+            String redPackageRangeAmount, String discountStrategy, ConditionNode eligibilityConditionTree,
+            List<SpuBinding> spuBindings, List<Long> poolRefs, List<GiftInput> gifts,
+            BigDecimal redPackageMaxDiscount, Integer userInventory) {
+        this(requestId, activityId, activityName, bizLine, activityType, activityRule,
+                activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
+                redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
+                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts,
+                redPackageMaxDiscount, userInventory, null);
+    }
+
+    /** 兼容 22 参构造（带封顶、不带每人限领、不带币种）。 */
     public ActivityCreateRequest(
             String requestId, String activityId, String activityName, String bizLine,
             Integer activityType, String activityRule, Long activityStartTime, Long activityEndTime,
@@ -66,7 +96,7 @@ public record ActivityCreateRequest(
                 activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
                 redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
                 discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts,
-                redPackageMaxDiscount, null);
+                redPackageMaxDiscount, null, null);
     }
 
     /**
@@ -86,7 +116,7 @@ public record ActivityCreateRequest(
         this(requestId, activityId, activityName, bizLine, activityType, activityRule,
                 activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
                 redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
-                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts, null, null);
+                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts, null, null, null);
     }
 
     /** 手动商品绑定行。 */
