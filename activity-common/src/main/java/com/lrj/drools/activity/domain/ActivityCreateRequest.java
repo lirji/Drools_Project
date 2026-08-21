@@ -59,8 +59,30 @@ public record ActivityCreateRequest(
          * <p>末尾追加分量：前端活动配币种是后续 frontend-plan 的事，本次后端先落地并兜底 CNY，
          * 存量与旧调用方按 null 走默认，不阻塞对账地基。
          */
-        String currency
+        String currency,
+
+        /** 当前活动版本到企业权益 SKU 的受控映射；null/空表示继续走 legacy 发放。 */
+        List<AwardBindingInput> awardBindings
 ) {
+    public ActivityCreateRequest {
+        awardBindings = awardBindings == null ? List.of() : List.copyOf(awardBindings);
+    }
+
+    /** 兼容加 awardBindings 之前的 24 参 canonical 签名。 */
+    public ActivityCreateRequest(
+            String requestId, String activityId, String activityName, String bizLine,
+            Integer activityType, String activityRule, Long activityStartTime, Long activityEndTime,
+            Integer activityAreaType, String districtIds, Integer priority, Integer inventory,
+            Integer redPackageTakeType, BigDecimal redPackageAmount, String redPackageAmountUnit,
+            String redPackageRangeAmount, String discountStrategy, ConditionNode eligibilityConditionTree,
+            List<SpuBinding> spuBindings, List<Long> poolRefs, List<GiftInput> gifts,
+            BigDecimal redPackageMaxDiscount, Integer userInventory, String currency) {
+        this(requestId, activityId, activityName, bizLine, activityType, activityRule,
+                activityStartTime, activityEndTime, activityAreaType, districtIds, priority, inventory,
+                redPackageTakeType, redPackageAmount, redPackageAmountUnit, redPackageRangeAmount,
+                discountStrategy, eligibilityConditionTree, spuBindings, poolRefs, gifts,
+                redPackageMaxDiscount, userInventory, currency, null);
+    }
     /**
      * 兼容 23 参构造（带每人限领、不带币种）——这是加 currency 之前的 canonical 签名。
      *

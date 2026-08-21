@@ -49,7 +49,7 @@ public class ActivityResourceServerConfig {
                                                            TenantProperties props) throws Exception {
         String writeAuthority = props.getAuth().getConsoleWriteAuthority();
         http
-                .securityMatcher("/activity-marketing/**", "/decision/v1/**")
+                .securityMatcher("/activity-marketing/**", "/activity-awards/**", "/decision/v1/**")
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> {
@@ -70,6 +70,8 @@ public class ActivityResourceServerConfig {
                                         // release 会**把库存加回去**并解除该用户的限领占用——
                                         // 不设防的话，反复调它就能把一个限量活动的库存刷到任意大。
                                         "/activity-marketing/*/release",
+                                        // AwardIntent 会触发真实权益发放，必须和活动上下线使用同一运营写权限。
+                                        "/activity-awards/v1/intents",
                                         // 决策平面上唯一的**写动作**：快照回滚会立刻改变这条业务线
                                         // 每一次决策实际发出去的钱（切回上一代物料）。它不写数据库，
                                         // 但它跟 status/claim 一样是运营级操作，用同一个权限守。

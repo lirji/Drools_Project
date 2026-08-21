@@ -46,7 +46,7 @@ public class MultiTenancyConfig {
     @ConditionalOnProperty(name = "activity.tenant.auth.enabled", havingValue = "false", matchIfMissing = true)
     FilterRegistrationBean<TenantContextFilter> tenantContextFilter(TenantProperties props) {
         FilterRegistrationBean<TenantContextFilter> reg = new FilterRegistrationBean<>(new TenantContextFilter(props));
-        reg.addUrlPatterns("/activity-marketing/*", "/decision/v1/*");
+        reg.addUrlPatterns("/activity-marketing/*", "/activity-awards/*", "/decision/v1/*");
         reg.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
         reg.setName("tenantContextFilter");
         return reg;

@@ -23,6 +23,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.lrj.drools.activity.benefit.AwardIntentContract.AwardItemIntent;
+import com.lrj.drools.activity.benefit.AwardIntentContract.BenefitType;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -79,6 +82,7 @@ public class ActivityMarketingService {
     private final PoolRefRepository poolRefRepo;
     private final ActivityStrategyRepository strategyRepo;
     private final ActivityIdempotencyRepository idempotencyRepo;
+    private final ActivityAwardBindingRepository awardBindingRepo;
 
     /** 「当前是哪一版」的唯一出口（两套互斥定义都在那里）。 */
     private final ActivityVersionResolver versions;
@@ -112,6 +116,7 @@ public class ActivityMarketingService {
                                     PoolRefRepository poolRefRepo,
                                     ActivityStrategyRepository strategyRepo,
                                     ActivityIdempotencyRepository idempotencyRepo,
+                                    ActivityAwardBindingRepository awardBindingRepo,
                                     ActivityVersionResolver versions,
                                     GrantService grants,
                                     RuleConditionTranslator translator,
@@ -132,6 +137,7 @@ public class ActivityMarketingService {
         this.poolRefRepo = poolRefRepo;
         this.strategyRepo = strategyRepo;
         this.idempotencyRepo = idempotencyRepo;
+        this.awardBindingRepo = awardBindingRepo;
         this.versions = versions;
         this.grants = grants;
         this.translator = translator;
@@ -237,6 +243,7 @@ public class ActivityMarketingService {
         saveRule(req, activityId, version, now);
         saveCondition(mergedTree, constraint, activityId, version, now);
         saveGifts(req, activityId, version, now);
+        saveAwardBindings(req, activityId, version, now);
         saveManualBindings(req, activityId, version, now);
         int autoBound = savePoolRefsAndAutoBind(req, activityId, version, now);
         saveStrategyIfPresent(req, now);
@@ -546,7 +553,8 @@ public class ActivityMarketingService {
                 poolRefRepo.findByActivityIdAndVersionAndIsDel(activityId, v, NOT_DEL),
                 currentOnlineVersion(activityId),
                 agg.size(),
-                spuTotal);
+                spuTotal,
+                awardBindingRepo.findByActivityIdAndVersionOrderByIdAsc(activityId, v));
     }
 
     /** 手动绑定的 {@code bind_source} 取值（0）。自动=1。收窄详情 bindings 时用。 */
@@ -1098,6 +1106,49 @@ public class ActivityMarketingService {
         }
     }
 
+    private void saveAwardBindings(ActivityCreateRequest req, String activityId, int version, Instant now) {
+        if (req.awardBindings() == null || req.awardBindings().isEmpty()) return;
+        Set<String> modes = req.awardBindings().stream().map(binding -> binding.deliveryMode())
+                .collect(Collectors.toSet());
+        if (modes.size() != 1) throw new IllegalArgumentException("one activity version cannot mix award delivery modes");
+        Set<String> keys = new HashSet<>();
+        for (var binding : req.awardBindings()) {
+            validateAwardBinding(binding, keys);
+            awardBindingRepo.save(new ActivityAwardBindingEntity(activityId, version,
+                    binding.sourceKind(), binding.sourceRef(), binding.benefitSkuId(),
+                    binding.deliveryMode(), binding.amountMode(), binding.itemTemplateJson(), now));
+        }
+    }
+
+    private void validateAwardBinding(com.lrj.drools.activity.domain.AwardBindingInput binding, Set<String> keys) {
+        String key = binding.sourceKind() + ':' + binding.sourceRef() + ':' + binding.benefitSkuId();
+        if (!keys.add(key)) throw new IllegalArgumentException("duplicate award binding: " + key);
+        try {
+            JsonNode template = objectMapper.readTree(binding.itemTemplateJson());
+            if (template == null || !template.isObject()) {
+                throw new IllegalArgumentException("award item template must be a JSON object");
+            }
+            for (String forbidden : List.of("channelCode", "routeId", "expression", "script", "tenantId")) {
+                if (template.has(forbidden)) {
+                    throw new IllegalArgumentException("award item template contains forbidden field: " + forbidden);
+                }
+            }
+            BenefitType type = BenefitType.valueOf(template.path("benefitType").asText());
+            long quantity = template.path("quantity").asLong(1);
+            Long amount = template.hasNonNull("amountMinor") ? template.path("amountMinor").longValue() : null;
+            String currency = template.hasNonNull("currency") ? template.path("currency").asText() : null;
+            if ("DECISION".equals(binding.amountMode())) {
+                amount = type == BenefitType.CASH ? 1L : null;
+            }
+            new AwardItemIntent("binding-validation", binding.benefitSkuId(), type,
+                    amount, type == BenefitType.CASH ? currency : null, quantity, Map.of());
+        } catch (IllegalArgumentException invalid) {
+            throw invalid;
+        } catch (Exception invalidJson) {
+            throw new IllegalArgumentException("invalid award item template", invalidJson);
+        }
+    }
+
     private void saveManualBindings(ActivityCreateRequest req, String activityId, int version, Instant now) {
         if (req.spuBindings() == null) return;
         for (ActivityCreateRequest.SpuBinding b : req.spuBindings()) {
@@ -1233,7 +1284,8 @@ public class ActivityMarketingService {
                                  List<PoolRefEntity> poolRefs,
                                  Integer servingVersion,
                                  int storeCount,
-                                 long spuTotal) {}
+                                 long spuTotal,
+                                 List<ActivityAwardBindingEntity> awardBindings) {}
     // ================================================================ 秒杀库存扣减（一口价配套）
     //
     // 实现全部在 {@link GrantService}——发放台账与配置写入口零共享状态。

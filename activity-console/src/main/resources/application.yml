@@ -102,6 +102,16 @@ activity:
     webhook-header-name: ${ACTIVITY_GRANT_OUTBOX_WEBHOOK_HEADER_NAME:}
     webhook-header-value: ${ACTIVITY_GRANT_OUTBOX_WEBHOOK_HEADER_VALUE:}
     webhook-timeout-ms: 3000
+  # 企业权益中台连接器。活动版本的 deliveryMode 决定 LEGACY/SHADOW/CENTER；中继默认关闭，
+  # consumer/API 与 connector SQL 就绪后再逐租户开启。生产 bearer token 由 secret 注入，不落配置文件。
+  award-intent:
+    relay-enabled: ${ACTIVITY_AWARD_INTENT_RELAY_ENABLED:false}
+    benefit-center-url: ${BENEFIT_CENTER_URL:http://localhost:8083}
+    bearer-token: ${BENEFIT_CENTER_BEARER_TOKEN:}
+    batch-size: ${ACTIVITY_AWARD_INTENT_BATCH_SIZE:100}
+    max-attempts: ${ACTIVITY_AWARD_INTENT_MAX_ATTEMPTS:10}
+    relay-interval-ms: ${ACTIVITY_AWARD_INTENT_RELAY_INTERVAL_MS:5000}
+    lease-ms: ${ACTIVITY_AWARD_INTENT_LEASE_MS:30000}
   # P0-4 多租户隔离 (Hibernate @TenantId)。租户来源: 默认 X-Tenant-Id header, auth.enabled=true 时从 JWT 的 aud 解析。
   # ⚠️ 诚实说明: 本 application.yml 是 **dev-run 配置**, 下面开了 dev-default + 关了 auth ——
   #    此档 X-Tenant-Id header 即权威身份(信谁填谁), 只适合本地开发, **不是 fail-closed**。

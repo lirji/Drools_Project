@@ -11,6 +11,7 @@
 > 想理解引擎底层匹配原理？看 **[docs/rete-intuition.md](docs/rete-intuition.md)**。
 > 纠结用 Drools 还是轻量表达式引擎（Aviator）？看 **[docs/drools-vs-aviator.md](docs/drools-vs-aviator.md)**（选型对照）+ 可运行的 **[examples/aviator/AviatorComparison.java](examples/aviator/AviatorComparison.java)**（Aviator 独立对照程序，含跟 Step 2 折扣同题对照）。
 > Drools 是不是只配营销活动平台用？看 **[docs/drools-use-cases.md](docs/drools-use-cases.md)**（应用场景与定位，澄清"营销专用"误区 + 什么时候不该上 Drools）。
+> 企业权益发放接入见 **[docs/benefit-center-connector.md](docs/benefit-center-connector.md)**（版本化 binding、LEGACY/SHADOW/CENTER、幂等 outbox 与回切边界）。
 
 ## 技术栈
 

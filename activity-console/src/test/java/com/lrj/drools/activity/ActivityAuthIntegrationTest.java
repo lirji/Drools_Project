@@ -137,6 +137,21 @@ class ActivityAuthIntegrationTest {
     }
 
     @Test
+    void awardIntentTriggerRequiresAuthenticationAndWriteAuthority() throws Exception {
+        String body = "{\"activityId\":\"ACT-X\",\"activityVersion\":1,\"sourceRequestId\":\"REQ-X\","
+                + "\"recipientRef\":\"USER-X\",\"scene\":\"DISCOUNT\",\"decisionContext\":{"
+                + "\"spuIdList\":[1],\"userTags\":[],\"orderAmount\":100,\"quantity\":1}}";
+        mvc.perform(post("/activity-awards/v1/intents")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+
+        mvc.perform(post("/activity-awards/v1/intents")
+                        .header("Authorization", "Bearer " + mint("activity-acme-cid"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void addOnValidationAliasWithoutToken_unauthorized() throws Exception {
         mvc.perform(post("/activity-marketing/addon/options")
                         .contentType(MediaType.APPLICATION_JSON)
