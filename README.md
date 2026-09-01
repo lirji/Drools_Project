@@ -1,8 +1,12 @@
 # Activity Rule Platform
 
 面向多租户营销场景的**活动规则平台**。项目采用 Maven 四模块，包含两个独立 Spring Boot 应用
-（`activity-console` 写平面 8081 / `activity-decision` 只读决策平面 8082）、Vue 3 管理控制台和 Drools 规则能力中心。
+（`activity-console` 写平面 8081 / `activity-decision` 只读决策平面 8082）、Vue 3 管理控制台和 Drools 规则能力实验室。
 `drools-lab` 保留 24 组可独立调用的规则能力，用于验证引擎特性与技术选型，不承担活动决策主链路。
+
+> **文档基线：2026-08-28。** README 与 `docs/*.md` 中标记为“活文档”的内容以当前工作树为准；
+> `docs/plans/**`、`docs/delivery/**`、`docs/tests/**` 和 dated QA 报告是当时的方案/证据快照，不会被改写成今日现状。
+> 代码区域到权威文档的映射与同步点见 [docs/doc-map.md](docs/doc-map.md)。
 
 > 想先看**整个项目怎么搭的**（模块拓扑 / 读写平面 / 决策链路 / 发布模型 / 关键不变量）？看 **[docs/architecture.md](docs/architecture.md)**（架构总览）。
 > 想看**这个项目里有哪些技术点**（面试 / 答辩 / onboarding 向，每条带代码位置与追问点）？看 **[docs/tech-highlights.md](docs/tech-highlights.md)**。
@@ -12,6 +16,7 @@
 > 纠结用 Drools 还是轻量表达式引擎（Aviator）？看 **[docs/drools-vs-aviator.md](docs/drools-vs-aviator.md)**（选型对照）+ 可运行的 **[examples/aviator/AviatorComparison.java](examples/aviator/AviatorComparison.java)**（Aviator 独立对照程序，含跟 Step 2 折扣同题对照）。
 > Drools 是不是只配营销活动平台用？看 **[docs/drools-use-cases.md](docs/drools-use-cases.md)**（应用场景与定位，澄清"营销专用"误区 + 什么时候不该上 Drools）。
 > 企业权益发放接入见 **[docs/benefit-center-connector.md](docs/benefit-center-connector.md)**（版本化 binding、LEGACY/SHADOW/CENTER、幂等 outbox 与回切边界）。
+> 前端当前路由、代理、构建与测试入口见 **[docs/frontend.md](docs/frontend.md)**；历史视觉方案仍在 `docs/plans/frontend-*`。
 
 ## 技术栈
 
@@ -93,8 +98,8 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 
 # 一次编译/测试整个 reactor (4 模块):
 ./mvnw clean package        # 两个 app 各出可执行 jar
-./mvnw test                 # 跑全 reactor 测试。2026-08-12 本机实跑 476 通过:
-                            #   common 193 (含 3 skipped) / drools-lab 0 / console 256 / decision 27
+./mvnw test                 # 跑全 reactor 测试。2026-08-28 本机实跑 524 个测试（3 skipped）:
+                            #   common 203 (含 3 skipped) / drools-lab 0 / console 294 / decision 27
                             # drools-lab 不产出可执行用例——它唯一的 @Test 类 VipDiscountSheetGenerator
                             # 命名不匹配 surefire 默认模式, 从不运行 (Step 7 那节有单独跑法)
 # ⚠ 别用「求和 surefire XML 文件」来数用例数, 会少 52 个: DroolsBenefitGoldenSetTest 继承
@@ -115,12 +120,12 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 > 全部支持环境变量覆盖 (`DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD`)。
 > 不想装 MySQL 就加 `-Dspring-boot.run.profiles=h2` 退回 H2 file 模式。
 
-## 🖥 Web 控制台与规则能力中心
+## 🖥 Web 控制台与规则能力 API
 
-前端已做**前后端分离**：一个 Vue3 + Vite + TypeScript 的 SPA（源码在 `frontend/`），挂在后端
-**<http://localhost:8081/ui/>** 下。它把 **全部 Step 1–24 的 REST 端点** + **活动引擎控制台** 做成可点选、
-可编辑、可运行的面板——不用记 `curl`，直接选示例、改 JSON、点「运行」，看**结构化摘要**（折扣账本、
-推荐、审计时间线、TMS 前后对比、会员升级、DMN 决策链、活动资格……）+ 原始响应 + HTTP 状态。
+前端已做**前后端分离**：一个 Vue 3 + Vite + TypeScript 的 SPA（源码在 `frontend/`），挂在后端
+**<http://localhost:8081/ui/>** 下。当前 UI 聚焦活动运营：概览、活动列表/编辑/详情、玩法模板与优惠验证。
+Step 1–24 的 REST 接口仍由 `drools-lab` 随 console 暴露，但旧的教学 Demo catalog 页面已在产品化重构中删除；
+这些接口的调用示例以本文各 Step 与 [docs/steps-guide.md](docs/steps-guide.md) 为准。
 
 根路径 **<http://localhost:8081/>** 是平台落地页，指向 `/ui/`。
 
@@ -128,15 +133,15 @@ DB_USERNAME=root DB_PASSWORD=yourpass \
 
 ```bash
 # ① 前端热更新开发（推荐日常）：Vite dev server :5173，API 反代到 8081
-cd frontend && npm install && npm run dev
-# 浏览器打开 http://localhost:5173/
+cd frontend && npm ci && npm run dev
+# 浏览器打开 http://localhost:5173/ui/
 
 # ② 一条命令全栈起：console 的 -Pfrontend 触发 npm build 并把 dist 拷进 static/ui/
 ./mvnw -pl activity-console -Pfrontend spring-boot:run -Dspring-boot.run.profiles=h2
 # 浏览器打开 http://localhost:8081/ui/
 
 # ③ 生产样式：Casdoor :8000 已启动时，一键配置 dev 登录资源并部署整栈
-./deploy.sh --provision-auth                               # 网关 http://localhost:8095/ui/console
+./deploy.sh --provision-auth  # 网关 http://localhost:${DROOLS_UI_PORT:-8095}/ui/console
 # 完整交付：先 mvn clean package（含测试 + Vue），再构建镜像并启动上述全部服务
 ./deploy.sh --full
 # 只发布 Vue + nginx，不重启 console / decision / MySQL / 监控
@@ -148,7 +153,11 @@ cd frontend && npm install && npm run dev
 
 Docker Compose 默认启用 Casdoor auth：console 的 `/activity-marketing/**` 与 decision 的 `/decision/v1/**` 都要求有效 Bearer；`/ui/**`、`/actuator/health` 和公开的 `auth-config` 保持匿名。浏览器使用 `http://localhost:8000`，容器拉 JWKS 使用 `host.docker.internal:8000`。本地测试账号为 `acme/act-alice`（`act-alice-dev-pass-01`）与 `beta/act-bob`（`act-bob-dev-pass-02`）。
 
-受 `console-write-authority` 保护的写端点共 **6 个**：`POST /create`、`POST /{id}/status`、`POST /bulk-status`、`POST /{id}/claim`、`POST /{id}/release`（`release` 会把库存加回去并解除限领占用，不设防就能把限量活动的库存刷到任意大，所以它必须在名单里），外加决策平面上的 `POST /decision/v1/snapshot/rollback`（它不写数据库、只切本进程的快照指针，但切一下就改变这条业务线每一次决策实际发出去的钱，是运营级操作，用同一个权限守）。auth 环境应配置 `activity.tenant.auth.console-write-authority`（例如 `SCOPE_activity.write`），只给运营写 token 该 authority；纯决策 token 缺权限时返回 403。该配置为空时只要求 authenticated，不应当作正式权限策略。
+配置 `console-write-authority` 后，共有 **8 个**高风险 POST 入口要求该权限：活动的 `create`、单条
+`status`、`bulk-status`、`claim`、`confirm`、`release`，权益中台的 `POST /activity-awards/v1/intents`，以及
+决策平面的 `POST /decision/v1/snapshot/rollback`。其中 confirm/award-intent 会改账或触发真实权益，release
+会归还库存，rollback 会立即改变决策物料；纯决策 token 不应拥有这些权限。配置为空时只要求
+authenticated，不应当作正式权限策略。
 
 如需回滚到原 header-only 开发档：
 
@@ -172,6 +181,15 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 - **优惠验证屏**（`/ui/console/validate`）：从上述 12 张卡直接派生场景，再额外补 1 个 random 形态场景；按 **discount / gifts / addon** 三通道调真实决策、分别展示命中金额、赠品明细或「选项 → 权威报价」，不再只打印原始 JSON。场景只准备输入与通道，不指定活动、不强制命中。第 N 件折切到订单行编辑，`spuIdList / orderAmount / quantity / lines` 只从行项唯一汇总，避免两份金额互相打架。
 - **权益形态**：`redPackageAmountUnit` 从装饰字段变成判别位——`元` = 固定/阶梯金额、`折` = 折扣（必须配封顶，减免 2 位小数**向下取整**）、`价` = 一口价秒杀、`件折` = 第 N 件折（要调用方传 `lines` 逐行单价）。算不出来一律"不给优惠"而不是减 0 元（fail-closed，0 会以 0 参与 MAX 竞争挤掉别的活动）。<br>**减免基数是「本活动圈到的商品」而不是整单**：绑定关系从候选筛选器升级成**权益作用域**——作用域覆盖本次请求全部 SPU 时按订单金额算（今天绝大多数流量在这一档），是真子集时按订单行小计算，拿不到订单行就判本活动不适用。否则一张只绑了 B 的「9.9 一口价」会把「A 5000 元 + B」的整车按 9.9 成交。注意直减/满减（`元`）形态**不走这个基数**，它发的是固定金额，靠候选筛选把不该发的挡在门外。
 - **两阶段与库存**：加价购是 `POST /decision/v1/addon/options`（列出能换购什么）+ `POST /decision/v1/addon/quote?activityId=&item=`（权威报价，价格重查、选项失效返回 409）；console 同步提供 `/activity-marketing/addon/{options,quote}` 别名，验证页不需绕过自身的租户/JWT 边界。秒杀试算与加价购报价都**不占库存**；秒杀权威扣减仍是写平面 `POST /activity-marketing/{activityId}/claim`（抢到 200；没抢到按**失败种类**分流状态码：入参非法 / 限领活动没带 `userId` = **400**，活动或版本不存在 = **404**，余量不足 / 不在可用窗口 / 超出每人限领 = **409**。此前四种一律 409，下游按「409 = 重试可能成功」写重试逻辑时，「参数写错」那一类会被无限重试到活动结束。响应体一字节没变，`FailureKind` 标了 `@JsonIgnore` 只用于服务端分流）。它**已幂等**：先插 `activity_grant` 发放流水（唯一约束 `tenant+order_id+activity_id`）再原子扣减，重复提交返回首次结果；扣减失败会把刚插的流水删掉，不留「有账无货」。同一张流水表还顺带解决另外三件事——每人限领（`userInventory` 按流水计数，配了限领却不传 `userId` 直接拒绝）、退款冲正 `POST /{id}/release`（幂等；`orderId` 缺参 / 空串现在是 **400**，只有**确实查不到发放记录**才是 404——404 会让调用方以为「这一单没领过、不用冲正」，从而永久漏掉库存与限领额度的归还）、客服查单 `GET /activity-marketing/grants?orderId=`，在 auth 环境中受 `console-write-authority` 保护；decision 连的是只读账号，物理上写不了库。
+- **确认、台账与传播**：支付成功调用 `POST /activity-marketing/{activityId}/confirm`，以数据库 CAS 把
+  `HELD → CONFIRMED`，并在同一事务追加不可变 `ISSUE` 分录；已确认后 release 追加负数 `REVERSAL` 分录。
+  `activity_grant_entry` 保留红蓝两条账，不会把正向发放覆盖掉。可选 `activity.grant-outbox.enabled=true`
+  会在同一事务写 `activity_grant_outbox`，再以 local/XXL-JOB relay 至 webhook；投递是 at-least-once，
+  下游必须按 `(grant_no,event_type)` 幂等。生产迁移顺序与完整配置见 [docs/deployment.md](docs/deployment.md)。
+- **企业权益中台**：活动版本可保存 `awardBindings` 并选择 `LEGACY`、`SHADOW` 或 `CENTER`。
+  `POST /activity-awards/v1/intents` 会重新执行服务器端权威决策；CENTER 模式将原子化 AwardIntent 写入独立
+  outbox，再由租约式 relay 调 `benefit-center /openapi/v1/award-orders`。连接器默认不发送，灰度与回切契约见
+  [docs/benefit-center-connector.md](docs/benefit-center-connector.md)。
 - **决策指标**：`GET /decision/v1/metrics`（耗时 + 回退次数）与 `GET /decision/v1/by-activity`（按活动的命中量 `hits` **与发出的减免金额 `amounts`**——命中次数回答不了「这个活动花了多少预算」；标签数有上限，超出并进 `__over_cap__`，响应自带 `scope: single-instance`）。两者都是**本进程视角**，跨实例汇总仍看 Prometheus。<br>⚠️ **Prometheus 侧有一处标签值变更**：`activity_decision_source_total` 的 `scene` 从 `ActivityType.name()`（`RED_PACKAGE` / `BUY_AND_GET` / `ADD_ON_PURCHASE`）统一成了本类其它九个指标共用的 `DecisionScene.code()`（`spu-discount` / `gifts` / `addon`）——此前 `activity_decision_source_total{scene="gifts"}` 查出来**恒为空**，而「按 scene 把回退率与来源占比 join 起来看」正是这条指标存在的理由。`deploy/` 下的 Grafana 看板与 Prometheus 配置都不消费它（已核对），只有手写的临时查询/个人看板需要改标签值；历史数据仍在旧标签下可查。
 - **快照诊断与回滚**：`GET /decision/v1/snapshot[?activityId=]` 列出本租户的快照桶（bizLine / generation / builtAt / ageSeconds / activityCount），带 `activityId` 时直接回答「它在哪个桶 / 不在任何桶」——`bizLine` 为空的活动永远进不了任何桶，这条故障下 provenance 三个值全绿（走的是快照、代际正常、快照也很新），只有这个端点照得出来；它只读、不发起决策、也不占 `activityId` 标签位。`POST /decision/v1/snapshot/rollback?bizLine=` 把该业务线的决策指针切回上一代，**立刻生效**（没有上一代可回时返回 409，而不是假装成功）。此前 `DecisionSnapshotStore.rollback` 全仓只有测试在调，「回滚是求值出 bug 时的止损手段」是张空头支票。两条推论运维必须知道：**① 只影响被打到的那个实例**（多实例要逐实例调）；**② 下一次代际推进会把它盖掉**——它是止血，真正的修复仍是在 console 侧改配置再发布一代。
 
@@ -185,15 +203,17 @@ DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true ./deploy.sh
 ```bash
 cd frontend && npm test && npm run typecheck && npm run build
 
-# 下面五套默认就打编排的网关 BASE=http://localhost:8095
+# 下列脚本可用 BASE 指向编排网关；未覆盖网关端口时默认 8095
 npm run e2e:visual      # 视觉 / 移动端红线守卫（触控 ≥44px、零横向溢出…）
 npm run e2e:bench       # 工作台：行归并 / 批量四段流程 / 版本正确性 / 密度持久化 / 侧板 Esc
 npm run e2e:playbooks   # 玩法模板 + 跨屏预填
 npm run e2e:validate    # 优惠验证：13 场景 / 三通道 / 第 N 件行项 / 加价购两阶段
 npm run e2e:ruler       # 阶梯刻度尺
 
-# 早期四套的默认 BASE 还停在 :8097，打网关要显式给
-BASE=http://localhost:8095 npm run e2e:dev        # 同理 e2e:catalog / e2e:tablet / e2e:phone
+# dev/tablet/phone 显式指定网关最稳妥；e2e:catalog 已随旧 Demo catalog UI 删除
+BASE=http://localhost:${DROOLS_UI_PORT:-8095} npm run e2e:dev
+BASE=http://localhost:${DROOLS_UI_PORT:-8095} npm run e2e:tablet
+BASE=http://localhost:${DROOLS_UI_PORT:-8095} npm run e2e:phone
 npm run e2e:oidc        # 默认 :8095，但需本机 Casdoor :8000（唯一走 auth 档的一套）
 ```
 
@@ -224,7 +244,7 @@ auth 档开启后，统一门户可链接到目标前端自己的 `/ui/login`：
 https://rules.example.com/ui/login?returnTo=%2Fhome
 ```
 
-本机统一门户使用 `http://localhost:8095/ui/login?...`，目标前端建立 PKCE verifier/state 后再跳 Casdoor；门户本身不接触 token。
+本机统一门户使用 `http://localhost:${DROOLS_UI_PORT:-8095}/ui/login?...`，目标前端建立 PKCE verifier/state 后再跳 Casdoor；门户本身不接触 token。
 
 正式入口先停在 Drools 登录页。登录页读取后端 `/activity-marketing/auth-config`，用户输入的 tenant 必须精确命中 `webClients` allowlist，随后才把它映射为 public clientId，并复用既有 `beginLogin` 生成 PKCE 后跳 Casdoor。未知 tenant 和 auth-config 错误都不会发起 OIDC；`returnTo` 只接受站内单斜杠路径。登录页提供与其他能力平台一致的双栏品牌卡、移动端紧凑头、可用租户快捷选择，以及配置加载/失败、表单校验和跳转中的独立状态。
 

@@ -7,6 +7,15 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/deploy/docker-compose.yml"
+
+# 工作区统一入口端口由 auth-platform 中央注册表提供；独立 checkout 仍可用 8095 默认值。
+PLATFORM_PORTS_LOADER="${PLATFORM_PORTS_LOADER:-${SCRIPT_DIR}/../auth-platform/deploy/load-platform-ports.sh}"
+if [[ -r "${PLATFORM_PORTS_LOADER}" ]]; then
+  # shellcheck source=/dev/null
+  . "${PLATFORM_PORTS_LOADER}"
+fi
+export DROOLS_UI_PORT="${DROOLS_UI_PORT:-8095}"
+export DROOLS_REDIRECT_URI="${DROOLS_REDIRECT_URI:-http://localhost:${DROOLS_UI_PORT}/ui/auth/callback}"
 TIMEOUT_SECONDS=300
 RETRY_COUNT=3
 CORE_ONLY=false
@@ -63,7 +72,7 @@ usage() {
   --timeout <秒>    健康检查超时时间，默认 300 秒
   --retries <次数>  拉取或构建失败时的重试次数，默认 3 次
   --dry-run         只校验环境并打印部署计划，不构建或启动容器
-  --provision-auth  部署前幂等配置本机 Casdoor 的 acme/beta SPA 应用、8095 回调和测试用户
+  --provision-auth  部署前幂等配置本机 Casdoor 的 acme/beta SPA 应用、中央端口回调和测试用户
   -h, --help        显示帮助
 
 示例：
@@ -525,7 +534,7 @@ if [[ "${PROVISION_AUTH}" == true ]]; then
     || die "Casdoor provision 脚本不存在：${SCRIPT_DIR}/scratchpad/casdoor-spa-provision.sh"
   command -v jq >/dev/null 2>&1 || die "--provision-auth 需要 jq"
   command -v curl >/dev/null 2>&1 || die "--provision-auth 需要 curl"
-  info "幂等配置本机 Casdoor SPA 应用、8095 callback 与测试用户…"
+  info "幂等配置本机 Casdoor SPA 应用、${DROOLS_UI_PORT} callback 与测试用户…"
   bash "${SCRIPT_DIR}/scratchpad/casdoor-spa-provision.sh"
   success "Casdoor 本地认证资源已就绪"
 fi

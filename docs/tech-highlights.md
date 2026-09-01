@@ -1,5 +1,7 @@
 # 技术点清单
 
+> 活文档。最后核对：2026-08-28；已纳入发放不可变分录、两类 transactional outbox 与权益中台连接器。
+
 > 把这个仓库里**值得讲**的技术点成体系列出来：每条给「解决什么问题 → 怎么做的 → 代码在哪 → 非显然之处」。
 > 面试、答辩、给新同事做 onboarding 都能直接用。
 >
@@ -853,6 +855,29 @@ Step 1–24 教学 controller，全局 advice 会把它们的错误行为一起�
 
 ## 十一、工程化
 
+### 11.1 状态机与不可变分录分离
+
+`activity_grant` 只表达 HELD→CONFIRMED→RELEASED 状态；`activity_grant_entry` 以追加式 ISSUE(+X) /
+REVERSAL(-X) 记录账务事实。confirm/release 的 CAS、分录与 outbox 同事务，外部 HTTP 留给 relay。
+这避免在同一行把 +X 覆盖成 -X，导致对账无法逐笔勾兑。
+
+**代码**：`GrantService` / `ActivityGrantEntryEntity` / `GrantLedgerTest`
+
+**可被追问**：为什么 HELD→RELEASED 不写 REVERSAL？因为从未 ISSUE，凭空写负分录会制造没有正向起点的退款。
+
+### 11.2 两类 outbox，各守一类幂等
+
+- grant outbox 传播已经发生的确认/冲正，键为 `(grant_no,event_type)`，支持退避、DEAD 与 redrive；
+- AwardIntent outbox 发送要由 benefit-center 履约的意图，键为 `(tenant,sourceSystem,sourceRequestId)`，
+  用租约 owner + CAS 支持多实例 relay。
+
+两者都是 at-least-once；“数据库只写一条”不等于“网络只到一次”，下游仍必须幂等。
+
+**代码**：`GrantOutboxRelay` / `AwardIntentOutboxRelay` / `ActivityAwardIntentService`
+
+**可被追问**：为什么不在业务事务里直接 HTTP？下游超时会放大锁持有时间，且“本地已提交、网络响应丢失”
+无法靠一次事务获得跨系统 exactly-once。
+
 - **Maven 四模块 + 依赖方向即架构约束**：`decision ↛ drools-lab`，
   于是 decision 的 jar 甩掉 `kie-ci`（会拉进 maven-core / aether）与 `kie-dmn`，
   且**写能力在物理上不可达**（classpath 上没有写平面 bean）。
@@ -884,5 +909,6 @@ Step 1–24 教学 controller，全局 advice 会把它们的错误行为一起�
 | `rollback` 只能滚一次 | 只保留一代，显式设计；且它**只影响被调到的那个实例**、下一次代际推进会把它盖掉（见 §4.1） |
 | "活动不存在"仍报 400 | 语义上是 404，但今天它走 `IllegalArgumentException` → 400。改成 404 是面向调用方的状态码变更（前端 / 脚本 / e2e 都会看到），要单独立项，不塞进异常分类那一批 |
 | `bizLine` 为空的活动进不了任何快照桶 | 写平面不强制必填，兜底重建也只遍历**已存在**的桶。现在构建期会数一遍并打 `activity.decision.snapshot.orphan` + WARN（从"完全静默"变成"有读数"），但根治要么是写入口必填、要么是给它一个默认桶 |
+| 外部 relay 默认关闭且 Compose 不内置下游 | grant webhook 与 benefit-center 都需要显式 SQL、secret、租户/SKU 映射和开关；仓库测试只证明本地契约，不代表下游已部署或真实发放已验收 |
 
 更完整的清单见 [`activity-marketing.md`](activity-marketing.md) 的「已知落差」一节。

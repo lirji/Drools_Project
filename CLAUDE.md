@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+> 文档同步点：2026-08-28（HEAD `08c7b6e` + 当前未提交的中央端口注册适配）。带日期的
+> `docs/plans/**` 是历史快照；当前架构与运行方式优先看 `docs/{architecture,deployment,activity-marketing,frontend}.md`。
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 这是给在本仓库工作的 Claude Code 的指南，描述项目用途、技术栈、约定与已踩过的坑。
@@ -17,7 +20,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `activity-console` | 应用 · 8081 | 写平面（含批量上下线 / 秒杀库存 claim）+ 复用 drools-lab 暴露 Step 1–24 全端点 + 前端 SPA 托管（`/ui/`）+ **唯一 DDL 执行者**；依赖 common + drools-lab |
 | `activity-decision` | 应用 · 8082 | 只读决策热路径 `/decision/v1`（含加价购两阶段 + 指标聚合）+ 发布代际轮询预热**兼决策快照构建/切换**；**只依赖 common，不依赖 drools-lab**（jar 更轻，甩掉 kie-ci/DMN），M2.2 起连只读 DB 账号（仅 SELECT）、`ddl-auto: validate`，DDL 由 console 独占 |
 
-两 app 主类都放根包 `com.lrj.drools`（`ConsoleApplication` / `DecisionApplication`，`scanBasePackages/@EntityScan/@EnableJpaRepositories = com.lrj.drools`）；decision 的 classpath 上没有写平面 bean / `DroolsConfig`，结构上就写不了。本地整套编排见 `deploy/`（nginx 网关 host `:8095` + 两 app + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）。
+两 app 主类都放根包 `com.lrj.drools`（`ConsoleApplication` / `DecisionApplication`，`scanBasePackages/@EntityScan/@EnableJpaRepositories = com.lrj.drools`）；decision 的 classpath 上没有写平面 bean / `DroolsConfig`，结构上就写不了。本地整套编排见 `deploy/`（nginx 网关 host `${DROOLS_UI_PORT:-8095}` + 两 app + MySQL 单库双账号 + XXL-JOB + Prometheus `:9090` + Grafana `:3001`）。
 
 ### 决策链路现状（2026-08 · 分层引擎）
 
@@ -120,8 +123,8 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=activity_platform DB_USERNAME=root DB_PAS
 ./mvnw -pl activity-decision spring-boot:run -Dspring-boot.run.profiles=h2
 ./mvnw -pl activity-console -Pfrontend spring-boot:run   # 顺带构建 Vue SPA 拷进 static/ui/
 
-./mvnw test                   # 跑全 reactor 测试（common 193（含 3 skipped）+ console 256 + decision 27 = 476，2026-08-12 本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
-# 前端：cd frontend && npx vitest run   # 285 个用例 / 25 个测试文件（2026-08-12 本机实跑）
+./mvnw test                   # 跑全 reactor 测试（common 203（含 3 skipped）+ console 294 + decision 27 = 524，2026-08-28 本机实跑；drools-lab 不产出可执行用例——唯一的 @Test 类 `VipDiscountSheetGenerator` 命名不匹配 surefire 默认模式，从不运行）
+# 前端：cd frontend && npm test -- --run   # 383 个用例 / 28 个测试文件（2026-08-28 本机实跑）
 ./mvnw clean package          # 打 4 模块，两 app 出可执行 jar（decision 更轻，甩掉 kie-ci/dmn）
 ./mvnw clean compile          # 只编译 Java；不会校验 DRL 语法
 # 单模块：./mvnw -pl activity-common test
@@ -129,8 +132,8 @@ DB_HOST=localhost DB_PORT=3306 DB_NAME=activity_platform DB_USERNAME=root DB_PAS
 #   你的改动根本没进去。表现极具迷惑性：common 的单测绿、console 的集成测试红。
 #   跑下游模块前先 `./mvnw -pl activity-common install -DskipTests`，或直接加 `-am`。
 
-# 起整套微服务编排（nginx 网关 :8095 + console + decision + MySQL 单库双账号 + Prometheus :9090 + Grafana :3001）
-docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 http://localhost:8095/ui/console
+# 起整套微服务编排（nginx 网关 ${DROOLS_UI_PORT:-8095} + console + decision + MySQL + XXL-JOB + 监控）
+docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 http://localhost:${DROOLS_UI_PORT:-8095}/ui/console
 ```
 
 **测试**：console 只有 `FixedPriceAndClaimTest`（9 个用例）吃 `h2` profile 的**文件库**（`activity-console/data/activity-platform.mv.db`，其余 h2 用例都用 `@TestPropertySource` 覆到内存库），别的进程占着它时（本地起着 console、或另一处并行在跑 `./mvnw test`）会整片报 `Database may be already in use` + `Unable to determine Dialect`——是环境冲突不是代码回归，串行跑即可。
@@ -211,7 +214,7 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
   - `snapshot/{DecisionSnapshot,DecisionSnapshotBuilder,DecisionSnapshotStore}` 代际快照包；`metrics/DecisionMetrics` 决策链路指标（含 activityId 标签基数上限）
   - **词汇表与装配**（都在 `domain/`，改它们等于改契约）：`OfferSpec`（行 → 候选配置的唯一装配入口）/ `DecisionScene`（scene 标签）/ `RejectReason`（淘汰码 + 中文文案同源）/ `DecisionMode`（`HOT_PATH` vs `EXPLAIN`，取代裸 boolean `explain`；**四个无参重载已删**，每个调用点必须显式表态）/ `DecisionAttrs`（决策属性键）；`service/{Materials,DecisionAuditor}` 是取数出参与三通道留痕
   - `error/{ActivityException,ActivityErrorCode,ActivityErrorBody}` — 带**分类**的领域异常，HTTP 状态由 `ActivityErrorCode.httpStatus()` 决定，与「抛的是哪个 JDK 异常」脱钩（四眼失败因此从 409 变 403）。它继承 `RuntimeException` 而非 ISE 是刻意的：要能**穿过** console 里迁移期保留的旧 `catch`
-  - `persistence/` 两处结构约束：六个 **`*ReadRepository`**（继承 `Repository<T,ID>`，读路径上手滑写库编译不过，`DecisionReadRepositoryGuardTest` 守）；两层 `@MappedSuperclass`（`TenantScopedEntity` 租户 + 双时间戳 / `SoftDeletableTenantEntity` 再加 `is_del`——`activity_grant` 是账不是配置，**没有** `is_del` 列所以只继承第一层）把 11 个实体里各写一遍的这几列与访问器收上来（**没消掉**的是各处 `save*` 里的 `setIsDel(NOT_DEL)` 等调用点，仍逐处显式落值），并靠超类上的 `@JsonPropertyOrder({"id","activityId","version"})` 把响应键序修回（Jackson 默认把超类属性排在子类前，`EntityJsonOrderTest` 钉住）
+  - `persistence/` 两处结构约束：六个 **`*ReadRepository`**（继承 `Repository<T,ID>`，读路径上手滑写库编译不过，`DecisionReadRepositoryGuardTest` 守）；两层 `@MappedSuperclass`（`TenantScopedEntity` 租户 + 双时间戳 / `SoftDeletableTenantEntity` 再加 `is_del`——发放账、分录与 outbox 是账务事实，只继承第一层）把继承实体重复的列与访问器收上来（**没消掉**的是各处 `save*` 里的 `setIsDel(NOT_DEL)` 等调用点，仍逐处显式落值），并靠超类上的 `@JsonPropertyOrder({"id","activityId","version"})` 把响应键序修回（Jackson 默认把超类属性排在子类前，`EntityJsonOrderTest` 钉住）
 - `activity-console · activity/{controller,service}`（应用，8081）— 写平面（`ActivityMarketingService` 配置写入口 / **`GrantService`** 发放台账（`claim` / `release` / `grants`，2026-08 从 977 行的 `ActivityMarketingService` 拆出，后者保留同名**委派**方法，调用方不用改）/ `ActivityVersionResolver` / `ActivityPoolMatchService` / `ArtifactService` / `GenerationService` + seeder）+ legacy `/activity-marketing` 读端点（试算显式 `DecisionMode.EXPLAIN`，决策平面走 `HOT_PATH`）；main = `ConsoleApplication`，**唯一 DDL 执行者**。异常出口是 `ActivityExceptionAdvice`（`basePackages` 只圈本包，不误伤 classpath 上 drools-lab 的 Step 教学 controller），它**刻意没有** `IllegalStateException → 409` 兜底：advice 的作用域是整个包，而 `list` / `grants` 上的 ISE 是 bug 不是冲突，报成 4xx 会让写平面的故障从监控上消失、还让调用方去重试一个永远不会成功的请求；create / status 上原有的 per-endpoint `catch` 原样保留，状态码一位不漂。<br>「当前是哪一版」有**两套互斥定义**，现由 `ActivityVersionResolver` 具名化：`latestDraftVersion`（最高未删除版 = 编辑基线 / `changeStatus` 缺省，通常是**草稿**）与 `currentOnlineVersion`（最高 ONLINE 版 = 正在发钱的那版 = `claim` 缺省 = 决策侧认的那版）——把秒杀库存的闸门装在草稿上，等于线上版本一件没少。写平面语义要点：编辑**不下线**正在服务的版本（线上版与草稿并存），上线时在同一事务里把该活动其它 ONLINE 版本退役（原子指针切换）；`changeStatus` 现在过一张**状态迁移表**（from × to，今天所有合法流转都已放行，包括原先那个不对称的 `OFFLINE → ONLINE`，只是让它显式），且 `targetStatus=3`（`PENDING_EFFECT`）在写入口**直接拒**——它是 `fromCode` 认可的合法码却零生产者零消费者，置成它的活动代际照常 bump 但永远进不了任何读路径（控制台显示成草稿、决策永远不命中）；`POST /bulk-status` 批量上下线**逐条处理、失败不影响已成功项 + 部分失败回执**（部分失败仍是 200；但 `targetStatus` **本身**非法时在进循环之前就 400，否则几十条各失败一次、回执里全是同一句话。`version` 允许为 null，但调用方应按列表行传显式 version，否则会打到草稿而不是正在服务的版本）；`POST /{id}/claim` 抢占秒杀库存，**失败按种类分流状态码**（`ClaimResult` 上的 `@JsonIgnore FailureKind`：缺参/数量非正/限领没带 userId → 400，活动或版本不存在 → 404，余量不足/超限领 → 409；响应体一字节没变，映射是无 `default` 的 switch 表达式）——此前恒 409，而 409 的标准语义是「重试可能成功」，参数写错那一类会被下游无限重试到活动结束；`POST /{id}/release?orderId=` 是退款/取消/超时的**冲正**入口（幂等，归还库存并解除该用户的限领占用；**缺参是 400、确实查不到发放记录才是 404**——此前两者都 404，客服无法区分「这一单没领过」与「调用方漏传 orderId」，后者会导致放弃冲正、库存与额度永久漏掉）；`GET /grants?orderId=` 按单查发放记录（客服「这一单用了哪些优惠、各发了多少」的数据源）。create/status/bulk-status/claim/**release** 一并受已配置的 `console-write-authority` 保护（release 不设防的话，反复调它就能把限量活动的库存刷到任意大）；创建入参新增 `userInventory`（每人限领，null/≤0 = 不限；配了它而 claim 不带 `userId` 一律拒绝——无从判断是不是同一个人时放行等于这条限制不存在，计数按流水且排除 `RELEASED`，否则「买了又退」会永久占掉额度）。**任何状态变化都 bump 发布代际**，不只是上线——发布 v2 会在同事务里退役 v1，此时跳过 bump 意味着 decision 永远停在「服务已被退役的 v1」；唯一的例外是 `bizLine` 为空时跳过 bump（`activity_generation.biz_line` NOT NULL，硬插会在同事务抛约束违例把刚写下的状态一起回滚，「下线传播不出去」升级成「下线根本做不到」），状态照常落库、只打 warn。另有 `GET /generation?bizLine=`（行不存在返回 0）暴露库里当前代际，作为决策侧回显 `provenance.generation` 的**参照物**——只看决策那一侧的 7 是判断不了「我刚发布的那次进去了没有」的
 - `activity-decision · activity/{controller,engine}`（应用，8082）— 只读 `DecisionPlaneController`：`/decision/v1/{spu-discount,gifts}` 热路径、`/addon/{options,quote}` 加价购两阶段、`GET /metrics` + `/by-activity` 指标聚合（**本进程单实例视角**，跨实例仍看 Prometheus）、`GET /snapshot[?activityId=]` 快照诊断（本租户桶清单 bizLine/generation/builtAt/ageSeconds/activityCount，带 activityId 时回答「在哪个桶 / 不在任何桶」；**只读、不发起决策、不占 `ACTIVITY_TAG_CAP` 的标签位**，所以验证流量不会混进 `activity.decision.{hit,amount}`）、`POST /snapshot/rollback?bizLine=` 快照代际回滚（这条平面上**唯一的写动作**，但它只动本进程内存指针、**不写数据库**，因此不违反「decision 连只读账号」；额外要求 `console-write-authority`，没有上一代可回时 409）；异常出口是 `DecisionExceptionAdvice`，它**刻意没有** `IllegalArgumentException → 400` 兜底（只读热路径的 IAE 只可能是脏数据或真 bug，报成 400 等于把故障伪装成客户端错误：告警不响、调用方去改自己本来没问题的请求），未分类的一律 500 且**不回显 message**；它继承 `ResponseEntityExceptionHandler`，好让 Spring 自己那批本就该 400 的情况（请求体不是合法 JSON、`/addon/quote` 少传 activityId）不被吞成 500。`GenerationWarmService` 轮询发布代际，见涨即**先建快照切指针、再预热 ACTIVE artifact 的 DRL**，每轮另跑一次超龄快照兜底重建；main = `DecisionApplication`，classpath 上无写平面 bean / 无 drools-lab
 
@@ -242,9 +245,9 @@ docker compose -f deploy/docker-compose.yml up --build   # 然后浏览器开 ht
 - `docs/drools-use-cases.md` — Drools 应用场景与定位（风控/保险/信贷/计费，以及什么时候不该上 Drools）
 - `examples/aviator/AviatorComparison.java` — Aviator 独立对照程序（**故意放在 Maven 源码根外，不进 `./mvnw compile`、不引 pom 依赖**）
 - `examples/capacity/` — 三引擎容量基准 `CapacityBench.java` + `run.sh`（**同样刻意在源码根外**：它引 QLExpress，生产四模块都不该有这个依赖）。跑法 `./examples/capacity/run.sh`；结论见 `docs/capacity-model.md`
-- `deploy/` — 微服务本地编排：`docker-compose.yml`（console 8081 / decision 8082 / nginx 网关 host `:8095` / MySQL 单库双账号 / Prometheus `:9090` / Grafana `:3001`）+ `nginx.conf`（API 网关原位替身，文本资源开 gzip）+ `mysql-init/`（decision 只读账号）+ `Dockerfile`
+- `deploy/` — 微服务本地编排：`docker-compose.yml`（console / decision / nginx 网关 `${DROOLS_UI_PORT:-8095}` / MySQL 单库双账号 / XXL-JOB / Prometheus / Grafana）+ `nginx.conf` + 显式 MySQL 迁移 + Dockerfile。发放账/Outbox/权益中台三批迁移顺序见 `docs/deployment.md`，不要只靠 `ddl-auto:update` 补唯一键。
   - **前端 `/ui/` 由 gateway 镜像托管，不在 console 的 JAR 里**（`Dockerfile.frontend` → `drools-platform/activity-frontend:latest`）。改了前端只 `--build console` 是**没用的**，页面纹丝不动——要 `docker compose -f deploy/docker-compose.yml up -d --build gateway`。反过来改了后端才重建 console。<br>⚠️ **但 `--build gateway` 本身也不够**：`Dockerfile.frontend` 不在容器里构建前端，它只 `COPY frontend/dist/`——dist 必须**先在宿主机** `cd frontend && npm run build` 生成。漏了这一步时 Docker 看 dist 内容没变会直接复用镜像层，**构建全程 exit 0、镜像时间戳纹丝不动、页面还是旧的**，极难察觉。正确顺序：`npm run build` → `up -d --build gateway`；验证方式是 `docker images | grep drools-platform/activity-frontend` 看时间戳，或直接 grep 线上 bundle 里有没有你新加的 `data-testid`
-  - 编排**默认 auth 档**（`DROOLS_AUTH_ENABLED` 默认 true），需要本机 Casdoor `:8000`；除 `e2e:oidc` 外的脚本（`e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual`）走 `tenant-chip` header 档，要切档：`DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose ... up -d`。`e2e:validate` 还要启用 `DROOLS_FOUR_EYES_ENABLED=true`，因为脚本会先验证提交人自审被拒、再由另一 actor 发布——**自审被拒现在是 403 不是 409**（四眼说的是「不该由你来做」，重试永远不会成功；响应体形状没变，只多了个 `code` 字段）。⚠ 这条 e2e **不在 `./mvnw test` 与 `vitest` 的闸门里**：2026-08 那次状态码变更整轮重构都没照出它，是人工核对时发现的
+  - 编排**默认 auth 档**（`DROOLS_AUTH_ENABLED` 默认 true），需要本机 Casdoor `:8000`；除 `e2e:oidc` 外的脚本（`e2e:dev` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual`）走 `tenant-chip` header 档，要切档：`DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose ... up -d`。`e2e:catalog` 已删除。`e2e:validate` 还要启用 `DROOLS_FOUR_EYES_ENABLED=true`，因为脚本会先验证提交人自审被拒、再由另一 actor 发布——**自审被拒现在是 403 不是 409**。⚠ 这条 e2e 不在 Maven/Vitest 闸门里。
 - `docs/plans/prod-arch-refactor-0719-1330/` — 「微服务化 + 前后端分离」重构的评估 / 决策 / 计划 / 评审归档（模块拆分细节）
 - `docs/plans/benefit-model-refactor-0808-2218/` — **本轮后端重构（P0/P1 分层引擎 + 快照 + 指标）的进度锚**：`FINAL_PLAN` / `DECISION_RECORD`(D1–D12) / `REVIEW-FINDINGS` / `PROGRESS.md`（含 docker 全栈 E2E 验证记录与未完成项）
 - `docs/plans/activity-design-refactor-0812-1232/` — **2026-08 活动引擎结构性重构**（OfferSpec 单一装配 / 穷尽 switch / RejectReason·DecisionScene 词汇表 / 只读仓储 / 领域异常层 / GrantService 拆分 / 快照可靠性）：`FINAL_PLAN`（方案）· `AUDIT-FINDINGS`（原始审查）· **`BREAKING-CHANGES`（对外可见变更清单——改前先读这份：4 处状态码、1 处指标标签取值、2 处观测口径）**

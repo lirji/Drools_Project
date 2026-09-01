@@ -1,5 +1,7 @@
 # RETE 算法直觉
 
+> 活文档。最后核对：2026-08-28；示例仍对应当前 `order-discount.drl` 与 Drools 8.44.2.Final。
+>
 > 用本仓库 `rules/discount/order-discount.drl` 的折扣规则做例子讲，这样脑子里有具象。
 
 ## 1. 朴素做法的痛点

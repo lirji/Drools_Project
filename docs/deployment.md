@@ -1,5 +1,8 @@
 # 部署与编排（微服务形态）
 
+> 活文档。最后核对：2026-08-28。网关宿主端口由 `DROOLS_UI_PORT` 控制，默认 8095；若相邻
+> `auth-platform` 提供中央端口注册，`deploy.sh` 会自动加载并同步生成 OIDC callback。
+
 > ⚠️ **重建前端的正确顺序**：`cd frontend && npm run build` → `docker compose -f deploy/docker-compose.yml up -d --build gateway`。
 > `deploy/Dockerfile.frontend` **不在容器里构建前端**，它只 `COPY frontend/dist/`（dist 由宿主机生成）。
 > 漏掉 `npm run build` 时 Docker 发现 dist 未变会复用镜像层——构建 exit 0、镜像时间戳不动、页面还是旧的。
@@ -41,10 +44,12 @@ h2 profile 用 file 库（console `./data/activity-platform`、decision `./data/
 
 ```bash
 ./deploy.sh --provision-auth
-# 网关：http://localhost:8095/ui/console
+# 网关：http://localhost:${DROOLS_UI_PORT:-8095}/ui/console
 ```
 
-`--provision-auth` 只用于本机 dev Casdoor：它幂等登记 acme/beta public SPA client、`http://localhost:8095/ui/auth/callback` 与测试用户，不把 client secret 写入浏览器或 Compose。若 Casdoor 资源已存在，可直接运行 `./deploy.sh`。
+`--provision-auth` 只用于本机 dev Casdoor：它幂等登记 acme/beta public SPA client、
+`http://localhost:${DROOLS_UI_PORT:-8095}/ui/auth/callback` 与测试用户，不把 client secret 写入浏览器或
+Compose。若 Casdoor 资源已存在，可直接运行 `./deploy.sh`。
 
 服务与宿主端口：
 
@@ -56,7 +61,7 @@ Compose 项目名在 `deploy/docker-compose.yml` 中固定为 `drools-platform`�
 | `xxl-job-admin` | xuxueli/xxl-job-admin:3.4.2 | **127.0.0.1:18088**→8080 | 调度控制台、执行日志、失败重试和人工触发；不保存活动业务状态；可用 `DROOLS_XXL_ADMIN_PORT` 覆盖 |
 | `console` | `drools-platform/activity-console:latest`（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；另在 Docker 内网开放 XXL 执行器端口 9999 |
 | `decision` | `drools-platform/activity-decision:latest`（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
-| `gateway` | **`drools-platform/activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **8095**→80 | 前缀分流 + SPA 托管（8090/8091 常被本机占，故用 8095）。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
+| `gateway` | **`drools-platform/activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **`${DROOLS_UI_PORT:-8095}`**→80 | 前缀分流 + SPA 托管。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
 | `prometheus` | prom/prometheus | 9090 | 抓 console + decision 的 `/actuator/prometheus` |
 | `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
 
@@ -96,6 +101,40 @@ MySQL 端口默认只绑定宿主机回环地址；该密码与 Compose 默认 A
 | `DROOLS_LIFECYCLE_SCHEDULE_BATCH_SIZE` | `200` | 单租户单轮最多处理的活动数 |
 | `DROOLS_XXL_ACCESS_TOKEN` | `local-xxl-token-change-me` | Admin 与执行器双向校验 Token，正式环境必须覆盖 |
 
+XXL-JOB 还可触发 `grantOutboxRelaySweep`。只有同时设置 `ACTIVITY_GRANT_OUTBOX_ENABLED=true` 与
+`ACTIVITY_GRANT_OUTBOX_RELAY_MODE=xxl` 时该 Handler 才实际投递；生命周期与 grant relay 共用执行器，
+但业务状态分别存放在 activity 表与 outbox 表，XXL 库不是真相源。
+
+### 发放对账、grant outbox 与权益中台迁移
+
+生产升级不能只依赖 `ddl-auto:update`。console 首次以新版本启动前，按依赖顺序执行：
+
+1. `deploy/mysql-grant-recon-onboarding.sql`：币种、grant_no、不可变 `activity_grant_entry` 与
+   `recon_src_marketing` 视图；
+2. `deploy/mysql-grant-outbox-propagation.sql`：`activity_grant_outbox`、唯一键、退避/死信字段；
+3. `deploy/mysql-benefit-center-connector.sql`：版本化 `activity_award_binding` 与
+   `activity_award_intent_outbox`。
+
+脚本要先在备份或测试库演练。console 仍是唯一应用侧 DDL 执行者，decision 必须等 schema 完整后才以
+`ddl-auto=validate` 启动。`recon_src_marketing` 来自追加式分录表，HELD 不产生分录，已确认后的 release 保留
+ISSUE 与 REVERSAL 两行供红蓝字勾兑。
+
+Compose 当前不替你启用外部 webhook，也不内置 benefit-center 服务。需要在 console 环境显式注入：
+
+| 环境变量 | 应用默认值 | 用途 |
+|---|---:|---|
+| `ACTIVITY_GRANT_OUTBOX_ENABLED` | `false` | 同时门控 grant 事件入队与 relay |
+| `ACTIVITY_GRANT_OUTBOX_RELAY_MODE` | `local` | `local` / `xxl` / `off` |
+| `ACTIVITY_GRANT_OUTBOX_WEBHOOK_URL` | 空 | 空时只写日志；非空才 HTTP POST |
+| `ACTIVITY_GRANT_OUTBOX_WEBHOOK_HEADER_NAME/VALUE` | 空 | 可选下游鉴权头，值用 secret 注入 |
+| `ACTIVITY_AWARD_INTENT_RELAY_ENABLED` | `false` | CENTER AwardIntent relay 总开关 |
+| `BENEFIT_CENTER_URL` | `http://localhost:8083` | benefit-center 根地址 |
+| `BENEFIT_CENTER_BEARER_TOKEN` | 空 | 生产 secret，不得提交到仓库 |
+| `ACTIVITY_AWARD_INTENT_LEASE_MS` | `30000` | 多实例 relay 租约；应大于 HTTP 最坏调用时长 |
+
+两条 relay 都是 at-least-once。grant 下游按 `(grant_no,event_type)` 幂等；benefit-center 按
+`sourceRequestId` / `Idempotency-Key` 幂等。先以 logging/SHADOW 验证，再逐租户开启真实发送。
+
 decision 的 `GenerationPollScheduler` 仍保留进程内 Spring 调度：它预热的是每个 decision 实例自己的本地
 快照，改成只路由到一个执行器会漏掉其它实例；除非未来明确使用分片广播，否则不要迁移这项任务。
 
@@ -116,11 +155,15 @@ Compose 对 console 与 decision 同时启用 JWT resource server；控制台路
 | `DROOLS_CASDOOR_JWK_SET_URI` | `http://host.docker.internal:8000/.well-known/jwks` | 容器访问 Casdoor JWKS |
 | `DROOLS_CASDOOR_AUTHORIZE_ENDPOINT` | `http://localhost:8000/login/oauth/authorize` | 浏览器 authorize 地址 |
 | `DROOLS_CASDOOR_TOKEN_ENDPOINT` | `http://localhost:8000/api/login/oauth/access_token` | PKCE 换 token 地址 |
-| `DROOLS_REDIRECT_URI` | `http://localhost:8095/ui/auth/callback` | 须精确登记在 Casdoor SPA client |
+| `DROOLS_UI_PORT` | `8095` | gateway 宿主端口；中央端口注册存在时由 `deploy.sh` 加载 |
+| `DROOLS_REDIRECT_URI` | `http://localhost:${DROOLS_UI_PORT}/ui/auth/callback` | 须精确登记在 Casdoor SPA client |
 
 生产环境应把浏览器可见的 issuer/authorize/token/redirect 全部覆盖为同一套 HTTPS 公网域名；JWK URI 可以使用容器内部可达地址，但 issuer 校验值必须与 token 中的 `iss` 完全一致。
 
-> **`console-write-authority` 现在也管到决策平面**（2026-08）：配了 `activity.tenant.auth.console-write-authority` 时，要求该权限的 POST 白名单是 `create` / `*/status` / `bulk-status` / `*/claim` / `*/release` **加上 `/decision/v1/snapshot/rollback`**——快照回滚不写数据库，但它是运营级动作（切指针即改变这条业务线每次决策发出去的钱），所以用同一个权限守（`ActivityResourceServerConfig`）。配置文件中的空值仅供本地开发；正式环境必须配置，否则任何验签通过的 token（包括只做决策的 M2M token）都能执行回滚。新增写端点时**必须同步补这张表**——它是按路径模式逐条列的，漏一条就是敞口。
+> **`console-write-authority` 同时覆盖三类高风险动作**：活动写端点 `create` / `*/status` /
+> `bulk-status` / `*/claim` / `*/confirm` / `*/release`，权益中台触发入口 `/activity-awards/v1/intents`，
+> 以及 `/decision/v1/snapshot/rollback`。confirm 会落金额和账，AwardIntent 可能触发真实发放，rollback 会
+> 改变决策物料；配置文件中的空值仅供本地开发。新增写端点时必须同步安全 matcher 与集成测试。
 
 最小验收：
 

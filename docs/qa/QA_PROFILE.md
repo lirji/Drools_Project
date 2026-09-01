@@ -1,7 +1,10 @@
 # QA 环境档案 · Activity Rule Platform（活动营销多租户）
 
 > 首次由 /qa-test 勘察生成（2026-07-19）。人工可改，下次直接复用。
-> 能力与端点最后同步 2026-08-12（活动引擎结构性重构：**claim/release/四眼的状态码分流**、决策平面新增**快照回滚端点**、指标 `scene` 词汇表统一）。下文标注 2026-08-09 / 2026-08-10 / 2026-08-11 的数字仅作历史基线；本批最新实跑（**2026-08-12**）是 Maven **476 tests / 3 skip / BUILD SUCCESS**（common **193** 含 3 skip / drools-lab 0 / console **256** / decision **27**）+ vitest **25 文件 285 passed**。
+> 能力与端点最后同步 **2026-08-28**：新增 confirm/不可变分录、grant outbox 与企业权益中台连接器；
+> 前端旧 Demo catalog 已删除。当前实跑为 Maven **524 tests / 3 skip / BUILD SUCCESS**（common **203**
+> 含 3 skip / drools-lab 0 / console **294** / decision **27**）+ Vitest **28 文件 / 383 passed**。
+> 下文更早日期的数字仅作历史证据，不是当前基线。
 >
 > 🚩 **开测前先读 [`docs/plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md`](../plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md)**：那份是本轮**对外可见变更**的权威清单（4 处 HTTP 状态码、1 处写入口新增拒绝、1 处指标标签取值、2 处观测口径）。**发钱金额零变化**——金标集 52 例、`SnapshotParityTest`、`DecisionQueryCountTest` 全程绿，所以本轮**不需要**重跑金额类回归；要重点回归的是**状态码断言**与**监控查询**。
 >
@@ -25,23 +28,25 @@
     - **这条也会咬跑测试**：console 测试里只有 `FixedPriceAndClaimTest` 没有 `@TestPropertySource` 覆盖数据源（其余全部覆到 `jdbc:h2:mem:*`），因此它是唯一去抢 `activity-console/data/activity-platform.mv.db` 的用例。本机有 console 在跑、或上一次 `./mvnw test` 被中断留下锁，它会以 `Unable to determine Dialect without JDBC metadata` 报 9 个 error——**这条报错是症状不是原因**，真因在日志更上面的 `Database may be already in use`。处理时先停掉本地 console，再备份或清理该测试数据目录后重跑。
   - ⚠️ **坑3（2026-08 新增）**：decision 的 `ddl-auto` 已从 `update` 改成 **`validate`**（只读平面不碰 DDL，建表由 console 独占）。按老命令直接起 decision 连空库会启动失败：`Schema-validation: missing table [activity_artifact]`。本地单起 decision 有两条路：① 加 `--spring.jpa.hibernate.ddl-auto=update` 自建空表（实测可起）；② 用 compose 整套（MySQL 库由 console 建好）。**注意 H2 file 库单进程锁，console + decision 不可能共用同一个 H2 file 库**，要两 app 共库只能走 compose 的 MySQL。
   - **前端 SPA 需先构建**：`-Pfrontend`（`./mvnw -pl activity-console -Pfrontend spring-boot:run …`）把 Vue 产物拷进 `static/ui/`，或本地 `cd frontend && npm run dev`（Vite :5173）。不构建时 `/ui/` 404、根 `/` 只是落地页。
-  - **整套微服务编排**（两 app + frontend nginx 网关 host `:8095` + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）：`./deploy.sh --provision-auth` → 网关 `http://localhost:8095/ui/console`。Compose 默认 auth 开、dev-default 关。
-    - **切 header 档**（跑 `e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual` 这些走 `tenant-chip` 的脚本必须切，否则被登录守卫弹走）：
+  - **整套微服务编排**（两 app + frontend nginx 网关 `${DROOLS_UI_PORT:-8095}` + MySQL 单库双账号 + Prometheus `:9090` + Grafana `:3001`）：`./deploy.sh --provision-auth`。Compose 默认 auth 开、dev-default 关。
+    - **切 header 档**（跑 `e2e:dev` / `e2e:tablet` / `e2e:phone` / `e2e:bench` / `e2e:playbooks` / `e2e:validate` / `e2e:ruler` / `e2e:visual` 这些走 `tenant-chip` 的脚本必须切，否则被登录守卫弹走）：
       `DROOLS_AUTH_ENABLED=false DROOLS_DEV_DEFAULT_ENABLED=true docker compose -f deploy/docker-compose.yml up -d`
       聚焦 `e2e:validate` 还要加 `DROOLS_FOUR_EYES_ENABLED=true`；脚本先断言 AUTHOR 自审发布返回 **403**（**2026-08-12 起，此前是 409**——四眼拒绝是「不该由你来做」，不是「冲突、重试可能会成」；旧 409 纯属实现细节泄漏：写平面用 `IllegalStateException` 表达它、controller 把所有 ISE 一律映射成 409），再由 APPROVER 发布成功，未开四眼时会正常失败而不是假绿。<br>⚠️ 这条断言**不在 `./mvnw test` 与 `vitest` 的闸门里**（e2e 需要真链路），整轮重构没有照出它，是人工核对时发现并改的——你自己写的四眼用例若还断言 409，请一并改成 403。
     - ⚠️ **改了代码要重建对的镜像**：前端 `/ui/` 由 **gateway 镜像**托管（`drools-platform/activity-frontend`），不在 console 的 JAR 里 → 改前端要 `--build gateway`；改后端要 `--build console decision`（**decision 是独立镜像，只重建 console 时它仍是旧代码**，新决策端点会 404）。
-- **Casdoor 档（auth 开，console + decision API 端到端）**：本机 Casdoor `:8000` 启动后用 `./deploy.sh --provision-auth` 幂等登记 8095 callback；真实浏览器回归为 `BASE=http://localhost:8095 npm --prefix frontend run e2e:oidc`。
+- **Casdoor 档（auth 开，console + decision API 端到端）**：本机 Casdoor `:8000` 启动后用 `./deploy.sh --provision-auth` 幂等登记当前 `DROOLS_UI_PORT` callback；真实浏览器回归为 `BASE=http://localhost:${DROOLS_UI_PORT:-8095} npm --prefix frontend run e2e:oidc`。
 
 ## 入口 / 健康检查
 - 健康：`GET /actuator/health` → 200（console 8081 / decision 8082 各一个）。
-- 前端：根 `GET /` 是**构建无关落地页**（跳 `/ui/`，旧原生台 + `/assets/activity.js|css` 已于 F3 退役删除）；SPA 挂 `/ui/`，活动配置台 `/ui/console`（列表 `/ui/console/activities`、**玩法模板 `/ui/console/playbooks`**、验证 `/ui/console/validate`），规则能力中心 `/ui/capabilities`。
+- 前端：根 `GET /` 是构建无关落地页；SPA 挂 `/ui/`，当前页面为概览、活动列表/编辑/详情、玩法模板与优惠验证。旧 `/ui/capabilities` Demo catalog 已删除，Step 1–24 只保留 REST 接口与文档示例。
 - 活动写面/运营验证端点（console，8081）：`/activity-marketing/*`（见 `docs/activity-marketing.md` 接口表）。2026-08 的关键增量：
   - `POST /activity-marketing/{activityId}/status`，体 `{version,targetStatus}` — 使用显式状态迁移表（from × to），非法流转 400。`targetStatus=3`（待生效）表示显式预约上线：只接受未来时间窗，预约时执行四眼校验；到开始时间由 console 调度器自动上线，结束时间后自动下线，改回 0 可取消。ONLINE 不能原地改为 3，未来切版应先编辑出新版本。`OFFLINE → ONLINE` 与 `X → X` 同态自转仍是有意保留行为。四眼开启时提交人自审发布或预约返回 **403**。
-  - `POST /activity-marketing/bulk-status`，体 `{items:[{activityId,version}],targetStatus}` → 部分失败**仍是 200** + 回执 `{succeeded[],failed[{activityId,reason}]}`（别当错误断言）。**唯一例外（2026-08-12 起）**：`targetStatus` 本身非法（不在 0/1/2 内，含被封死的 3）时**进循环之前**就返回 **400**——否则几十条各失败一次、回执里全是同一句话。前端 `askBulk` 只传 1|2，所以这条只能用 curl 触发。
+  - `POST /activity-marketing/bulk-status`，体 `{items:[{activityId,version}],targetStatus}` → 部分失败**仍是 200** + 回执 `{succeeded[],failed[{activityId,reason}]}`（别当错误断言）。`targetStatus` 允许 0/1/2/3；3 是显式预约上线，非法值才在进循环前返回 400。
   - `POST /activity-marketing/{activityId}/claim?version=&quantity=&userId=&orderId=` — 秒杀库存**权威扣减**（决策只报价、这里才扣）。抢到 200；**没抢到按失败种类分流状态码（2026-08-12 起，此前恒 409）**：**400** = 缺 `activityId` / 数量非正 / 限领活动没带 `userId`；**404** = 活动不存在或当前没有上线版本、版本不存在；**409** = 余量不足或不在可用窗口、超出每人限领。**响应体一字节没变**（仍是 `{ok:false,reason}`，分流用的 `FailureKind` 标了 `@JsonIgnore` 不出参），所以旧用例若断言的是 `ok/reason` 不受影响，**断言 409 的会红——那是预期结果，不是回归**。它与 create/status 同属 `console-write-authority` 保护的写路径；该配置非空时，无 authority token 应断言 403。四个 query 参数全可选，但**行为随传不传变**：不传 `version` 打到**当前 ONLINE 版本**（不是最高版）；带 `orderId` 才幂等（幂等键 = 租户+orderId+activityId）；配了每人限领的活动不传 `userId` 直接拒。
+  - `POST /activity-marketing/{activityId}/confirm?orderId=&amount=&decisionId=` — HELD→CONFIRMED 的 CAS 确认；首次成功同事务追加正数 ISSUE 分录，重复调用 replay 且保留首次金额。缺参/亚分/溢出 400，未 claim 404，已 RELEASED 409。
   - `POST /activity-marketing/{activityId}/release?orderId=` — 冲正（退款/取消/超时）：归还库存并释放该用户的限领额度。**幂等**（重复释放返回 200 且不重复加库存）。**缺参/空串 `orderId` 现在是 400**（2026-08-12 起），**确实查不到发放记录才是 404**——此前两者都是 404，客服拿到 404 分不清「这一单没领过」和「调用方漏传了参数」，进而**放弃冲正**、库存与限领额度永久漏掉。完全不传 `orderId` 一直是 400（`required=true`，Spring 直接挡）。归还不判活动状态与时间窗——活动结束之后仍会有退款进来。
   - **错误响应体新增 `code` 字段**（2026-08-12 起，**但只在部分出口上有**）：形如 `{"error":"…中文说明…","code":"FOUR_EYES_REQUIRED"}`。`error` 字段名与取值**逐字未变**（前端 `apiClient` 读的就是它），`code` 是纯附加的机器可读分类（`INVALID_ARGUMENT` / `FOUR_EYES_REQUIRED` / `VERSION_CONFLICT` / `DUPLICATE_REQUEST` / `INTERNAL`；`ActivityErrorCode` 里还有一个 `STATE_CONFLICT`，但**全仓 main 源码零抛出点**——`ActivityException` 只有 `versionConflict` / `duplicateRequest` / `fourEyesRequired` 三个工厂方法——按 `code="STATE_CONFLICT"` 写用例永远等不到这个值）。**只有走 `ActivityExceptionAdvice` 的响应才带 `code`**：`ActivityMarketingController` 的 create / status / bulk-status / detail 仍保留迁移期的 per-endpoint `catch`（私有 `bad()` / `conflict()` → 控制器自己的 `record ErrorResponse(String error)`），所以 QA 最常打的三类 400（create 参数非法 / status 非法流转 / bulk-status `targetStatus` 非法）与 create/status 的 409，响应体仍是 `{"error":"…"}`、**没有 `code`**。反过来 `ActivityException` 不是 IAE/ISE 的子类，会**穿过**那些 catch 落到 advice，因此四眼 403、版本冲突、幂等重复这三类即使在 create/status 上也带 `code`。**按端点选断言字段，别一律押 `code`**——`ActivityErrorMappingTest` 就是这么分的：403 那条断 `$.code`，「参数非法仍是 400」「既有端点状态码一位不漂」两条只断 `$.error`。
   - `GET /activity-marketing/grants?orderId=` — 这一单发放了哪些优惠（客服查单）。返回 `activity_grant` 行的列表；`orderId` 必传（缺参 400），传空串返回空列表。
+  - `POST /activity-awards/v1/intents` — 企业权益中台内部触发。LEGACY 不入队、SHADOW 只组装/哈希、CENTER 幂等写 AwardIntent outbox；只接受 ONLINE 明确版本，受 `console-write-authority` 保护。relay 默认关闭。
   - `GET /activity-marketing/generation?bizLine=` — 库里当前发布代际。它是决策响应里 `provenance.generation` 的**参照物**：只看决策侧那个数判断不了「我刚发布的那次进去了没有」。**行不存在返回 0**（代际从 1 起，0 = 这条业务线还没发布过任何东西）。
   - `POST /activity-marketing/addon/options` 与 `POST /activity-marketing/addon/quote?activityId=&item=` — 加价购验证别名，与 decision 端点复用同一服务、租户/JWT 边界和状态语义；options 200，quote 有效 200、失效/伪造 409，不调用 `claim`。
 - 只读决策热路径（decision，8082）的验证接口包括 `POST /decision/v1/spu-discount`、`POST /decision/v1/gifts` 与加价购两阶段；另有三个观测 GET 与一个**写动作** POST（快照回滚，见下）：
@@ -50,7 +55,7 @@
   - `GET /decision/v1/metrics` — 耗时/回退聚合，`scope=single-instance`（本进程视角，跨实例看 Prometheus）。
   - `GET /decision/v1/by-activity` — 按活动的 `hits`（命中次数）**与 `amounts`（发出去的钱）**，带 `tagCap=200` + `overCapTag=__over_cap__`（超基数上限的活动并入哨兵，总量仍准）+ `scope=single-instance`。命中次数回答不了「这个活动花了多少预算」，两个数要一起看。<br>⚠️ **2026-08-12 起加价购也埋点了**，于是它与红包/买赠**共用同一份 200 个 activityId 的预算**（`ACTIVITY_TAG_CAP` 是跨 scene 的全局值）。总量仍准，但「按活动看命中/金额」的分辨率会在活动目录变大时**提前**塌进 `__over_cap__`；造数时一次性建几百个活动，别惊讶于分不出是哪几个。
   - `GET /decision/v1/snapshot[?activityId=]` — **快照探针**：回本租户的桶清单（`bizLine / generation / builtAt / ageSeconds / activityCount`），`bucketCount=0` 表示该租户目前**全部走库**。带 `activityId` 时直接回答 `inSnapshot` + `hostedByBizLines`，即「在哪个桶 / 不在任何桶」。**只读、不发起决策、不占 `ACTIVITY_TAG_CAP` 的标签位**，可放心反复打。<br>⚠️ 但它**不是匿名端点**：`/decision/v1/**` 落在 `ActivityResourceServerConfig` 的 `anyRequest().authenticated()` 里，auth 档（编排默认）无 Bearer 打它是 **401**——别把这个 401 读成「decision 挂了」，那正是本页反复强调的「可达但未授权 ≠ 不可达」。<br>⚠️ 这里的 `ageSeconds` 是**本租户**的桶，与 Prometheus 上的 `activity.decision.snapshot.age.seconds` gauge（`DecisionSnapshotStore.oldestAgeSeconds`，**跨租户**统计）不是同一个数——多租户下两者永远对不上，别拿来互相印证。
-  - `POST /decision/v1/snapshot/rollback?bizLine=` — **快照回滚（2026-08-12 新增，决策平面上唯一的写动作）**：把本租户这条业务线的决策指针切回**上一个发布代际**，立刻生效。此前 `DecisionSnapshotStore.rollback` **零生产调用方**（全仓只有测试在调），文档里承诺的「回滚是止损手段」是一张按不下去的按钮。成功 200（`{rolledBack:true,fromGeneration,toGeneration,activityCount,hint}`），**没有上一代时 409**（`{rolledBack:false,hint}`，而不是假装成功）。测它必须知道的四条：① 它**只动本进程内存指针、不写库**（不违反 decision 只读账号边界），因此**只影响被打到的那个实例**，多实例要逐实例调；② **下一次代际推进会把它盖掉**，回滚是止血、真修复仍是 console 侧改配置再发一代；③ **兜底重建（`refresh`）与同代重发（预热失败后的重试）按设计都不占回滚槽位**，所以「刚重启、只发布过一代」必然 409，而「上一次推进只是超龄兜底重建」不会新增可回滚的一代（回滚要么落到更早那次真发布留下的代、要么 409——**它绝不会把你退到几十秒前的自己**）；④ 回滚后 previous 清空，**连按两次第二次必然 409**（不会静默成功）。auth 档它与 create/status/claim/release 共用 `console-write-authority`（配了才生效），走网关是 `POST /api/decision/snapshot/rollback?bizLine=`。
+  - `POST /decision/v1/snapshot/rollback?bizLine=` — **快照回滚（2026-08-12 新增，决策平面上唯一的写动作）**：把本租户这条业务线的决策指针切回**上一个发布代际**，立刻生效。此前 `DecisionSnapshotStore.rollback` **零生产调用方**（全仓只有测试在调），文档里承诺的「回滚是止损手段」是一张按不下去的按钮。成功 200（`{rolledBack:true,fromGeneration,toGeneration,activityCount,hint}`），**没有上一代时 409**（`{rolledBack:false,hint}`，而不是假装成功）。测它必须知道的四条：① 它**只动本进程内存指针、不写库**（不违反 decision 只读账号边界），因此**只影响被打到的那个实例**，多实例要逐实例调；② **下一次代际推进会把它盖掉**，回滚是止血、真修复仍是 console 侧改配置再发一代；③ **兜底重建（`refresh`）与同代重发（预热失败后的重试）按设计都不占回滚槽位**，所以「刚重启、只发布过一代」必然 409，而「上一次推进只是超龄兜底重建」不会新增可回滚的一代（回滚要么落到更早那次真发布留下的代、要么 409——**它绝不会把你退到几十秒前的自己**）；④ 回滚后 previous 清空，**连按两次第二次必然 409**（不会静默成功）。auth 档它与 create/status/claim/confirm/release、AwardIntent 触发入口共用 `console-write-authority`（配了才生效），走网关是 `POST /api/decision/snapshot/rollback?bizLine=`。
   - ⚠️ **decision 的错误出口口径（2026-08-12 起，与 console 刻意不同）**：决策平面**没有** `IllegalArgumentException → 400` 兜底——它只读、入参极简，抛出的 IAE 只可能是脏数据或真 bug，报成 400 会让告警不响、调用方去改自己那条没问题的请求。所以**未分类异常一律 500 + `{"code":"INTERNAL"}` 且不回显 message**（异常文案里可能带活动 id / SQL 片段，细节只进日志）。反过来 Spring 自己的语义 400 **原样保留**：请求体不是合法 JSON、`/addon/quote` 少传 `activityId`/`item` 仍是 400。**在 decision 上看到 500 就是后端故障，不要当成"我请求写错了"**（回归由 `DecisionErrorMappingTest` 钉死）。<br>⚠️ 但**验证页会把这个 500 显示成红色「决策服务不可达」**（`ValidateView` 按 `status===404 || status===0 || status>=500` 一起判不可达）——所以看到「不可达」时**先看一眼 decision 容器日志**：可能不是进程没起/镜像没重建，而是它真抛了个 `INTERNAL`。两者的处理完全不同。
   - ⚠️ **console 与 decision 的 `traces` 详略可能不同**：两边仍复用同一 `ActivityQueryService`，但 console 的试算走 `DecisionMode.EXPLAIN`、决策热路径走 `DecisionMode.HOT_PATH`（**2026-08-12 起是枚举而不是裸 boolean，且省掉档位的无参重载已删除——两侧都必须显式写出来**，因此不会再有「忘了传、悄悄按默认档跑」的情况）。`HOT_PATH` 抑制逐候选 trace，结构性与安全回退 trace 仍可出现；当前折扣回退使用 `BenefitEvaluator` 并保留已解析的 `STACK / PRIORITY / MAX`，不再有“资格翻回 DRL”或“空决策统一取 MAX”语义。**断言类型化字段/金额/策略，不要断言 console 与 decision 响应体全等**。
 - **决策审计日志现在三通道齐全（2026-08-12 起）**：logger `activity.decision.audit` 打单行 JSON，`scene` 取值与指标同一套词汇（`spu-discount` / `gifts` / `addon`，加价购另带 `phase` = `options`|`quote`）。此前**只有红包通道落日志**：买赠生成了 `decisionId` 却从不写，加价购的两个响应连 `decisionId` 字段都没有——拿这两个通道的 id 去日志里查会一无所获。现在 `AddOnOptions` / `AddOnQuote` 都带 `decisionId`（quote 的两阶段共用同一个 id），工单可以按 id 直接检索。日志同时落 `source`（snapshot|db）与 `generation`，「活动版本对、但快照是旧代」这类问题在日志里就能判。
@@ -75,13 +80,14 @@
 
 ## 测试素材
 - 接口 + curl 示例：`docs/activity-marketing.md`。
-- 回归单测历史基线：`./mvnw test`（**2026-08-09** 本机实跑 **BUILD SUCCESS**，共 **314 跑 / 3 skip**：common **121**(3 skip) / drools-lab **0**（该模块无测试）/ console **176** / decision **17**）。含 `DecisionAuthIntegrationTest` 的 decision 401/403/200 边界、`DecisionGoldenSetTest` 金标集（当时确实 Java 与全 Drools 两条路各跑一遍；灰度开关现已退役，见下「旧 DRL 不能当六形态回退」）、`DecisionDdlGuardTest`（decision 的 `ddl-auto` 漂回 `update` 即红）。这组数字只保留作历史对照；本批当前全反应堆证据是本文顶部记录的 **476 tests / 3 skip**（2026-08-12 实跑，较 430 的增量全部来自本轮重构新增的结构性护栏用例，不是新功能）。
+- 当前后端基线：`./mvnw -q test` 于 **2026-08-28** 实跑成功，**524 tests / 3 skip**：common 203
+  （3 skip）/ drools-lab 0 / console 294 / decision 27。新增覆盖包括生命周期调度、分录账、grant outbox
+  退避/死信/redrive、AwardIntent 组装与 relay 租约。
   - 跑不绿先看坑2 的 `FixedPriceAndClaimTest` 那条，多半是 H2 file 锁而不是真回归。
-- 前端单测历史基线：`cd frontend && npm run test`（vitest **154 绿 / 22 文件**，**2026-08-09** 实跑）。当前值见本文顶部：**285 绿 / 25 文件**（2026-08-12 实跑，`npx vitest run`）。
-- 前端 E2E 历史基线为 **9 套**：`e2e:dev` / `e2e:catalog` / `e2e:tablet` / `e2e:phone` / `e2e:ruler` / `e2e:bench` / `e2e:playbooks` / `e2e:visual` / `e2e:oidc`，全部使用 `BASE=http://localhost:8095 npm --prefix frontend run <script>`。
-- 前 8 套走 header 档（跑前按上面切档）；`e2e:oidc` 走 auth 档 + 真 Casdoor。
-  - 最近一次 9 套全绿是 **83 条断言**（visual 10 / dev 7 / catalog 6 / tablet 7 / phone 7 / bench 13 / playbooks 17 / ruler 4 / oidc 12），记录于 `docs/plans/frontend-tech-visual-0809-1424/PROGRESS.md`（提交 `0bd529a`）。
-  - 新增的聚焦命令 `BASE=http://localhost:8095 npm --prefix frontend run e2e:validate` 用于验证上述优惠验证契约；它保持为独立第 10 套，不回写上面的 9 套 / 83 条历史基线。2026-08-10 Docker 实跑结果为 **472/0**——**那一版脚本打的是 console 的 `/activity-marketing/*`**；现已改打 `/api/decision/*` 并加了 `waitForSnapshot`，断言数与结果都需重新取，别沿用 472/0。
+- 当前前端单测基线：`cd frontend && npm test -- --run` 于 **2026-08-28** 实跑 **28 文件 / 383 passed**。
+- 当前 `package.json` 有 9 个 E2E 脚本：header 档 8 个（dev/tablet/phone/ruler/bench/playbooks/validate/visual）
+  + OIDC 档 1 个。`e2e:catalog` 已随旧 Demo catalog UI 删除；旧文档里的 9 套/83 条只作历史记录。
+  `e2e:validate` 改打决策平面后仍缺新的全栈实跑证据，不能复用 2026-08-10 走库路径的 472/0。
   - `e2e:playbooks` **会真的建一条活动**（`E2E折扣券-<时间戳>`），跑完记得清；`e2e:bench` 会批量上下线。别在需要干净数据的回归前跑。
   - UI 定位契约（testid 清单）：`frontend/e2e/data-testid-contract.md`。
 
@@ -99,6 +105,9 @@
 | `activity-console` | `SnapshotParityTest` | 快照 / 走库两条路等价；含 `narrowedBindingStopsPayingOnBothPaths`（绑定收窄后旧 SPU 不得再发钱） |
 | `activity-console` | `ActivityErrorMappingTest`（2026-08-12 新增） | 异常 → HTTP **出口**：四眼 403，其余状态码一位不漂（service 层看不出这个差别，只有打到端点才验得出） |
 | `activity-console` | `ClaimResultContractTest`（新增） | `FailureKind` 不出参（`@JsonIgnore`）+ 旧兼容构造器（7 参 / 5 参，未标种类）沿用 409 |
+| `activity-console` | `GrantLedgerTest` | claim/confirm/release 状态机、首次金额、不可变 ISSUE/REVERSAL、币种与 recon 视图 |
+| `activity-console` | `GrantOutboxTest` / `GrantOutboxGatingTest` | 同事务入队、幂等事件、relay 成败、指数退避、DEAD 与 redrive、默认关门控 |
+| `activity-console` | `ActivityAwardIntentServiceTest` / `AwardIntentOutboxLeaseTest` | LEGACY/SHADOW/CENTER、payload 幂等冲突、ONLINE 版本约束、relay 租约 CAS |
 | `activity-console` | `SnapshotBizLineCollationTest`（新增） | 桶归属按 Java 精确相等：`Retail` 不得漏进 `retail` 桶（用 `IGNORECASE=TRUE` 模拟生产 MySQL 排序规则） |
 | `activity-console` | `SnapshotBuildQueryCountTest`（新增） | 快照**构建期**查询数上限（消 N+1）；与守热路径 5 次查询的 `DecisionQueryCountTest` 分工不同 |
 | `activity-common` | `EntityJsonOrderTest` / `DecisionReadRepositoryGuardTest` / `OfferSpecArchGuardTest`（新增） | 响应体键序（`id/activityId/version` 在队首）/ 决策侧只读仓储不得出现写方法 / 候选装配唯一入口 |

@@ -1,7 +1,14 @@
 # Doc Map（由 /doc-sync 维护）
-lastSyncedCommit: 5b7ba69  # refactor/activity-design 分支末端。上一条留的「待填」已结清：
-                           # 当时只在工作树里的两批（链路评审整改 / 验证页改打决策平面）后来落成了 50eaca2 及之前的提交
-lastSyncedAt: 2026-08-13
+lastSyncedCommit: 08c7b6e
+lastSyncedAt: 2026-08-28
+syncScope: 当前 HEAD + 既有未提交部署端口改动（未改写用户代码）
+
+## 文档状态约定
+
+- **活文档**：`README.md`、`CLAUDE.md`、本文件、`docs/{architecture,activity-marketing,deployment,frontend,tech-highlights,capacity-model,steps-guide,benefit-center-connector}.md`、`docs/qa/QA_PROFILE.md` 与 `frontend/e2e/data-testid-contract.md`。事实应与当前代码一致。
+- **概念文档**：`docs/{drools-capabilities,drools-vs-aviator,drools-use-cases,rete-intuition}.md` 与 `docs/interview/**`。只在概念、依赖版本或引用的代码路径变化时更新。
+- **归档快照**：`docs/plans/**`、`docs/delivery/**`、`docs/tests/**`、dated QA 报告及根 `IMPLEMENTATION_PROGRESS.md`。保留当时的需求、方案、证据和计数；若状态反转，只在顶部加归档说明并指向活文档，不篡改历史结论。
+- `frontend/src/assets/fonts/NOTICE.md` 是第三方字体授权说明，不作项目事实文档改写。
 
 ## 映射
 | 代码区域 / 模块 | 相关文档 | 类型 | 说明 |
@@ -12,7 +19,10 @@ lastSyncedAt: 2026-08-13
 | **技术点梳理**（面试·答辩·onboarding） | docs/tech-highlights.md | 概念+架构 | ✅ **新建（活文档，2026-08-11）**。每条「问题 → 做法 → 代码位置 → 可被追问」；末尾「已知落差」表与 activity-marketing.md 的同名小节要一起改 |
 | **容量与引擎选型**（Drools / QLExpress / 纯 Java 实测） | docs/capacity-model.md + examples/capacity/ | 架构+基准 | ✅ **新建（活文档，2026-08-11）**。数字由 `./examples/capacity/run.sh` 实跑得出，**换机器要复跑重标定**；与 plans/activity-engine-platform-0718/50-P0-5-memory-capacity-model.md（dated 归档）互为补充 |
 | 全局 / 快速开始 / 目录树 / 部署 | README.md | 概览 | 项目简介 + 每 Step 请求示例 + 前端/部署起法 |
+| 前端当前实现（路由 / 代理 / 构建 / 测试） | docs/frontend.md | 前端 | ✅ **新建 2026-08-28**。替代此前依赖四代 dated 前端方案“考古”的缺口；选择器细表仍以 frontend/e2e/data-testid-contract.md 为准 |
 | activity-common/console/decision（活动引擎） | docs/activity-marketing.md | 模块 | 活动营销模块用法 + console/decision 决策面 |
+| 发放确认 / 不可变分录 / grant outbox | docs/activity-marketing.md + docs/deployment.md | 模块+部署 | 当前状态机、红蓝字、显式 SQL、relay/死信；8/19–20 的 DESIGN 已加归档状态横幅 |
+| 企业权益中台 AwardIntent 连接器 | docs/benefit-center-connector.md + docs/deployment.md | 集成+部署 | 版本化 binding、LEGACY/SHADOW/CENTER、租约 outbox、灰度与回切 |
 | drools-lab（Step 1–24 教学） | docs/steps-guide.md | 模块 | 各 Step 详解 + REST 接口 + DRL 语义 |
 | Drools 能力/选型（与本仓库结构无关，概念文档） | docs/drools-capabilities.md, docs/drools-vs-aviator.md, docs/drools-use-cases.md, docs/rete-intuition.md | 概念 | 不随模块拆分变，doc-sync 一般不动 |
 | 面试复习（QLExpress vs Drools 原理/用法/手写题） | docs/interview/qlexpress-vs-drools.md, docs/interview/coding-drills.md | 概念 | 个人复习资料；仅"我在项目里怎么用的"一节引用真实文件路径，重构后需核对。**能力对照在这份，成本/容量对照在 docs/capacity-model.md**，两份别写重 |
@@ -22,7 +32,7 @@ lastSyncedAt: 2026-08-13
 | 历史 QA/测试快照（dated） | docs/qa/activity-multitenant-0719/**, docs/tests/** | 归档 | 点时间记录，不重写 |
 | 权益模型重构（评估→计划→裁决→进度） | docs/plans/benefit-model-refactor-0808-2218/** | 交付 | FINAL_PLAN / DECISION_RECORD(D1–D12) / REVIEW-FINDINGS / **PROGRESS.md（进度锚，新会话读这份接手）** |
 | 控制台视觉设计（票券工学） | docs/plans/console-ui-coupon-mechanics-0808-2251/** | 交付 | DESIGN_SPEC / DECISION_RECORD（含 PR-0~PR-4 实施记录与两处有意偏离）/ BACKEND-GAPS（设计依赖但后端不存在的接口） |
-| **frontend/**（Vue3 SPA，挂 /ui/，由 gateway 镜像托管） | frontend/e2e/data-testid-contract.md（**契约·活文档**）、docs/plans/frontend-tech-visual-0809-1424/**（现状最近的一份） | 前端 | ⚠️ **没有前端"现状"活文档**：视觉/组件契约散在四代 dated 计划归档里（console-redesign-0720-1207 / visual-refresh-0720-1404 / ux-redesign-0721-0852 / tech-visual-0809-1424）。改前端要靠考古。建议后续新建 docs/frontend-ui.md 收敛（令牌三态主题 / effects.css / viz 原语 / Hero·Stat / 自托管字体 / 视觉红线 e2e） |
+| **frontend/**（Vue 3 SPA，挂 `/ui/`，由 gateway 镜像托管） | docs/frontend.md + frontend/e2e/data-testid-contract.md | 前端 | 当前路由/代理/构建/测试看前者；稳定选择器看后者；四代 `docs/plans/frontend-*` 继续作为设计归档 |
 | 前端视觉换代（深空遥测 · dark-first） | docs/plans/frontend-tech-visual-0809-1424/** | 交付 | DECISION_RECORD（G1–G10 诊断 + D0–D11）/ FINAL_PLAN（令牌映射全表）/ REVIEW（6红12黄4蓝处置）/ PROGRESS（进度锚）/ style-tile.html（三方向样板屏） |
 | 活动引擎全链路评审（建活动 → 上线 → 决策 → 领取 → 对账 的断点全景） | docs/plans/activity-chain-review-0811-1730/REVIEW.md | 交付 | **dated 归档，正文不重写**。B1–B9 九个断点 + P0-1~P2-15 分级；2026-08-11 那批整改（作用域 / 封顶 / 下线也 bump / claim 幂等 + 流水 / 决策审计日志）就是照这份做的——想知道某处改动**为什么**要改，先读它 |
 | 验证页改打决策平面（provenance + 快照诊断端点） | docs/plans/validate-decision-plane-0811-1640/** | 交付 | DECISION_RECORD（D1–D10，每条带**被否方案**列：只回显三个值 / 平铺三字段 / 页面自动降级 / 前端排序补救）+ PROGRESS（gateway :8095 实跑证据 + 未做项）。承接上一行的 P1-9 |
@@ -93,7 +103,7 @@ lastSyncedAt: 2026-08-13
   基线（本机实跑，**以 `Tests run:` 汇总为准，别求和 surefire XML，见 CLAUDE.md 坑 14**）：
   后端 `./mvnw clean test` **430**（activity-common 166 含 3 skipped / drools-lab 0 / activity-console 244 / activity-decision 20）；
   前端 `npx vitest run` **283**（25 个测试文件）。
-  ↑ 这两个数是**该批次的时点值**，已被下一条变更取代（当前 476 / 285）。
+  ↑ 这两个数是**该批次的时点值**；后续 476 / 285 基线也已被 2026-08-28 的 524 / 383 取代。
 
 - 2026-08-13 活动引擎结构性重构 + 文档同步（arch-change + refactor + doc-sync）：
   起因是一句「整个项目没有使用到设计模式，活动这部分可读性、拓展性不高」。先做六维并行审查（36 条发现、逐条对抗验证），
@@ -130,3 +140,13 @@ lastSyncedAt: 2026-08-13
   同批 doc-sync：7 份活文档更新、**22 处不实描述经对抗校验修掉**；另处理 5 个缺口（本文件回写、
   `steps-guide` 的「decision 只读」断言订正、`servingVersion` 补文档、`BACKEND-GAPS` 三处订正、
   `benefit-model-refactor/PROGRESS.md` 加顶部横幅）。
+
+- 2026-08-18～21 产品化与外部集成（arch-change + integration）：统一 `drools-platform` 镜像/Compose 命名；
+  新增 activity 生命周期 local/XXL-JOB 双调度、门店商品与行政区字典；发放链路增加 confirm、币种、
+  不可变 `activity_grant_entry` 红蓝字、grant transactional outbox（退避/死信/redrive）；最后接入企业权益中台
+  的版本化 AwardBinding、LEGACY/SHADOW/CENTER 和租约式 AwardIntent outbox。权威文档分别收敛到
+  `architecture.md`、`activity-marketing.md`、`deployment.md` 与 `benefit-center-connector.md`。
+
+- 2026-08-28 全文档同步（doc-sync）：新增 `frontend.md` 作为前端现状活文档；修掉已删除
+  `e2e:catalog` 被当作当前脚本、固定 8095 忽略中央端口注册、8/19–20 设计稿仍写“待实现”、架构表数/服务数
+  停留旧值等漂移；为归档与活文档建立统一状态约定。当前测试证据见 `qa/QA_PROFILE.md`。

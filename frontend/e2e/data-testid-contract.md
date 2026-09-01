@@ -1,5 +1,8 @@
 # data-testid 契约表（E2E 选择器稳定层）
 
+> 活文档。最后核对：2026-08-28。当前 SPA 只保留活动运营页面；旧 Demo catalog 与 `e2e:catalog`
+> 已删除。下文按增量保留 testid 的引入历史，但表中标为删除的选择器不得继续用于新脚本。
+
 > 决策 D6：E2E 断言逻辑 100% 继承旧基线，只把选择器从散落 class 名收敛到这张 data-testid 契约表。
 > 组件重构可改 class/DOM，但**不得改这些 testid**（改了要同步改 E2E 脚本并在此登记）。
 
@@ -11,7 +14,7 @@
 | `theme-btn` | TopBar | 主题切换（迁自 App.vue） |
 | `nav-toggle` | TopBar | 汉堡按钮（<768 出现），phone-smoke 用它开抽屉 |
 | `nav-home` / `nav-console` | SidebarNav | 概览 / 控制台一级入口（无 e2e 点击，仅登记） |
-| `tab-list` / `tab-new` / `tab-validate` | SidebarNav | 控制台三个子导航项 |
+| `tab-list` / `tab-playbooks` / `tab-new` / `tab-validate` | SidebarNav | 控制台四个子导航项 |
 | `tenant-bar` | IdentityBar（dev 档） | dev 档租户栏容器 |
 | `tenant-input` | IdentityBar | X-Tenant-Id 输入 |
 | `tenant-chip-{acme\|beta\|__dev__}` | IdentityBar | 快捷切租户 |
@@ -264,3 +267,17 @@ flash 试算前后库存不变，以及 390 / 768 / 1440 零页面级横向溢�
 | `district-collapse-all` | DistrictTree | 「折叠全部」回到 34 省 |
 | `district-opt-{code}` | DistrictTreeNode | 树节点的勾选框（搜索态下命中也是它） |
 | `district-expand-{code}` | DistrictTreeNode | 展开/收起该节点的下级（仅省/市有） |
+
+## 2026-08 产品化与生命周期补登记
+
+| testid | 位置 | 说明 |
+|---|---|---|
+| `form-currency` | EditorView | 活动币种；当前后端缺省 CNY，前端提交显式值 |
+| `status-action-{id}` | ListView | 当前行主状态动作；未来草稿可预约，预约态可取消/切换 |
+| `cancel-scheduled-{id}` | ListView | 取消 `PENDING_EFFECT` 预约，不影响并存的 ONLINE 服务版本 |
+| `detail-loaded` | DetailView | 详情异步加载完成锚点 |
+| `detail-addon` / `detail-gift-row` | DetailView | 加价购/买赠详情 |
+| `detail-price` / `detail-nth` / `detail-random` | DetailView | 一口价、第 N 件折、随机金额详情 |
+
+企业权益中台 AwardBinding 暂无独立 UI；`POST /activity-awards/v1/intents` 是内部触发接口，因此本契约不为其
+虚构前端 testid。要做运营配置页时，先在 `docs/frontend.md` 明确路由与安全边界，再登记稳定选择器。

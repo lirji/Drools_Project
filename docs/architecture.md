@@ -1,13 +1,14 @@
 # 架构总览
 
 > 本仓库长成了**两件东西**：一个多租户活动引擎平台（生产形态的读写分离 + 代际发布 + 快照），
-> 和一套 Drools 教学 Steps（1–18）。这份文档只讲**架构**——模块怎么切、请求怎么走、
+> 和一套 Drools 教学 Steps（1–24）。这份文档只讲**架构**——模块怎么切、请求怎么走、
 > 为什么这么切。各 Step 的教学细节看 [`steps-guide.md`](steps-guide.md)，
 > 活动模块的**用法**看 [`activity-marketing.md`](activity-marketing.md)，
 > 部署编排看 [`deployment.md`](deployment.md)，容量与引擎选型看 [`capacity-model.md`](capacity-model.md)。
 >
-> 现状锚：2026-08-12 HEAD。全 reactor 476 个测试（common 193 含 3 gated skip / drools-lab 0 / console 256 / decision 27）。
-> 数字以 `./mvnw test` 输出的 `Tests run:` 汇总为准——**别用求和 surefire XML 的方式数**，会少数 52 个（见 [`../CLAUDE.md`](../CLAUDE.md) 坑 14）。
+> 现状锚：2026-08-28 当前工作树。8/19–21 已增加发放确认、不可变分录、grant outbox、XXL-JOB
+> relay 与企业权益中台 AwardIntent 连接器；测试数不再沿用 8/12 的 476。最新实跑证据见
+> [`qa/QA_PROFILE.md`](qa/QA_PROFILE.md)，计数以 Maven/Vitest 终端汇总为准。
 >
 > 上一轮结构性重构（分支 `refactor/activity-design`，8 个提交）的**对外可见契约变更**单独成册：
 > [`plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md`](plans/activity-design-refactor-0812-1232/BREAKING-CHANGES.md)。
@@ -53,7 +54,8 @@ Maven 聚合父 pom + 4 个模块，跑起来是**两个独立 Spring Boot 应�
 `scanBasePackages` / `@EntityScan` / `@EnableJpaRepositories` 都指 `com.lrj.drools`）。
 
 Docker 编排另有一个独立的 XXL-JOB Admin：它通过容器内网调用 console 的 9999 执行器端口，只负责
-`activityLifecycleSweep` 的触发、重试、日志与人工操作；活动状态不复制到调度库。Handler 仍进入 console 的
+`activityLifecycleSweep` 与可选 `grantOutboxRelaySweep` 的触发、重试、日志与人工操作；活动状态与 outbox
+事实都不复制到调度库。Handler 仍进入 console 的
 `ActivityLifecycleScheduleService → ActivityLifecycleTransitionService`，因此跨租户隔离、逐活动事务、悲观锁、
 幂等和发布代际都属于写平面。开发环境可用 `local` 模式保留 Spring `@Scheduled`，Docker 默认 `xxl`，
 `off` 用于测试或停用，三个触发模式互斥。decision 的代际轮询维护每个实例的本地快照，仍留在进程内调度。
@@ -72,7 +74,7 @@ Docker 编排另有一个独立的 XXL-JOB Admin：它通过容器内网调用 c
 | --- | --- | --- |
 | 数据库账号 | root（可 DDL） | `decision_ro`（`GRANT SELECT` only） |
 | `ddl-auto` | `update`（建表） | **`validate`**（由 `DecisionDdlGuardTest` 读源文件钉死） |
-| 仓库类型 | `JpaRepository`（14 个） | 取数与快照构建走 **`Repository<T,ID>`（6 个 `*ReadRepository`）**——没有 `save` / `delete` / `flush` |
+| 仓库类型 | `JpaRepository`（20 个） | 取数与快照构建走 **`Repository<T,ID>`（6 个 `*ReadRepository`）**——没有 `save` / `delete` / `flush` |
 | 依赖 | common + drools-lab | **仅** common |
 | 变更频率 | 低（运营操作） | 高（C 端每次下单） |
 | 失败半径 | 运营配不了活动 | **发不出优惠 / 发错钱** |
@@ -99,7 +101,12 @@ Docker 编排另有一个独立的 XXL-JOB Admin：它通过容器内网调用 c
 （此前取最高版=草稿，闸门装在了另一行数据上），扣减谓词另含活动状态与时间窗。
 冲正走 `POST /activity-marketing/{id}/release`（同样幂等，库存与每人限领额度一起还回）。
 
-这三个端点（`claim` / `release` / `grants`）的实现已从 `ActivityMarketingService` 拆到独立的 **`GrantService`**
+支付成功再由 `POST /activity-marketing/{id}/confirm` 将 HELD 以 CAS 迁到 CONFIRMED，并在同一事务追加
+不可变 `ISSUE` 分录；对已确认记录 release 时追加 `REVERSAL`。可选 grant outbox 与分录同事务落库，
+relay 才做外部 HTTP，因此下游故障不会把活动状态机事务拖成长事务。企业权益中台另走版本化 AwardBinding +
+AwardIntent outbox：它重跑服务器端权威决策后生成中立发放意图，不与 grant_no 传播 outbox 混表。
+
+这四个端点（`claim` / `confirm` / `release` / `grants`）的实现已从 `ActivityMarketingService` 拆到独立的 **`GrantService`**
 （前者保留同名委派方法，controller 与既有调用方不动）：
 台账与配置写入口零共享状态，唯一的公共知识是「当前是哪一版」，而那两条**互斥**定义现在由
 **`ActivityVersionResolver`** 具名化——`latestDraftVersion`（最高未删除版，编辑基线 / `changeStatus` 缺省）
@@ -166,6 +173,8 @@ flowchart TD
     I -- 是 --> J["返回 mode=rule-engine"]
     I -- 否 --> K["metrics.fallback('empty-decision')<br/>safeFallback 重算 → mode=legacy"]
 ```
+/Users/liruijun/Downloads/Mermaid.png
+![Mermaid.png](../../../../Downloads/Mermaid.png)
 
 **职责切分**（2026-08 那轮重构的核心成果，后来又补上「装配」一层）：
 
@@ -473,8 +482,9 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
   → 业务
 ```
 
-受 `console-write-authority` 保护的 6 个写端点（授权规则写在 `ActivityResourceServerConfig`）：
-`create` / `{id}/status` / `bulk-status` / `{id}/claim` / `{id}/release` / `/decision/v1/snapshot/rollback`。
+受 `console-write-authority` 保护的 8 个高风险 POST 入口（授权规则写在 `ActivityResourceServerConfig`）：
+`create` / `{id}/status` / `bulk-status` / `{id}/claim` / `{id}/confirm` / `{id}/release` /
+`/activity-awards/v1/intents` / `/decision/v1/snapshot/rollback`。
 注意 `bulk-status` 是两段路径，`/activity-marketing/*/status` 这个模式**匹配不到**，必须单列。
 `release` 必须一起设防的理由是它**会把库存加回去**并解除该用户的限领占用——
 不设防的话反复调它就能把一个限量活动的库存刷到任意大。
@@ -483,10 +493,12 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 
 ## 7. 数据模型
 
-15 张表 / **21 个 Spring Data 仓库**（15 个可写 `JpaRepository` + 6 个只读 `*ReadRepository`，后者见 §2）。
-**活动配置类的表**按 **`activityId` + `version` + `is_del`** 做版本化软删；
-账本与字典类的五张（`activity_generation` / `activity_grant` / `activity_idempotency` / `catalog_product` / `sys_district`）没有 `is_del`，
-它们记的是发生过的事实或外部标准，不参与版本化。主键一律自增代理键
+20 张实体表 / **26 个 Spring Data 仓库**（20 个可写 `JpaRepository` + 6 个只读 `*ReadRepository`，后者见 §2）。
+活动主表、规则、条件、赠品、SPU/选品池绑定与策略按 **`activityId` + `version` + `is_del`** 做版本化软删；
+冻结 artifact、AwardBinding、幂等记录、账本、outbox 与字典表（`activity_artifact` /
+`activity_award_binding` / `activity_generation` / `activity_grant*` / `activity_idempotency` /
+`activity_award_intent_outbox` / `catalog_*` / `sys_district`）没有 `is_del`，删除语义由版本替换、状态机或
+上游主数据边界承担。主键一律自增代理键
 （两个例外：`catalog_product` 用业务键 `spu_id`，`sys_district` 用 6 位行政区划代码 `code`）。
 
 公共列收在**两层** `@MappedSuperclass`，分两层正是因为上面那条差异：
@@ -499,12 +511,12 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 > `/activity-marketing/{list,detail,grants}` 里每个实体对象的键序从 `{"id":…,"activityId":…}` 变成了
 > `{"tenantId":…,"createdStime":…,…}`。字段名与取值一个字节没变、前端按键取值也不受影响，
 > 但对响应做 hash / ETag / 快照比对的下游会飘。`TenantScopedEntity` 上一个
-> `@JsonPropertyOrder({"id","activityId","version"})` 把身份字段提回队首，一处注解覆盖全部十个子类
+> `@JsonPropertyOrder({"id","activityId","version"})` 把身份字段提回队首，一处注解覆盖所有继承实体
 > （Jackson 忽略列表里不存在的属性名），顺序由 `EntityJsonOrderTest` 钉住。
 
 | 表 | 职责 | 写入时机 |
 | --- | --- | --- |
-| `activity_manage` | 活动主表（状态 / 版本 / 时间窗 / 库存 / 红包配置） | create / status / claim |
+| `activity_manage` | 活动主表（状态 / 版本 / 时间窗 / 库存 / 红包配置 / 币种） | create / status / claim |
 | `activity_rule` | 红包规则层 | create |
 | `activity_condition` | 资格条件（`condition_tree_json` + 翻译好的 DRL 约束） | create |
 | `activity_gift` | 买赠 / 加价购的赠品与换购品 | create |
@@ -514,8 +526,12 @@ OutageTolerantJwks (JWKS 验签, RS256, 容忍 IdP 短时不可用)
 | `activity_artifact` | 冻结的发布物料（含编译校验过的 DRL） | create 时冻结（schema 漂移时改标 NEEDS_REBUILD） |
 | `activity_generation` | 发布代际计数器（**无 `@TenantId`**，decision 侧跨租户轮询它） | **任何**状态变化 bump |
 | `activity_idempotency` | 创建幂等（按 `requestId`） | create |
-| `activity_grant` | 发放流水（claim 幂等键 + 每人限领计数 + 冲正 + 对账），唯一约束 `uk_grant_tenant_order_activity` | claim / release |
-| `catalog_product` | 商品目录 | 可选目录种子或主数据同步 |
+| `activity_grant` | 发放状态机（claim 幂等键 + 每人限领计数 + confirm / release），唯一约束 `uk_grant_tenant_order_activity` | claim / confirm / release |
+| `activity_grant_entry` | 不可变红蓝字分录（ISSUE / REVERSAL），recon 事实源 | confirm / release(CONFIRMED) |
+| `activity_grant_outbox` | grant_no 跨系统传播事件；FAILED 退避、DEAD 人工 redrive | confirm / release(CONFIRMED)，仅开关开启时 |
+| `activity_award_binding` | 活动版本到权益中台 SKU 的映射与 LEGACY/SHADOW/CENTER 模式 | create/edit |
+| `activity_award_intent_outbox` | CENTER 模式 AwardIntent，租约抢占后调用 benefit-center | `/activity-awards/v1/intents` |
+| `catalog_store` + `catalog_product` | 门店与商品目录 | 可选目录种子或主数据同步 |
 | `sys_district` | 中国行政区划字典（3212 行：省级 34 / 地市级 333 / 区县级 2845，6 位代码，**无 `@TenantId`**） | seeder（仅当表空） |
 
 > `sys_district` 是 `activity_manage.district_ids`（活动投放地域）与决策入参 `userDistrictId`（用户地域，
@@ -588,10 +604,11 @@ update ActivityManageEntity e set e.inventory = e.inventory - :n, ...
 
 ## 8. 部署拓扑
 
-6 个 compose 服务；console 与 decision 由**同一份 `deploy/Dockerfile`** 以 `--build-arg MODULE=` 构建：
+7 个 compose 服务（mysql、XXL-JOB、console、decision、gateway、Prometheus、Grafana）；console 与 decision
+由**同一份 `deploy/Dockerfile`** 以 `--build-arg MODULE=` 构建：
 
 ```
-浏览器 :8095
+浏览器 :${DROOLS_UI_PORT:-8095}
    │
    ├─ /ui/**            → gateway 本地静态（Vue SPA + history 回退 + 自托管字体）
    ├─ /api/decision/**  → rewrite → decision:8080/decision/v1/**
@@ -699,6 +716,8 @@ TMS → 后向链/query → 引擎安全护栏 → Micrometer 指标 → KieScan
 | 21 | `activityId` 标签有基数上限 | 大促当天监控一起挂 | `DecisionMetricsTest` |
 | 22 | 快照构建期的查询数与活动目录规模**无关** | N+1 不随请求量增长、压测照不出来，却全打在只读连接上、每分钟被兜底重建重跑一遍 | `SnapshotBuildQueryCountTest`（热路径那侧是 `DecisionQueryCountTest`） |
 | 23 | DRL 里不要随便加 `update($fact)` | 死循环，请求挂住 | — （见 `../CLAUDE.md` 坑 3） |
+| 24 | confirm/release 的状态迁移、不可变分录与 outbox 必须同事务；下游 HTTP 只能在 relay 中执行 | 发放已生效但账/事件缺失，或下游超时长期占住业务事务 | `GrantLedgerTest` + `GrantOutboxTest` |
+| 25 | grant outbox 与 AwardIntent outbox 使用各自幂等键，下游按键幂等消费 | 至少一次投递造成重复记账或重复发放 | `GrantOutboxTest` + `ActivityAwardIntentServiceTest` + `AwardIntentOutboxLeaseTest` |
 
 ---
 
@@ -708,6 +727,8 @@ TMS → 后向链/query → 引擎安全护栏 → Micrometer 指标 → KieScan
 | --- | --- |
 | 各 Step 详解 + REST 接口全表 + DRL 语义 | [`steps-guide.md`](steps-guide.md) |
 | 活动模块怎么用（建活动 / 六形态造数 / 决策调用） | [`activity-marketing.md`](activity-marketing.md) |
+| 前端当前路由 / 代理 / 构建 / 测试入口 | [`frontend.md`](frontend.md) |
+| 企业权益中台连接器 / 灰度 / 回切 | [`benefit-center-connector.md`](benefit-center-connector.md) |
 | 部署编排 / 网关 / 双账号 / 观测 / 容灾 | [`deployment.md`](deployment.md) |
 | 能挂多少活动、Drools vs QLExpress vs 纯 Java | [`capacity-model.md`](capacity-model.md) |
 | 项目里有哪些技术点（面试 / 答辩向） | [`tech-highlights.md`](tech-highlights.md) |

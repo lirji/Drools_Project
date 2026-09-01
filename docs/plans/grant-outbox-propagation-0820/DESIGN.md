@@ -1,5 +1,10 @@
 # grant_no 跨系统传播 · Transactional Outbox 设计(drools-demo)
 
+> **归档状态（2026-08-28）：已实现并补强。** 当前实现已有 FAILED 指数退避、DEAD 死信、redrive、
+> `next_attempt_at`、local/XXL-JOB 双调度与可插拔 webhook；本文以下内容保留 8/20 的原始设计语境，
+> 其中“待实现”和三态状态机不再代表现状。现状见 [`../../activity-marketing.md`](../../activity-marketing.md)、
+> [`../../deployment.md`](../../deployment.md) 与 `activity.grant-outbox.*` 配置。
+
 > 推模式:drools 发放确认/冲正时把带 grant_no 的事件写入 outbox,relay 异步推给下游(账务/渠道系统),
 > 使下游能按 grant_no(=recon issue_id)与营销侧三方 join。drools 无 MQ → transactional outbox + HTTP webhook relay。
 > 借鉴 drools 既有范式:ActivityIdempotencyEntity(表)、confirmGrant/releaseGrant 的 @Transactional(同事务写点)、

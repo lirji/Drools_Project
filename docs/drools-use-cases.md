@@ -1,5 +1,7 @@
 # Drools 应用场景与定位
 
+> 活文档。最后核对：2026-08-28；选型判断与当前 Step 1–24 能力范围一致。
+>
 > 常见误区："Drools 是不是一般跟营销活动平台一起用？"
 > 不完全对。营销是 Drools 的**常客**，但不是它的**绑定关系**。本文澄清 Drools 的真实定位，
 > 配合 `docs/drools-capabilities.md`（能力全景）、`docs/drools-vs-aviator.md`（选型对照）一起看。

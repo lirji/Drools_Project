@@ -22,12 +22,13 @@ ADMIN="${CASDOOR_ADMIN:-admin}"; ADMIN_PW="${CASDOOR_ADMIN_PW:-123}"
 # 回调白名单（多值）：
 #   ① 旧原生前端 index.html（activity.js 检测 ?code=）——保留，并存期/回滚不动 Casdoor
 #   ② 新 Vue SPA（挂 /ui/，同源 8099）回调路由 /ui/auth/callback
-#   ③ Docker 网关（:8095）Vue SPA 回调 /ui/auth/callback
+#   ③ Docker 网关（中央注册端口）Vue SPA 回调 /ui/auth/callback
 #   ④ 新 Vue SPA dev（Vite :5173）回调 /ui/auth/callback
 # 已存在的应用会被 **更新** 以并入这些地址（幂等追加，修早前"应用已存在即 skip 不追加"的坑）。
 REDIRECT_LEGACY="${REDIRECT_URI:-http://localhost:8099/index.html}"
 REDIRECT_SPA="http://localhost:8099/ui/auth/callback"
-REDIRECT_GATEWAY="${REDIRECT_GATEWAY:-http://localhost:8095/ui/auth/callback}"
+DROOLS_UI_PORT="${DROOLS_UI_PORT:-8095}"
+REDIRECT_GATEWAY="${REDIRECT_GATEWAY:-http://localhost:${DROOLS_UI_PORT}/ui/auth/callback}"
 REDIRECT_DEV="${REDIRECT_DEV:-http://localhost:5173/ui/auth/callback}"
 REDIRECTS_JSON="[\"${REDIRECT_LEGACY}\",\"${REDIRECT_SPA}\",\"${REDIRECT_GATEWAY}\",\"${REDIRECT_DEV}\"]"
 

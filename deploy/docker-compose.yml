@@ -147,7 +147,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.frontend
     image: drools-platform/activity-frontend:latest
-    ports: ["8095:80"]   # 8090 常被本机其它服务占用，用 8095；网关内部仍 :80
+    ports: ["${DROOLS_UI_PORT:-8095}:80"]   # 浏览器入口由 auth-platform/deploy/platform-ports.env 统一分配
     depends_on:
       console: { condition: service_healthy }
       decision: { condition: service_started }

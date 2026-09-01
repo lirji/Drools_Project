@@ -1,5 +1,7 @@
 # Drools vs Aviator
 
+> 活文档。最后核对：2026-08-28；本项目对照基于 Drools 8.44.2.Final，教学能力已扩展到 Step 1–24。
+>
 > 这俩名字里都带"规则/表达式"的味道，容易混，但其实是**两个量级完全不同的东西**。
 > 本文给出选型对照，配合 `docs/drools-capabilities.md`（Drools 能力全景）一起看。
 > 注：Aviator 指 [killme2008/aviator](https://github.com/killme2008/aviator) 这个轻量级 Java 表达式求值引擎。
@@ -23,7 +25,7 @@
 | CEP / 时间窗 | 无 | `over window:time(5m)` 等（本项目 Step 8） |
 | 真值维护 (TMS) | 无 | `insertLogical` 自动撤销衍生结论（本项目 Step 12） |
 | 量级 | 极轻（一个 jar，几百 KB） | 重（一票 kie-* 模块） |
-| 学习曲线 | 几分钟 | 陡（本项目 17 个 Step 才铺完） |
+| 学习曲线 | 几分钟 | 陡（本项目用 24 个 Step 才铺完主要能力） |
 
 ## 反直觉的点：Aviator 反而占优的维度
 

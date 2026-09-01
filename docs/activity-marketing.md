@@ -1,5 +1,8 @@
 # 活动营销模块（`com.lrj.drools.activity`）
 
+> 活文档。最后核对：2026-08-28。当前实现基线包含生命周期调度、发放确认与不可变分录、grant outbox，
+> 以及企业权益中台 AwardIntent 连接器；带日期的 `docs/plans/**` 仅保留当时的设计与验收语境。
+
 本模块承载活动规则平台的营销业务能力，覆盖“活动创建 → 制定规则 → 上线 → 优惠决策”的完整流程。初始领域模型参考了 `autolife/mall-shop` 的活动营销设计，当前代码已按本项目的读写平面、租户隔离和规则执行架构持续演进；上线前仍需结合实际业务完成容量、安全与运维验收。
 
 > 规划与实施全过程（Codex 规划 → Claude 跨模型复核 → 分阶段实施 → /frontend-plan）见 `docs/plans/activity-marketing-port-0712-1917/`：`FINAL_PLAN.md` / `FRONTEND_PLAN.md` / `IMPLEMENTATION_PROGRESS.md`。
@@ -95,6 +98,11 @@
 - `activity.marketing.snapshot.max-age-ms`（默认 **60000**，≤0 关闭）：decision 侧快照的**兜底重建阈值**——轮询器每轮扫完代际后，把年龄超过它的快照按数据库真相重建一遍（见下节「发布代际轮询预热」）。⚠️ **两份 `application.yml` 里都没有这个 key，默认值只在 `GenerationWarmService` 的 `@Value` 里**；想改必须自己加。
 - `activity.marketing.lifecycle-schedule.mode`（默认 **local**）：`local` 由 Spring `@Scheduled` 按 `interval-ms` 扫描，`xxl` 由 XXL-JOB 的 `activityLifecycleSweep` Handler 触发，`off` 完全关闭；三种模式互斥。Docker 默认使用 `xxl`，本机直接启动默认使用 `local`。只有显式置为 `PENDING_EFFECT(3)` 的未来版本才会自动上线；ONLINE 版本在结束时间之后自动下线。`batch-size` 控制每个租户每轮最多处理的活动数，普通 NORMAL 草稿永远不会被后台自动发布。
 - `activity.marketing.seed-catalog-data`（默认 **false**）：仅供本地开发或验收环境按需开启；启动时写入 4 个目录商品和商品池（poolId=1，圈电子类 100~200 元），便于验证自动圈选。正式环境应由商品主数据同步链路供数，不应开启该选项。
+- `activity.grant-outbox.enabled`（默认 **false**）：控制 confirm/release 是否同事务写跨系统传播事件。
+  `relay-mode=local|xxl|off` 选择 Spring 调度、XXL-JOB `grantOutboxRelaySweep` 或只保留手动触发；
+  webhook 为空时只记录日志。FAILED 按指数退避重试，触顶进入 DEAD，需调用服务层 redrive 后再投。
+- `activity.award-intent.relay-enabled`（默认 **false**）：控制 CENTER 模式 AwardIntent outbox 是否发往
+  `benefit-center-url`。relay 用行租约避免多实例重复抢占；HTTP 最坏调用时长必须小于 `lease-ms`。
 - `activity.tenant.dev-default-enabled`（默认 **false**，`application.yml` dev-run 显式开为 true）：多租户开关，见下节「多租户隔离」。本地开着时不带 `X-Tenant-Id` 也能跑（回落单租户 `__dev__`），下面的 curl 示例照常工作。
 
 ## REST 接口（全部在 `/activity-marketing`）
@@ -105,6 +113,7 @@
 | POST | `/{id}/status` | 状态变更 `{version,targetStatus}`：0 待上线、1 立即上线、2 下线、3 **预约上线**。预约只接受未来开始的合法时间窗，到 `activityStartTime` 自动上线，超过 `activityEndTime` 自动下线；改回 0 即取消预约。四眼开启时，立即上线和预约上线都要求审批人≠提交人，失败返回 **403** |
 | POST | `/bulk-status` | **批量**状态变更 `{items:[{activityId,version}],targetStatus}`，回执 `{succeeded[],failed[{activityId,reason}]}`。部分失败仍是 200；但 `targetStatus` 本身非法时**进循环前**就返回 400（否则几十条各失败一次） |
 | POST | `/{id}/claim` | **抢占秒杀库存**（`?version=&quantity=&userId=&orderId=`）：抢到 200；没抢到按失败种类分流——**400**（缺 activityId / 数量非正 / 限领活动没带 `userId`）、**404**（活动或版本不存在）、**409**（余量不足、不在可用窗口、超出每人限领）。`orderId` 是幂等键的一半（**不传就退化成不幂等**）；auth 档受已配置的 `console-write-authority` 保护 |
+| POST | `/{id}/confirm` | 支付成功确认（`?orderId=&amount=&decisionId=`）：CAS 执行 `HELD→CONFIRMED`，同事务追加正数 `ISSUE` 分录；重复确认返回 replay 且不覆盖首次金额。缺参/亚分金额/溢出 400，未 claim 404，已 RELEASED 409。受 `console-write-authority` 保护 |
 | POST | `/{id}/release?orderId=` | **冲正**：把发放记录置 RELEASED 并归还库存与限领额度。幂等（重复释放不重复加库存）。缺参/空 `orderId` 返回 **400**，确实没有对应发放记录才 **404**。同受 `console-write-authority` 保护——不设防的话反复调它就能把限量活动的库存刷到任意大 |
 | GET | `/grants?orderId=` | 按单查发放记录（客服「这一单用了哪些优惠」的数据源） |
 | GET | `/generation?bizLine=` | 库里当前发布代际——决策响应里 `provenance.generation` 的**参照物**（行不存在返回 0）。只看决策侧那个数判断不了「我刚发布的那次进去了没有」 |
@@ -117,6 +126,23 @@
 | POST | `/preview` | 资格条件树预览（翻译+试编译，不落库；恒 200 读 `ok`） |
 | GET | `/field-dict` | 字段白名单 + 运算符 + 枚举（前端下拉的唯一来源，防漂移） |
 | GET | `/auth-config` | 前端 OIDC 引导配置。**auth 档下是这个前缀里唯一匿名可读的路径**（安全链一 permitAll + `JwtTenantFilter` 跳过），auth 关时只返回 `{authEnabled:false}`。定义在 `activity-common` 的 `AuthConfigController`，由 console 暴露；`deployment.md` 拿它做最小验收 |
+
+企业权益中台使用独立入口 `POST /activity-awards/v1/intents`，不在 `/activity-marketing` 前缀下。它接收
+`activityId`、`activityVersion`、`sourceRequestId`、收件人、场景和服务器端决策上下文：LEGACY 不生成
+AwardIntent，SHADOW 只返回对拍结果，CENTER 以 `(sourceSystem,sourceRequestId)` 幂等写 outbox。该入口同样受
+`console-write-authority` 保护；完整契约见 [`benefit-center-connector.md`](benefit-center-connector.md)。
+
+### 发放账本与 outbox 边界
+
+- `activity_grant` 是可变状态机（HELD / CONFIRMED / RELEASED）；`activity_grant_entry` 是不可变红蓝字账，
+  confirm 追加 `ISSUE(+amount_minor)`，已确认后的 release 追加 `REVERSAL(-amount_minor)`。HELD 直接 release
+  从未发放，因此不产生分录。
+- 分录幂等由 `uk_entry_grant_type(grant_no,entry_type)` 保证；传播事件幂等由
+  `uk_outbox_grant_event(grant_no,event_type)` 保证。都不能退回应用层先查后写。
+- grant outbox 是 at-least-once，不是 exactly-once。下游必须按 `(grant_no,event_type)` 去重；DEAD 不会
+  自动重试。生产必须先执行显式 SQL 迁移，不能依赖 `ddl-auto:update` 给既有表补唯一约束。
+- AwardIntent outbox 与 grant outbox 是两条不同链路：前者承载“要向权益中台发什么”，后者传播营销发放账
+  的 grant_no/红蓝字事件；不要混用表、开关或幂等键。
 
 几条容易踩的语义：
 
@@ -195,7 +221,7 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 **`/snapshot/rollback` 补的是一张空头支票**：`DecisionSnapshotStore.rollback()` 此前**零生产调用方**（全仓只有测试在调），也就是说「回滚是求值出 bug 时的止损手段」这句承诺一直按不下去——止损手段只有能从生产按下去才算数。它的边界必须一起记住：
 
 - **它不写数据库**，只动本进程内存里的指针，因此不违反「decision 连只读账号」的边界。推论有两条：**① 只影响被打到的那个实例**（多实例部署要逐实例调用）；**② 下一次代际推进会把它盖掉**——回滚是止血，真正的修复仍是在 console 侧下线/改配置再发布一代。
-- 它是运营级操作，**与写平面的 create/status/claim/release 共用 `activity.tenant.auth.console-write-authority`**（配了才生效）；角色门上它与 `GET /snapshot` 同级（`console` 角色的实例上 404）。
+- 它是运营级操作，与 create/status/claim/confirm/release 及 AwardIntent 触发入口共用 `activity.tenant.auth.console-write-authority`（配了才生效）；角色门上它与 `GET /snapshot` 同级（`console` 角色的实例上 404）。
 - **没有上一代可回时返回 409**（而不是假装成功），并在响应里给 `hint`。常见于「刚重启、只发布过一代」，以及「上一次推进是兜底重建（`refresh`，按设计不占回滚槽位）」。响应体带 `fromGeneration` / `toGeneration` / `activityCount`。
 
 **`/snapshot` 这个诊断端点为什么必须存在**：`provenance` 三个值在最要命的那条故障上**全绿**——活动的 `bizLine` 为空（写平面不强制必填）时它进不了任何桶（`DecisionSnapshotBuilder` 按 bizLine **精确匹配**收活动），而兜底重建只遍历**已存在**的桶、永远建不出不存在的那个。此时决策照常走快照、代际是别的业务线的正常数、快照也很新，只是这个活动根本不在里面，页面上看到的「未命中」与「活动确实不该命中」完全同形。`/snapshot` 是这个困惑的终点。它**只读、不发起决策**，因此不会把诊断流量混进 `activity.decision.{hit,amount}`，也不消耗 `ACTIVITY_TAG_CAP` 的标签位。
@@ -209,7 +235,7 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 - **`bizLine` 为空的孤儿活动现在会在构建期吵**：每次构建真实桶时数一次「有多少已上线活动的 `bizLine` 为空」，落 WARN 日志 + 计数器 `activity.decision.snapshot.orphan`。这类活动进不了任何桶（构建期按 bizLine **精确匹配**），而决策侧 `provenance` 三个值全绿、回退率/耗时/命中数全都不动——此前只有诊断端点 `GET /decision/v1/snapshot?activityId=` 照得出来，而那要求排查的人**已经怀疑到某个具体活动头上**。绝对值没有意义（每次构建按当时库存量 `increment(n)`），能用的是 `rate(...) > 0`：数据修干净后立刻停。观测失败不会拖垮构建。
 - **快照兜底重建**：轮询器每轮扫完代际后，把年龄超过 `activity.marketing.snapshot.max-age-ms`（默认 60s）的快照按数据库真相重建一遍。它守的不是某个已知 bug，而是「信号漏发」这**一整类**故障（bump 因异常没提交、轮询线程被拖死后恢复、构建抛异常导致 lastSeen 没更新……都表现为快照静默过期而决策照常成功）——代际信号依赖每个写入口都记得发信号，那是一条要人持续维护的纪律，本仓库已经在它上面失手过一次（下线不 bump）。有了兜底，后果从**永久**降为**一轮**。它走 `DecisionSnapshotStore.refresh` 而**不是** `publish`：这不是一次发布，不能占用回滚槽位，否则 `rollback` 会退到几十秒前的自己 = 等于没回滚；代际号也保持不变。
 - **decision 不碰 DDL**：`activity-decision/application.yml` 的 `ddl-auto` 已从 `update` 改回 **`validate`**（此前只有 compose 的环境变量盖住它，按文档化的 `./mvnw -pl activity-decision spring-boot:run` 本地起会带 DDL 权限跑），并由 `DecisionDdlGuardTest` 钉死防漂回。建表仍由 console 独占。
-- **网关**（`deploy/docker-compose.yml`：mysql + console + decision + nginx）：nginx 把 `/api/decision/*`→decision、`/api/console/*`→console、`/ui/*` 及其余→console；host 端口 **8095**（`http://localhost:8095/ui/console`）。`docker compose stop console` 后 `/api/decision/*` 仍可决策，可当场展示拆分价值。
+- **网关**（Compose 共 7 个服务）：nginx 自行托管 `/ui/*`，把 `/api/decision/*`→decision、`/api/console/*`→console、其余后端入口→console；host 端口由 `DROOLS_UI_PORT` 决定（默认 8095）。`docker compose stop console` 后 `/api/decision/*` 仍可决策，可当场展示拆分价值。
 
 ### 取数：快照优先，回落批量查库
 
@@ -284,7 +310,7 @@ M2 把本模块沿**读写平面**拆成两个独立 Spring Boot 应用，共用
 # 直连 decision 服务的决策别名（等价 console 的 /activity-marketing/spu-discount）
 curl -X POST localhost:8082/decision/v1/spu-discount -H 'X-Tenant-Id: acme' \
   -H 'Content-Type: application/json' -d '{"spuIdList":[1001],"orderAmount":200}'
-# 经网关：POST localhost:8095/api/decision/spu-discount（同 body）
+# 经网关：POST localhost:${DROOLS_UI_PORT:-8095}/api/decision/spu-discount（同 body）
 # Compose 默认 auth=true，需再带 Authorization: Bearer <valid-token>
 
 # 加价购两阶段
@@ -309,17 +335,17 @@ curl -X POST 'localhost:8082/decision/v1/snapshot/rollback?bizLine=mall' -H 'X-T
 
 ## 多租户隔离（P0-4，Track B）
 
-活动数据按租户隔离，**靠机制不靠纪律**：14 张实体表里 **13 张**带 `@TenantId`（Hibernate 判别式多租户），引擎对**每条 SQL 自动追加 `tenant_id = ?` 谓词**、insert 自动落租户——业务代码不手动拼 where、不手动 set 租户，漏不掉（`TenantArchGuardTest` 另外钉死「不手写 tenant 谓词、不用 `nativeQuery`」）。最新一张是发放流水 `activity_grant`（带 `@TenantId`，唯一约束 `uk_grant_tenant_order_activity` = claim 的幂等键）。
+活动数据按租户隔离，**靠机制不靠纪律**：20 张实体表里 **18 张**带 `@TenantId`（直接声明或继承 `TenantScopedEntity`），Hibernate 对查询自动追加 `tenant_id = ?` 谓词、insert 自动落租户——业务代码不手动拼 where、不手动 set 租户，漏不掉（`TenantArchGuardTest` 另外钉死「不手写 tenant 谓词、不用 `nativeQuery`」）。发放流水、不可变分录、grant outbox、AwardBinding 与 AwardIntent outbox 都在这 18 张之内。
 
-> **第 14 张 `activity_generation` 刻意不加 `@TenantId`**，改用显式 `tenant_id` 列。原因是 decision 侧的代际轮询跑在**后台线程**、没有 `TenantContext`，若带 `@TenantId` 则 `findAll()` 会被自动追加 `tenant_id = NO_TENANT` 而**恒空**，什么都扫不到。这是例外不是遗漏，改它之前先读该实体的类注释。
+> 两个例外都有明确原因：`activity_generation` 不加 `@TenantId`、改用显式 `tenant_id` 列，因为 decision 侧代际轮询运行在没有 `TenantContext` 的后台线程；否则 `findAll()` 会被追加 `tenant_id = NO_TENANT` 而恒空。`district` 是全租户共享的国家行政区划字典，不含租户列。它们是例外，不是隔离遗漏。
 
-> **公共列 2026-08 收进两层 `@MappedSuperclass`**：`TenantScopedEntity`（`tenant_id` + 双时间戳）与 `SoftDeletableTenantEntity`（再加 `is_del`）。分两层是因为 `activity_grant` **确实没有 `is_del` 列**——发放不软删，冲正走 `state=RELEASED`（那是账，删掉就对不上），不为了「都一样」给台账硬塞一列。列名、长度、`nullable` 逐字节照搬原实体，**生成的 DDL 与改造前完全一致**（decision 侧是 `ddl-auto: validate`，这里任何一处漂移都会让只读平面起不来）。<br>⚠️ 两个连带后果：① `TenantArchGuardTest` 必须**沿继承链往上找** `@TenantId`，只看 `getDeclaredFields()` 会把每个继承来的实体误判成「缺租户列」；② Jackson 默认把超类属性排在子类之前，收上来的那一刻 `/activity-marketing/{list,detail,grants}` 里每个实体对象的键序就从 `{"id":…,"activityId":…}` 变成了 `{"tenantId":…,"createdStime":…,…}`——字段名与取值一个字节没变，但那仍是响应体的一次**静默**改变，对响应做 hash / ETag / 快照比对的下游会飘。**已修回**：`TenantScopedEntity` 上一个 `@JsonPropertyOrder({"id","activityId","version"})` 把身份字段提回队首（一处注解覆盖全部十个子类），由 `EntityJsonOrderTest` 钉住。
+> **公共列 2026-08 收进两层 `@MappedSuperclass`**：`TenantScopedEntity`（`tenant_id` + 双时间戳）与 `SoftDeletableTenantEntity`（再加 `is_del`）。分两层是因为发放账、分录与 outbox **确实没有 `is_del` 列**——发放不软删，冲正走状态机与追加分录，不为了「都一样」给账务事实硬塞一列。列名、长度、`nullable` 逐字节照搬原实体，**生成的 DDL 与改造前完全一致**（decision 侧是 `ddl-auto: validate`，这里任何一处漂移都会让只读平面起不来）。<br>⚠️ 两个连带后果：① `TenantArchGuardTest` 必须**沿继承链往上找** `@TenantId`，只看 `getDeclaredFields()` 会把每个继承来的实体误判成「缺租户列」；② Jackson 默认把超类属性排在子类之前，收上来的那一刻 `/activity-marketing/{list,detail,grants}` 里每个实体对象的键序就从 `{"id":…,"activityId":…}` 变成了 `{"tenantId":…,"createdStime":…,…}`——字段名与取值一个字节没变，但那仍是响应体的一次**静默**改变，对响应做 hash / ETag / 快照比对的下游会飘。**已修回**：`TenantScopedEntity` 上一个 `@JsonPropertyOrder({"id","activityId","version"})` 把身份字段提回队首（一处注解覆盖全部继承实体），由 `EntityJsonOrderTest` 钉住。
 
 - **租户来源（可插拔接缝，两档）**：`activity.tenant.auth.enabled=false` 时从 HTTP 头 `X-Tenant-Id` 取（仅 dev/header 档）；`=true`（Compose 默认）时 `/activity-marketing/**` 与 `/decision/v1/**` 都需带 Casdoor 验签 JWT，**租户从 `aud`(client_id) 解析**（命脉实测：Casdoor client_credentials 的 `owner`=admin 非组织；`aud` 由 Casdoor 绑定到已认证 client + 独立 secret → 不可伪造，比 owner 更实在），信封 `X-Tenant-Id` 只校验（≠解析出的租户→403）、绝不作来源。两档都写进同一个 `TenantContext`(ThreadLocal)，下游 `@TenantId` 隔离机制一行不动。
   - **aud→tenant 解析**：`AudienceTenantResolver` —— `client-tenant-map` 显式映射优先（生产推荐），`activity-{tenant}-cid` 家族反解兜底；`AudienceTenantValidator` 常开，aud 解析不到租户即拒（401）。
-  - **浏览器 Casdoor 档**：`./deploy.sh --provision-auth` 幂等创建 acme/beta public SPA client 与 8095 callback；M2M 调用方仍使用 `scratchpad/casdoor-m2m-verify.sh` 的独立 client_credentials。
+  - **浏览器 Casdoor 档**：`./deploy.sh --provision-auth` 幂等创建 acme/beta public SPA client 与当前 `DROOLS_UI_PORT` callback；M2M 调用方仍使用 `scratchpad/casdoor-m2m-verify.sh` 的独立 client_credentials。
 - **前端**：dev 档显示 `X-Tenant-Id` 切换条；Casdoor 档使用 Authorization Code + PKCE、state、sessionStorage token 和 Bearer，登录回调为 `/ui/auth/callback`，统一门户只跳目标 `/ui/login` 而不接触 token。
-- **fail-closed**：`TenantContextFilter` 是面向用户的闸，挂在**两个平面**上——`/activity-marketing/*` **与 `/decision/v1/*`**。无 `X-Tenant-Id` 且 dev-default 关时直接 **403**；`X-Tenant-Id` 含非法字符（非 `[A-Za-z0-9_-]{1,64}`）**400**。其它 Step（1~18）不挂此过滤器、不受影响。
+- **fail-closed**：`TenantContextFilter` 是面向用户的闸，挂在**两个平面**上——`/activity-marketing/*` **与 `/decision/v1/*`**。无 `X-Tenant-Id` 且 dev-default 关时直接 **403**；`X-Tenant-Id` 含非法字符（非 `[A-Za-z0-9_-]{1,64}`）**400**。其它教学 Step（1–24）不挂此过滤器、不受影响。
   - 该过滤器写于 P0-4，当时只有 `/activity-marketing/*`；M1.1 加决策平面时**漏了同步扩 URL 模式**，于是 header 档下 `/decision/v1/*` 完全不解析租户——`X-Tenant-Id` 被静默忽略，全部落到 `TenantIdentifierResolver` 的兜底（dev-default 或 NO_TENANT），即 A 租户查到的是 dev-default 的活动。auth 档不受影响（`JwtTenantFilter` 挂的安全链本来就同时匹配两个平面）。这条由 docker 端到端验证发现——单元测试全跑在 dev-default 下，恰好绕过缺口；回归由 `DecisionTenantHeaderTest` 钉死。
 - **dev-only 默认租户**：`activity.tenant.dev-default-enabled=true` 时，不带头的请求回落到单租户 `__dev__`，方便本地/前端手点；**生产必须关**（默认就是关 = 无头即 403）。
 - **只做数据行隔离**：字段 schema（`/field-dict` 白名单）当前仍全租户共享（`RuleSchemaRegistry` 仍走 `DEFAULT_TENANT`）；按租户定制字段元数据属后续（P0-1 的 Track B 扩展），不在 P0-4。

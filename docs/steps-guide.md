@@ -1,10 +1,14 @@
 # Step 逐步指南
 
+> 活文档。最后核对：2026-08-28。Step 1–24 的后端端点全部保留；旧 `/ui/capabilities` Demo catalog
+> 页面和 `e2e:catalog` 已在产品化重构中删除，本文与 README 的 curl 示例是当前可执行入口。
+
 本文是 CLAUDE.md 的详细配套：每个 Step 的完整说明、REST 接口清单、以及各 Step 特有的 DRL 语义 / 实现注意点。CLAUDE.md 只保留概览与通用规范，具体到某个 Step 时来这里查。
 
 > **代码位置（2026-07-20 四模块重构后）**：本文涉及的 Step 1–24 全部实现（controller / service / domain / `rules/` / `DroolsConfig` / `META-INF/kmodule.xml` 等）已从仓库根 `src/` 迁入 **`drools-lab`** 模块（落在 `drools-lab/src/main/...`），本文中形如 `service/HotReloadService.java`、`rules/hello/hello.drl`、`audit/RuleAuditListener.java`、`META-INF/kmodule.xml` 的相对路径均相对该模块根。`drools-lab` 是**库模块（不含 Spring Boot 启动类）**：Step 1–24 的 REST 入口由依赖它的 **`activity-console`** 应用对外提供（`ConsoleApplication`，端口 **8081**，`@SpringBootApplication(scanBasePackages="com.lrj.drools")` 把 lab 里的 controller 扫进来）。因此根 `./mvnw spring-boot:run` 已失效，改用 `./mvnw -pl activity-console spring-boot:run` 起服务后再打本文各接口。
 >
-> **不想 curl 就开 SPA**：前端「规则能力」目录（`/ui/capabilities`）已把 Step 1–24 的全部端点做成可点即跑的示例台（每个 Step 预置若干示例请求，执行后除了 HTTP 状态还会把**最近 12 次**耗时画成 sparkline；换示例会清空该序列，避免不同 payload 的耗时混进同一条线）。SPA 要么用 `./mvnw -pl activity-console -Pfrontend spring-boot:run` 打进 console 的 `static/ui/`，要么走 compose 的网关 `http://localhost:8095/ui/capabilities`（编排里前端由 gateway 镜像托管，不在 console 的 JAR 里）。
+> 当前 SPA 聚焦活动运营，不再提供 Step 点选目录。可直接复制本文请求，打到 console 8081；经 Compose
+> 网关时 Step 端点走根路径兜底到 console。活动控制台的前端用法见 [`frontend.md`](frontend.md)。
 >
 > **8082 的 `activity-decision` 不含 Step 1–24**，它暴露活动引擎的决策 / 观测端点（`/decision/v1/**`：`spu-discount` / `gifts` / `addon/*` / `metrics` / `by-activity` / `snapshot` / `snapshot/rollback`）。它已改回 `ddl-auto: validate`（只读平面不碰 DDL，建表由 console 独占），所以本地单独 `./mvnw -pl activity-decision spring-boot:run` 前得先让 console 起过一次把表建好，否则启动即 validate 失败。
 >

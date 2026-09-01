@@ -1,10 +1,15 @@
 # 平台命名升级
 
+> 迁移记录。最后核对：2026-08-28。平台/数据库/目录表命名仍有效；当时短暂存在的规则能力中心 UI
+> 后续已随旧 Demo catalog 删除，当前前端路由以 [`../docs/frontend.md`](../docs/frontend.md) 为准。
+
 本次升级把项目默认标识统一为“活动规则平台”，并将内置商品、店铺模型升级为正式目录模型。
 
 ## 前端入口
 
-规则能力中心由 `/ui/demos` 调整为 `/ui/capabilities`，组件、路由名和测试选择器同步使用 `Capability` 词汇。外部书签、网关跳转或自动化脚本需要更新到新地址；旧地址会由 SPA 的兜底路由返回首页。
+该次升级曾把规则能力中心从 `/ui/demos` 改为 `/ui/capabilities`；随后产品化重构删除了整套教学 Demo
+catalog 页面。现在访问二者都会由 SPA catch-all 回首页。Step 1–24 的后端接口仍保留，调用方式见 README 与
+`docs/steps-guide.md`，不要为 `/ui/capabilities` 新建书签或自动化。
 
 ## MySQL 存量库
 

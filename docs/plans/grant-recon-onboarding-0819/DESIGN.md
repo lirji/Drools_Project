@@ -1,5 +1,11 @@
 # 营销发放对账地基 · 设计定稿(drools-demo)
 
+> **归档状态（2026-08-28）：已实现，但最终实现已演进。** 当前代码把红蓝字从可变
+> `activity_grant` 拆到追加式 `activity_grant_entry`，recon 视图也改读分录表；本文以下内容保留 8/19
+> 评审时的方案与取舍，不能作为当前表结构/运维手册。现状见
+> [`../../activity-marketing.md`](../../activity-marketing.md) 与 [`../../deployment.md`](../../deployment.md)，
+> 迁移脚本以 `deploy/mysql-grant-recon-onboarding.sql` 为准。
+
 > 由 java-spec-design 判官面板(3 方案→打分→综合)产出。停在定稿,拍板后喂 java-build-review 实现。
 > 关联对账系统:recon-platform 营销三方 SEG1(营销侧)。日期:2026-08-19。
 
