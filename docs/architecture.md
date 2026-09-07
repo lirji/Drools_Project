@@ -6,7 +6,7 @@
 > 活动模块的**用法**看 [`activity-marketing.md`](activity-marketing.md)，
 > 部署编排看 [`deployment.md`](deployment.md)，容量与引擎选型看 [`capacity-model.md`](capacity-model.md)。
 >
-> 现状锚：2026-08-28 当前工作树。8/19–21 已增加发放确认、不可变分录、grant outbox、XXL-JOB
+> 现状锚：2026-09-06 当前工作树。8/19–21 已增加发放确认、不可变分录、grant outbox、XXL-JOB
 > relay 与企业权益中台 AwardIntent 连接器；测试数不再沿用 8/12 的 476。最新实跑证据见
 > [`qa/QA_PROFILE.md`](qa/QA_PROFILE.md)，计数以 Maven/Vitest 终端汇总为准。
 >
@@ -173,9 +173,6 @@ flowchart TD
     I -- 是 --> J["返回 mode=rule-engine"]
     I -- 否 --> K["metrics.fallback('empty-decision')<br/>safeFallback 重算 → mode=legacy"]
 ```
-/Users/liruijun/Downloads/Mermaid.png
-![Mermaid.png](../../../../Downloads/Mermaid.png)
-
 **职责切分**（2026-08 那轮重构的核心成果，后来又补上「装配」一层）：
 
 | 层 | 类 | 只负责 |

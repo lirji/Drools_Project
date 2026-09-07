@@ -1,6 +1,6 @@
 # 部署与编排（微服务形态）
 
-> 活文档。最后核对：2026-08-28。网关宿主端口由 `DROOLS_UI_PORT` 控制，默认 8095；若相邻
+> 活文档。最后核对：2026-09-06。网关宿主端口由 `DROOLS_UI_PORT` 控制，默认 8095；若相邻
 > `auth-platform` 提供中央端口注册，`deploy.sh` 会自动加载并同步生成 OIDC callback。
 
 > ⚠️ **重建前端的正确顺序**：`cd frontend && npm run build` → `docker compose -f deploy/docker-compose.yml up -d --build gateway`。
@@ -62,8 +62,21 @@ Compose 项目名在 `deploy/docker-compose.yml` 中固定为 `drools-platform`�
 | `console` | `drools-platform/activity-console:latest`（`--build-arg MODULE=activity-console`） | — | 容器内 `SERVER_PORT=8080`；另在 Docker 内网开放 XXL 执行器端口 9999 |
 | `decision` | `drools-platform/activity-decision:latest`（`--build-arg MODULE=activity-decision`） | — | 容器内 8080；`depends_on: console service_healthy` |
 | `gateway` | **`drools-platform/activity-frontend:latest`（`deploy/Dockerfile.frontend` 构建，FROM nginx:1.27-alpine）** | **`${DROOLS_UI_PORT:-8095}`**→80 | 前缀分流 + SPA 托管。⚠️ 它是**构建出来的镜像不是直接拉的 nginx**——Vue 产物烤在里面，改前端要 `--build gateway` |
-| `prometheus` | prom/prometheus | 9090 | 抓 console + decision 的 `/actuator/prometheus` |
-| `grafana` | grafana/grafana | 3001 | 自动装配数据源 + 面板（匿名 Viewer） |
+| `prometheus` | prom/prometheus | 9090 | 旧本地指标栈，仅 `legacy-observability` profile 或 `deploy.sh` 显式启动 |
+| `grafana` | grafana/grafana | 3001 | 旧本地面板，仅 `legacy-observability` profile 或 `deploy.sh` 显式启动 |
+
+### 统一链路追踪
+
+推荐复用同级 `dev-infra` 的 Grafana + Tempo + OpenTelemetry，而不是另起本项目的旧 Prometheus/Grafana：
+
+```bash
+cd ../dev-infra && make marketing-obs
+cd ../drools-demo
+docker compose -f deploy/docker-compose.yml -f deploy/compose.observability.yml \
+  up -d --build mysql xxl-job-admin console decision gateway
+```
+
+`console` 与 `decision` 的服务名分别为 `drools-activity-console` 和 `drools-activity-decision`，Grafana 入口是 `http://127.0.0.1:3001`。默认本地全采样；设置 `OTEL_TRACES_SAMPLER=traceidratio`、`OTEL_TRACES_SAMPLER_ARG=0.1` 可降采样，`OTEL_SDK_DISABLED=true` 可停用。直接 HTTP/Kafka 传播 W3C 上下文；grant/AwardIntent outbox 的 relay 会开始新 trace，业务 `traceId/grantNo/sourceRequestId` 用于跨异步边界检索。完整规则见同级 `dev-infra/docs/observability.md`。
 
 **镜像构建**：单个 `deploy/Dockerfile`，一个 build 阶段构建整个 reactor，运行阶段 `ARG MODULE` 选装某 app 的 jar；compose 用不同 `--build-arg MODULE` 出两镜像（build 阶段共享层缓存）。`.dockerignore` 排除 `node_modules`/`target`/`deploy`/`docs` 等，保持上下文精简、避免无谓 rebuild。
 

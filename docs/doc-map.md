@@ -1,7 +1,7 @@
 # Doc Map（由 /doc-sync 维护）
-lastSyncedCommit: 08c7b6e
-lastSyncedAt: 2026-08-28
-syncScope: 当前 HEAD + 既有未提交部署端口改动（未改写用户代码）
+lastSyncedCommit: 3a65e13
+lastSyncedAt: 2026-09-06
+syncScope: `08c7b6e..3a65e13` 的部署与文档变更 + 当前文档查漏（未改写业务代码）
 
 ## 文档状态约定
 
@@ -150,3 +150,7 @@ syncScope: 当前 HEAD + 既有未提交部署端口改动（未改写用户代�
 - 2026-08-28 全文档同步（doc-sync）：新增 `frontend.md` 作为前端现状活文档；修掉已删除
   `e2e:catalog` 被当作当前脚本、固定 8095 忽略中央端口注册、8/19–20 设计稿仍写“待实现”、架构表数/服务数
   停留旧值等漂移；为归档与活文档建立统一状态约定。当前测试证据见 `qa/QA_PROFILE.md`。
+
+- 2026-09-06 增量查漏（doc-sync）：同步 `3a65e13` 的中央端口与部署文档基线；确认权益中台连接器、
+  grant outbox 和对账说明仍与实现一致；删除 `architecture.md` 中误提交的本机 `/Users/.../Downloads`
+  图片路径，避免其他开发机产生坏链。

@@ -19,6 +19,8 @@ jobs:
           cache: maven
       - name: Test and package Maven reactor
         run: ./mvnw --batch-mode package
+      - name: Validate observability Compose overlay
+        run: docker compose -f deploy/docker-compose.yml -f deploy/compose.observability.yml config -q
 
   frontend:
     runs-on: ubuntu-latest

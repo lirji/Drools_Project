@@ -1,0 +1,46 @@
+# 与 docker-compose.yml 叠加；仅后端应用加入共享 dev-infra 网络并挂载 OTel Agent。
+services:
+  console:
+    environment:
+      JAVA_TOOL_OPTIONS: ${DROOLS_JAVA_TOOL_OPTIONS:--javaagent:/otel/opentelemetry-javaagent.jar}
+      OTEL_SERVICE_NAME: drools-activity-console
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://infra-otel-collector:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_PROPAGATORS: tracecontext,baggage
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=platforms,deployment.environment.name=local
+    volumes:
+      - xxl-executor-logs:/data/applogs
+      - otel-java-agent:/otel:ro
+    networks: [default, dev-infra]
+
+  decision:
+    environment:
+      JAVA_TOOL_OPTIONS: ${DROOLS_JAVA_TOOL_OPTIONS:--javaagent:/otel/opentelemetry-javaagent.jar}
+      OTEL_SERVICE_NAME: drools-activity-decision
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://infra-otel-collector:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_PROPAGATORS: tracecontext,baggage
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=platforms,deployment.environment.name=local
+    volumes:
+      - otel-java-agent:/otel:ro
+    networks: [default, dev-infra]
+
+volumes:
+  otel-java-agent:
+    external: true
+    name: dev-infra-otel-java-agent
+
+networks:
+  dev-infra:
+    external: true
+    name: ${DEV_INFRA_NETWORK:-dev-infra}

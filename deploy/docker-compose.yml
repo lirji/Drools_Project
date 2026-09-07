@@ -160,6 +160,7 @@ services:
 
   # M2.3 · Prometheus 抓取 console + decision 的 /actuator/prometheus（两独立进程各自指标端点）
   prometheus:
+    profiles: [legacy-observability]
     image: prom/prometheus:v2.54.1
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -168,6 +169,7 @@ services:
 
   # M2.3 · Grafana 自动装配数据源 + 面板（Activity Services：两服务 HTTP/JVM/Metaspace/CPU 对比）
   grafana:
+    profiles: [legacy-observability]
     image: grafana/grafana:11.2.0
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin

@@ -4,7 +4,7 @@
 （`activity-console` 写平面 8081 / `activity-decision` 只读决策平面 8082）、Vue 3 管理控制台和 Drools 规则能力实验室。
 `drools-lab` 保留 24 组可独立调用的规则能力，用于验证引擎特性与技术选型，不承担活动决策主链路。
 
-> **文档基线：2026-08-28。** README 与 `docs/*.md` 中标记为“活文档”的内容以当前工作树为准；
+> **文档基线：2026-09-06。** README 与 `docs/*.md` 中标记为“活文档”的内容以当前工作树为准；
 > `docs/plans/**`、`docs/delivery/**`、`docs/tests/**` 和 dated QA 报告是当时的方案/证据快照，不会被改写成今日现状。
 > 代码区域到权威文档的映射与同步点见 [docs/doc-map.md](docs/doc-map.md)。
 
